@@ -32,15 +32,15 @@ def stamp() -> str:
 class Console:
     """Line-oriented serial console.
 
-    ``factory`` builds an unopened ``serial.Serial``-like object (tests pass a fake). With
-    ``echo`` every line is printed to ``out`` prefixed by a timestamp and appended to ``log_path``.
+    ``factory`` builds an unopened ``serial.Serial``-like object (default ``serial.Serial``,
+    looked up at open time so tests can substitute a fake). With ``echo`` every line is printed to ``out`` prefixed by a timestamp and appended to ``log_path``.
     """
 
     def __init__(
         self,
         port: str,
         baud: int = 115200,
-        factory: Callable[[], Any] = serial.Serial,
+        factory: Callable[[], Any] | None = None,
         echo: bool = False,
         out: TextIO | None = None,
         log_path: Path | None = None,
@@ -60,7 +60,7 @@ class Console:
 
     def open(self) -> Console:
         """Open the port without asserting DTR/RTS (keeps bridge boards out of reset/bootloader)."""
-        ser = self.factory()
+        ser = (self.factory or serial.Serial)()
         ser.port = self.port
         ser.baudrate = self.baud
         ser.timeout = 0.05
@@ -91,10 +91,22 @@ class Console:
         self.close()
 
     def reset(self) -> None:
-        """Pulse RTS (EN) low for 100 ms."""
-        self._ser.rts = True
-        time.sleep(0.1)
-        self._ser.rts = False
+        """Pulse RTS (EN) low for 100 ms.
+
+        On native USB (S3/C3/C6 USB-Serial/JTAG) the reset makes the port vanish and come back;
+        if the port errors during the pulse it is reopened (``_reconnect``).
+        """
+        try:
+            self._ser.rts = True
+            time.sleep(0.1)
+            self._ser.rts = False
+        except (serial.SerialException, OSError):
+            self._reconnect()
+
+    def clear(self) -> None:
+        """Forget the captured lines; the next ``expect`` looks only at lines read after this."""
+        self.lines.clear()
+        self._cursor = 0
 
     def _reconnect(self) -> None:
         if self._ser is not None:
@@ -199,15 +211,31 @@ class Console:
             self.poll()
 
 
-def wait_for_port(port: str, exists: Callable[[str], bool], timeout: float = RECONNECT_SECONDS) -> bool:
-    """Wait until ``exists(port)`` (a port re-enumerating after reset); True if it came back."""
+def wait_for_port(port: str, exists: Callable[[str], bool], timeout: float = 10.0, settle: float = 0.5) -> None:
+    """Wait until ``exists(port)`` has held for ``settle`` seconds in a row.
+
+    A native-USB board re-enumerates after esptool resets it: the port can still be there for a
+    moment, vanish, then come back. Only a port that stayed present for ``settle`` counts. Raises
+    ``XeweError`` (exit 4) when that does not happen within ``timeout`` seconds.
+    """
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+    present_since: float | None = None
+    while True:
+        now = time.monotonic()
         if exists(port):
-            return True
-        time.sleep(0.1)
-    log.warning("%s did not reappear within %.0f s", port, timeout)
-    return False
+            if present_since is None:
+                present_since = now
+            if now - present_since >= settle:
+                return
+        else:
+            present_since = None
+        if now >= deadline:
+            raise XeweError(
+                f"{port} did not come back (present for {settle:g} s) within {timeout:.0f} s after esptool reset it; "
+                "unplug and replug the board",
+                EXIT_NO_BOARD,
+            )
+        time.sleep(0.05)
 
 
 def serial_main(

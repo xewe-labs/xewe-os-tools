@@ -25,7 +25,7 @@ compiled, not run: no board attached (<chip>, build/out/<chip>/<bin>)
 ```
 
 Grep for `compiled, not run` instead of treating it as an error. Pass `--require-board` only when
-a board must be present (CI with hardware); then no board means exit 4 (`xewe test`: exit 1).
+a board must be present (CI with hardware); then no board means exit 4 (`xewe test` too).
 `xewe serial` without a board prints `no board attached; nothing to listen to` and exits 0.
 
 ## Inspect before running

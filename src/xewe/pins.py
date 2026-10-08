@@ -18,6 +18,6 @@ DEFAULT_MODULES_REPO = "https://github.com/xewe-labs/xewe-os-modules"
 DEFAULT_TOOLS_REPO = "https://github.com/xewe-labs/xewe-os-tools"
 DEFAULT_CORE_REF = "1.0.0"
 DEFAULT_MODULES_REF = "v1.0.0"
-DEFAULT_TOOLS_REF = "v0.1.0"
+DEFAULT_TOOLS_REF = "v0.1.1"
 
 MIN_FREE_DISK_BYTES = 6 * 1024**3

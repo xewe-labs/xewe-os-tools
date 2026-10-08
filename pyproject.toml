@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "xewe-os-tools"
-version = "0.1.0"
+version = "0.1.1"
 description = "Setup, build, flash, serial and test tooling for XeWe OS firmware projects"
 readme = "README.md"
 requires-python = ">=3.11"

@@ -1,9 +1,10 @@
 """pytest plugin loaded through the ``pytest11`` entry point (SPEC §9).
 
 Module test folders need no conftest.py: the fixtures below build the firmware once per
-session, find the board, flash it once, and hand each test a serial console. Without a board,
-hardware tests are skipped with a reason starting ``compiled, not run`` and the run exits 0;
-``--xewe-require-board`` turns those skips into failures.
+session, find the board, flash it once, wait for the firmware to finish booting, and hand each
+test the session's one serial console. Without a board, hardware tests are skipped with a reason
+starting ``compiled, not run`` and the run exits 0; ``--xewe-require-board`` turns those skips
+into failures (``xewe test`` then exits 4, see ``board_missing``).
 """
 
 from __future__ import annotations
@@ -15,17 +16,27 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from serial import SerialException
 
 from xewe import boards, build, flash, lockfile
 from xewe.boards import Board
 from xewe.lockfile import Lock
 from xewe.project import Paths, find_root
-from xewe.report import NO_BOARD, XeweError
-from xewe.serialio import Console
+from xewe.report import EXIT_NO_BOARD, NO_BOARD, XeweError
+from xewe.serialio import Console, ExpectTimeout
 
 NOT_RUN = "compiled, not run"
 HARDWARE_FIXTURES = frozenset({"compiled", "board", "firmware", "serial"})
-BOOT_WAIT_SECONDS = 3.0
+BOOT_TIMEOUT_SECONDS = 90.0
+"""Longest wait for the end-of-boot banner (Wi-Fi + NTP, plus the one reboot after first boot)."""
+BOOT_WAIT_SECONDS = 0.5
+"""Settle after the banner: read until this much silence before the first test."""
+BOOT_READY = r"System Setup Complete"
+BOOT_UNPROVISIONED = r"Name your device"
+UNPROVISIONED_MESSAGE = (
+    "board on {port} is unprovisioned (first-boot prompt 'Name your device'); "
+    "provision it once by hand (RUNBOOK section 3, first-boot provisioning), then re-run the tests"
+)
 
 
 @dataclass
@@ -35,6 +46,8 @@ class Firmware:
     bin_path: Path
     version: str
     chip: str
+    console: Console
+    """The session's serial console (open for the whole session; the ``serial`` fixture hands it out)."""
 
 
 class XeweContext:
@@ -54,11 +67,19 @@ class XeweContext:
         self.explicit = explicit is not None
         self._chip: str | None = config.getoption("xewe_chip")
         self._lock: Lock | None = None
+        self.no_board = False
+        """Set when a hardware fixture failed because the board was required but missing (exit 4)."""
 
     @property
     def active(self) -> bool:
         """True inside a xewe project."""
         return self.paths is not None
+
+    def fail(self, exc: XeweError) -> None:
+        """``pytest.fail`` with the error; remember board-missing errors for ``xewe test``'s exit 4."""
+        if exc.code == EXIT_NO_BOARD:
+            self.no_board = True
+        pytest.fail(str(exc), pytrace=False)
 
     def project(self) -> Paths:
         if self.paths is None:
@@ -129,36 +150,79 @@ def board(xewe: XeweContext, compiled: Path) -> Board:
     try:
         found = boards.select(p, chip=xewe.chip, port=xewe.port, esptool_cmd=lambda: flash.esptool_cmd(p))
     except XeweError as exc:
-        pytest.fail(str(exc), pytrace=False)
+        xewe.fail(exc)
     if found is None:
         if xewe.require_board:
-            pytest.fail(f"{NOT_RUN}: {NO_BOARD} (--require-board)", pytrace=False)
+            xewe.fail(XeweError(f"{NOT_RUN}: {NO_BOARD} (--require-board)", EXIT_NO_BOARD))
         pytest.skip(f"{NOT_RUN}: {NO_BOARD}")
     if found.chip and found.chip != xewe.chip:
         pytest.fail(f"board on {found.port} is {found.chip}, tests were built for {xewe.chip}", pytrace=False)
     return found
 
 
+def wait_for_boot(console: Console, timeout: float = BOOT_TIMEOUT_SECONDS) -> None:
+    """Reset the board and wait for ``System Setup Complete``; fail on the provisioning prompt.
+
+    The reset makes sure the banner is printed after the port was opened. A first boot prints
+    ``Initial Setup Complete`` and ``Rebooting`` and boots again: that is waited through, as is
+    the native-USB port dropping and coming back during either reset.
+    """
+    deadline = time.monotonic() + timeout
+    try:
+        console.reset()
+    except XeweError:
+        pass  # the port is gone for now; polling below keeps reconnecting until the deadline
+    rx = f"{BOOT_READY}|{BOOT_UNPROVISIONED}"
+    while True:
+        try:
+            m = console.expect(rx, timeout=max(0.0, deadline - time.monotonic()))
+            break
+        except ExpectTimeout as exc:
+            pytest.fail(f"board on {console.port} did not finish booting within {timeout:g} s "
+                        f"(no {BOOT_READY!r}); {exc}", pytrace=False)
+        except XeweError as exc:  # port gone longer than one reconnect window
+            if time.monotonic() >= deadline:
+                pytest.fail(f"board on {console.port} did not finish booting within {timeout:g} s: {exc}", pytrace=False)
+    if m.group(0) == BOOT_UNPROVISIONED:
+        pytest.fail(UNPROVISIONED_MESSAGE.format(port=console.port), pytrace=False)
+    console.collect(silence=BOOT_WAIT_SECONDS)
+
+
 @pytest.fixture(scope="session")
-def firmware(xewe: XeweContext, board: Board, compiled: Path) -> Firmware:
-    """Flash the session's image once and wait for the first boot line (or 3 s)."""
+def firmware(xewe: XeweContext, board: Board, compiled: Path) -> Iterator[Firmware]:
+    """Flash the session's image once, open the session console, wait for the boot banner.
+
+    The console stays open for the whole session (one port open: every open can pulse a
+    native-USB board) and is closed when the session ends.
+    """
     p = xewe.project()
     try:
         flash.write_image(flash.esptool_cmd(p), board, xewe.chip, compiled)
     except XeweError as exc:
-        pytest.fail(str(exc), pytrace=False)
-    with Console(board.port) as console:
-        end = time.monotonic() + BOOT_WAIT_SECONDS
-        while time.monotonic() < end and not console.poll():
-            pass
-    return Firmware(compiled, xewe.lock.version, xewe.chip)
+        xewe.fail(exc)
+    console = Console(board.port)
+    try:
+        console.open()
+    except (SerialException, OSError) as exc:
+        pytest.fail(f"cannot open {board.port}: {exc}", pytrace=False)
+    try:
+        wait_for_boot(console, BOOT_TIMEOUT_SECONDS)
+        yield Firmware(compiled, xewe.lock.version, xewe.chip, console)
+    finally:
+        console.close()
 
 
 @pytest.fixture
-def serial(firmware: Firmware, board: Board) -> Iterator[Console]:
-    """A console on the board: ``send``, ``expect``, ``command``, ``lines``, ``drain``, ``reset``."""
-    with Console(board.port) as console:
-        yield console
+def serial(firmware: Firmware) -> Console:
+    """The session console, drained (pending output dropped) and with ``lines`` emptied.
+
+    ``send``, ``expect``, ``command``, ``lines`` (captured since this test started), ``drain``,
+    ``reset``. The port is never opened or closed here.
+    """
+    console = firmware.console
+    console.drain()
+    console.clear()
+    return console
 
 
 def _not_run(reports: list[pytest.TestReport]) -> list[pytest.TestReport]:
@@ -189,6 +253,13 @@ def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter, config: p
     if hw_passed:
         line += f", {hw_passed} hardware passed"
     terminalreporter.write_line(line)
+
+
+def board_missing(config: pytest.Config) -> bool:
+    """True when a hardware fixture failed because the required board was missing (or its port
+    did not come back); ``xewe test`` maps such a run to exit 4 like ``flash``/``serial``."""
+    ctx = config.stash.get(_KEY, None)
+    return ctx is not None and ctx.no_board
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:

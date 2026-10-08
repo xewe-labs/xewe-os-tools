@@ -41,7 +41,7 @@ def test_version_flag(capsys: pytest.CaptureFixture[str]) -> None:
 
 def test_python_dash_m() -> None:
     proc = subprocess.run([sys.executable, "-m", "xewe", "--version"], capture_output=True, text=True)
-    assert proc.returncode == 0 and "0.1.0" in proc.stdout
+    assert proc.returncode == 0 and "0.1.1" in proc.stdout
 
 
 @pytest.mark.parametrize("argv", [["build", "--chip", "esp32"], ["build", "--chip", "c3", "--all-chips"], ["nope"]])

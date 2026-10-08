@@ -52,7 +52,7 @@ compiled, not run: no board attached (c3, build/out/c3/2.0.15-c3-xewe-os.bin)
 ```
 
 and exits 0. `xewe test` runs host tests and reports hardware tests as "compiled, not run".
-`--require-board` (or `XEWE_REQUIRE_BOARD=1`) turns this into exit 4 (exit 1 for `xewe test`).
+`--require-board` (or `XEWE_REQUIRE_BOARD=1`) turns this into exit 4 (`xewe test` too).
 
 ## License
 

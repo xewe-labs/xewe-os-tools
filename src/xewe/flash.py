@@ -44,13 +44,19 @@ def ensure_built(
 
 
 def write_image(cmd: list[str], board: Board, chip: str, binary: Path, baud: int = DEFAULT_BAUD, erase: bool = False) -> None:
-    """erase (optional) + write-flash at 0x0, retrying once at 460800 baud; wait for the port to return."""
+    """erase (optional) + write-flash at 0x0, retrying once at 460800 baud.
+
+    esptool hard-resets the board after each command, which re-enumerates a native-USB port, so
+    after erase-flash and after write-flash we wait until the port is back and stable
+    (``wait_for_port``; exit 4 when it does not return).
+    """
     esp_chip = chips.get(chip).esptool_id
     base = ["--chip", esp_chip, "--port", board.port]
     if erase:
         proc = esptool.run(cmd, [*base, "erase-flash"])
         if proc.returncode != 0:
             raise XeweError(f"esptool erase-flash failed:\n{proc.stdout.strip()[-2000:]}")
+        wait_for_port(board.port, boards.port_exists)
     bauds = [baud] + ([FALLBACK_BAUD] if baud == DEFAULT_BAUD else [])
     for i, rate in enumerate(bauds):
         args = [*base, "--baud", str(rate), "--before", "default-reset", "--after", "hard-reset",

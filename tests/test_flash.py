@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from serial.tools import list_ports
 
-from xewe import boards
+from xewe import boards, flash, serialio
 from xewe.cli import main
 from xewe.project import Paths
 
@@ -50,12 +50,32 @@ def test_esptool_argv(project: Paths, one_board: str, fake_esptool, capsys: pyte
     assert "flashed  c3" in capsys.readouterr().out
 
 
-def test_erase_and_probe(project: Paths, one_board: str, fake_esptool) -> None:
+def test_erase_and_probe(project: Paths, one_board: str, fake_esptool, monkeypatch: pytest.MonkeyPatch,
+                         tmp_path: Path) -> None:
+    real_wait = flash.wait_for_port
+
+    def wait(port: str, exists, **kw) -> None:  # log into the esptool call log to see the order
+        with (tmp_path / "esptool.jsonl").open("a") as f:
+            f.write(f'["WAIT", "{port}"]\n')
+        real_wait(port, exists, **kw)
+
+    monkeypatch.setattr(flash, "wait_for_port", wait)
     assert main(["flash", "--erase"]) == 0
     calls = fake_esptool()
     assert "chip-id" in calls[0]
     assert calls[1] == ["--chip", "esp32c3", "--port", one_board, "erase-flash"]
-    assert "write-flash" in calls[2]
+    assert calls[2] == ["WAIT", one_board]  # port back and stable before write-flash
+    assert "write-flash" in calls[3]
+    assert calls[4] == ["WAIT", one_board]
+    assert len(calls) == 5
+
+
+def test_port_not_back_after_flash_exit_4(project: Paths, one_board: str, fake_esptool,
+                                          monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    real = serialio.wait_for_port
+    monkeypatch.setattr(flash, "wait_for_port", lambda port, exists: real(port, lambda p: False, timeout=0.2))
+    assert main(["flash"]) == 4
+    assert f"{one_board} did not come back" in capsys.readouterr().err
 
 
 def test_baud_fallback(project: Paths, one_board: str, fake_esptool, monkeypatch: pytest.MonkeyPatch) -> None:

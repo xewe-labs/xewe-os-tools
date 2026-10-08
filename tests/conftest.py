@@ -55,7 +55,7 @@ selected = {selected}
 
 [tools]
 repo = "https://github.com/xewe-labs/xewe-os-tools"
-ref = "v0.1.0"
+ref = "v0.1.1"
 
 [libraries]
 """
@@ -127,7 +127,7 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_cli: Any, no_p
         installed={"arduino_cli": "1.5.1", "esp32": "3.3.12",
                    "core": {"ref": "1.0.0", "commit": "abc", "source": "https://github.com/xewe-labs/xewe-os-core"},
                    "modules": {"ref": "v1.0.0", "commit": "def", "source": "https://github.com/xewe-labs/xewe-os-modules"},
-                   "tools": {"ref": "v0.1.0", "commit": "-", "source": "https://github.com/xewe-labs/xewe-os-tools"},
+                   "tools": {"ref": "v0.1.1", "commit": "-", "source": "https://github.com/xewe-labs/xewe-os-tools"},
                    "libraries": {}},
     )
     config.save(p, cfg)

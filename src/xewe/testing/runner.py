@@ -10,7 +10,8 @@ import pytest
 from xewe import config, modules
 from xewe.lockfile import Lock
 from xewe.project import Paths
-from xewe.report import EXIT_FAIL, EXIT_OK, EXIT_USAGE, XeweError, log, result
+from xewe.report import EXIT_FAIL, EXIT_NO_BOARD, EXIT_OK, EXIT_USAGE, XeweError, log, result
+from xewe.testing import plugin
 
 
 def test_roots(p: Paths, lock: Lock, only: list[str]) -> list[Path]:
@@ -33,11 +34,23 @@ def test_roots(p: Paths, lock: Lock, only: list[str]) -> list[Path]:
     return roots
 
 
-def _exit(code: int) -> int:
+class _Outcome:
+    """In-process pytest plugin that records whether the session failed for want of a board."""
+
+    def __init__(self) -> None:
+        self.no_board = False
+
+    def pytest_sessionfinish(self, session: pytest.Session) -> None:
+        self.no_board = plugin.board_missing(session.config)
+
+
+def _exit(code: int, no_board: bool = False) -> int:
     if code in (pytest.ExitCode.OK, pytest.ExitCode.NO_TESTS_COLLECTED):
         return EXIT_OK
     if code == pytest.ExitCode.USAGE_ERROR:
         return EXIT_USAGE
+    if no_board:
+        return EXIT_NO_BOARD
     return EXIT_FAIL
 
 
@@ -73,5 +86,6 @@ def run_tests(
             args += ["-m", "host"]
         args += extra or []
         log.debug("pytest %s", " ".join(args))
-        worst = max(worst, _exit(pytest.main(args)))
+        outcome = _Outcome()
+        worst = max(worst, _exit(pytest.main(args, plugins=[outcome]), outcome.no_board))
     return worst

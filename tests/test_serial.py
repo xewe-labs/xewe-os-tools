@@ -9,7 +9,8 @@ from xewe import serialio
 from xewe.boards import Board
 from xewe.cli import main
 from xewe.project import Paths
-from xewe.serialio import Console, ExpectTimeout
+from xewe.report import EXIT_NO_BOARD, XeweError
+from xewe.serialio import Console, ExpectTimeout, wait_for_port
 
 STAMP = r"\d\d:\d\d:\d\d\.\d{3}  "
 
@@ -75,6 +76,88 @@ def test_reset_pulses_rts(monkeypatch: pytest.MonkeyPatch) -> None:
     fake.rts_history.clear()
     console.reset()
     assert fake.rts_history == [True, False]
+
+
+class RtsDropSerial(FakeSerial):
+    """Raises on the first RTS assert, like a native-USB port vanishing as the reset lands."""
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if name == "rts" and value is True and self.__dict__.get("armed"):
+            self.__dict__["armed"] = False
+            raise serialio.serial.SerialException("write failed: device disconnected")
+        super().__setattr__(name, value)
+
+
+def test_reset_survives_port_drop(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(serialio.time, "sleep", lambda s: None)
+    fake = RtsDropSerial()
+    out = io.StringIO()
+    console = Console("/dev/x", factory=lambda: fake, echo=True, out=out).open()
+    fake.__dict__["armed"] = True
+    console.reset()
+    assert "-- port reconnected --" in out.getvalue()
+    assert fake.is_open
+
+
+def test_clear_forgets_lines() -> None:
+    fake = FakeSerial(incoming=b"old\n")
+    console = Console("/dev/x", factory=lambda: fake).open()
+    console.collect(silence=0.05)
+    console.clear()
+    fake.rx += b"new\n"
+    assert console.expect("new|old", timeout=1)[0] == "new" and console.lines == ["new"]
+
+
+def test_default_factory_is_looked_up_at_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = FakeSerial()
+    monkeypatch.setattr(serialio.serial, "Serial", lambda: fake)
+    Console("/dev/x").open()
+    assert fake.is_open and fake.port == "/dev/x"
+
+
+class Clock:
+    """Fake ``time`` for serialio: ``sleep`` advances ``monotonic``."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, s: float) -> None:
+        self.now += s
+
+
+def test_wait_for_port_waits_for_a_stable_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = Clock()
+    monkeypatch.setattr(serialio, "time", clock)
+    # still there just after esptool exits, gone while re-enumerating, back from t=2.0 on
+    timeline = [(0.0, 0.3, True), (0.3, 2.0, False), (2.0, 99.0, True)]
+    seen: list[float] = []
+
+    def exists(port: str) -> bool:
+        seen.append(clock.now)
+        return next(present for start, end, present in timeline if start <= clock.now < end)
+
+    wait_for_port("/dev/x", exists, timeout=10.0, settle=0.5)
+    assert 2.5 <= clock.now < 2.6  # returned only after 0.5 s of presence following the drop
+    assert any(0.3 <= t < 2.0 for t in seen)
+
+
+def test_wait_for_port_never_appears_exit_4(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = Clock()
+    monkeypatch.setattr(serialio, "time", clock)
+    with pytest.raises(XeweError) as exc:
+        wait_for_port("/dev/x", lambda port: False, timeout=10.0)
+    assert exc.value.code == EXIT_NO_BOARD and "/dev/x did not come back" in str(exc.value)
+    assert 10.0 <= clock.now < 10.2
+
+
+def test_wait_for_port_flapping_never_settles(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = Clock()
+    monkeypatch.setattr(serialio, "time", clock)
+    with pytest.raises(XeweError):
+        wait_for_port("/dev/x", lambda port: int(clock.now * 10) % 4 != 0, timeout=3.0, settle=0.5)
 
 
 def _select(board: Board | None):

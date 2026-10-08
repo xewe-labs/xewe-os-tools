@@ -29,7 +29,7 @@ done
 read -r TOOLS_REPO TOOLS_REF < <("${PY}" -c '
 import sys, tomllib
 t = tomllib.load(open(sys.argv[1], "rb")).get("tools", {})
-print(t.get("repo", "https://github.com/xewe-labs/xewe-os-tools"), t.get("ref", "v0.1.0"))
+print(t.get("repo", "https://github.com/xewe-labs/xewe-os-tools"), t.get("ref", "v0.1.1"))
 ' "${ROOT}/xewe.lock")
 
 mkdir -p "${BUILD}"
