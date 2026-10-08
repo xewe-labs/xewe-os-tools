@@ -1,0 +1,786 @@
+# xewe-os-tools — specification
+
+Status: spec for agent A5 (phase 1, step 2.1). Written 2026-10-07 by A4.
+Replaces `xewe-os-build-toolchain` (scripts/{mac,linux,windows}, `install_arduino_esp32.sh`), the
+module installer half of `xewe-os/setup.sh`, and the per-module `scripts/validate.sh`.
+Locked decisions D1–D23 are in `wip/xewe-labs/priorities.md`; this spec cites them by number.
+
+Sources read: toolchain `README.md`, `CLAUDE.md`, `scripts/common/paths.sh`, all of `scripts/linux/*`
+and `scripts/mac/*` (linux `build/compile/upload/listen_serial/release/format` are one-line forwarders
+to `mac/`, so the mac files are the real implementation), `scripts/windows/` (skimmed: same flow,
+winget, no release), template `xewe-os/setup.sh`, `build/{release_matrix.csv,required_libraries.txt,version_state,.gitignore}`,
+`static/firmware/releases/2.0.0/*`, `xewe-os-module-wifi/scripts/validate.sh`, `module.properties`
+of all six modules, `xewe-os-modules/repositories.txt`, `org-tooling/.github/guidelines/*.md`.
+No read was blocked.
+
+---
+
+## 1. Goals / non-goals
+
+**Goals**
+- One Python package, one console script `xewe`, for setup, build, flash, serial, test, boards,
+  modules, lock, release (D10). Same code on Linux and macOS, x86_64 and arm64.
+- Zero sudo, zero system package managers: everything lands in `<project>/build/` (plus an optional
+  download cache in `~/.cache/xewe-os/`).
+- Reproducible: `xewe.lock` pins core, modules, tools (D11, D12); setup is idempotent and resumable.
+- Relocatable: no absolute paths stored anywhere; a project directory can be moved or renamed.
+- No-board is first class (D6, D22): every hardware command compiles, then reports
+  "compiled, not run" and exits 0, unless `--require-board`.
+- Bit-compatible outputs: same FQBN options (minus `JTAGAdapter`), same merged-image name,
+  same `manifest.json` schema, same `static/firmware/releases/<version>/` layout.
+
+**Non-goals**
+- OTA, partitions other than `no_ota`, chips other than C3/C6/S3 (D1, D2).
+- PlatformIO, on-device Unity tests (D5, D14).
+- Windows in phase 1 (deferred; nothing below may assume POSIX-only paths or `/dev/*` in core logic).
+- Pushing, tagging, or creating GitHub releases (agents never write git state; `release` prints commands).
+- The C++ formatter (`tools/code_formatter/`) — out of scope; it stays where it is until a later step
+  decides to move it (see §14).
+
+---
+
+## 2. Package layout
+
+```
+xewe-os-tools/
+├── pyproject.toml
+├── README.md  AGENTS.md  LICENSE.txt  .gitignore
+├── src/xewe/
+│   ├── __init__.py        __version__ = "0.1.0"
+│   ├── __main__.py        python -m xewe
+│   ├── cli.py             argparse: subcommands, global flags, exit codes
+│   ├── project.py         find project root (walk up to xewe.lock), Paths dataclass (all paths relative to build/)
+│   ├── lockfile.py        read/write xewe.lock, defaults, validation
+│   ├── tomlw.py           minimal TOML writer (tomllib reads; stdlib has no writer)
+│   ├── pins.py            tool versions shipped with this release (arduino-cli, esp32 core, URLs)
+│   ├── fetch.py           HTTP download (urllib) with .part + resume + sha256; git clone/ls-remote wrappers
+│   ├── arduino.py         arduino-cli install, env, core install (retry + staging fallback), compile
+│   ├── chips.py           c3/c6/s3 table: FQBN board, chip family, esptool id
+│   ├── setup.py           xewe setup steps + build_config.toml
+│   ├── build.py           compile, XeWeBuildInfo generation, out/<chip>/ artifacts
+│   ├── boards.py          port scan, VID:PID filter, esptool probe, boards.toml
+│   ├── esptool.py         locate core-bundled esptool, run write-flash / chip-id
+│   ├── flash.py           xewe flash
+│   ├── serialio.py        Console: open, reset, listen with timestamps, send/expect
+│   ├── modules.py         registry of a modules checkout, resolve deps, generate src/modules/, validate
+│   ├── release.py         release matrix, static/firmware/releases/<version>/
+│   ├── doctor.py          environment checks
+│   ├── report.py          output helpers (status lines, --verbose, no-board summary)
+│   └── testing/
+│       ├── __init__.py
+│       └── plugin.py      pytest plugin: fixtures board/firmware/serial, markers, summary
+└── tests/                 self-tests (§12)
+    └── fakes/arduino-cli  fake arduino-cli (Python script) used by the self-tests
+```
+
+`pyproject.toml`:
+
+```toml
+[build-system]
+requires = ["flit_core>=3.9,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "xewe-os-tools"
+dynamic = ["version", "description"]
+requires-python = ">=3.11"
+license = { file = "LICENSE.txt" }
+dependencies = ["pyserial>=3.5", "pytest>=8.0"]
+
+[project.scripts]
+xewe = "xewe.cli:main"
+
+[project.entry-points.pytest11]
+xewe = "xewe.testing.plugin"
+
+[tool.flit.module]
+name = "xewe"
+```
+
+**Dependencies.** stdlib (`tomllib`, `urllib`, `tarfile`, `zipfile`, `hashlib`, `subprocess`,
+`argparse`, `json`, `shutil`) + `pyserial` + `pytest`.
+- `pytest` is a deviation from "stdlib + pyserial only": D14 makes pytest the test runner and the
+  `pytest11` entry point is how module tests get fixtures with no conftest. All of pytest's
+  dependencies are pure Python, so there is no wheel/ARM64 risk. Making it an optional extra would
+  just move the same install into setup.
+- `esptool` is **not** a package dependency and is **not pip-installed** (change from the brief).
+  The pinned esp32 core already ships an esptool binary for every host
+  (`esptool_py` 5.3.1 for core 3.3.12, verified to have an `aarch64-linux-gnu` build). Using it
+  ties esptool to the core pin, avoids pip-building `cryptography`/`PyYAML` on new Pythons, and saves
+  one install step. `esptool.py` locates it by glob:
+  `build/arduino15/packages/esp32/tools/esptool_py/*/esptool` (`esptool.exe` later on Windows).
+  Escape hatch: `XEWE_ESPTOOL="<command>"` (e.g. `python -m esptool`) overrides it.
+- Python ≥ 3.11 (for `tomllib`). Tested on 3.14 (this machine).
+
+**Installation into a template project** (A6 writes these; the package must support them):
+
+`setup.sh` (thin bootstrap, ~40 lines bash, no logic beyond this):
+1. Find `python3` ≥ 3.11, or exit with a message.
+2. Read `[tools] ref` and `repo` from `xewe.lock` with `python3 -c 'import tomllib…'`.
+3. Get the tools source: `$XEWE_TOOLS_SOURCE` (local directory, used in phase 1 because nothing is
+   pushed) or `git clone --quiet --depth 1 --branch <ref> <repo> build/xewe-os-tools`
+   (skip if it exists at that ref: `git -C build/xewe-os-tools describe --tags --exact-match`).
+4. `python3 -m venv build/.venv`; if `build/.venv/bin/python -m pip --version` fails, run
+   `build/.venv/bin/python -m ensurepip --upgrade`.
+5. `build/.venv/bin/python -m pip install --quiet --upgrade <tools source dir>` (non-editable; skip
+   when `build/.venv/bin/python -m xewe --version` already prints the wanted version and source is not local).
+6. `exec build/.venv/bin/python -m xewe setup "$@"`.
+
+`run.sh`: `exec "$(dirname "$0")/build/.venv/bin/python" -m xewe run "$@"` (with a "run ./setup.sh first"
+message if missing).
+
+---
+
+## 3. Command surface
+
+Global flags (any position before the subcommand): `--project DIR` (default: nearest ancestor of
+CWD containing `xewe.lock`), `--verbose` / `-v` (print every subprocess command line and its full
+output), `--version`.
+
+Common flags: `--chip c3|c6|s3`, `--all-chips`, `--port PATH`, `--require-board`
+(also `XEWE_REQUIRE_BOARD=1`), `--latest` (setup only).
+
+**Exit codes (all commands)**
+
+| Code | Meaning |
+|---|---|
+| 0 | success, including "compiled, not run" (no board, no `--require-board`) |
+| 1 | failure of the operation: compile error, flash error, test failure, expect timeout, validation error |
+| 2 | usage error (argparse, conflicting flags, unknown chip/module) |
+| 3 | not set up / tool missing (`build/build_config.toml` absent or stale, arduino-cli/esptool missing) |
+| 4 | board required but none found (`--require-board`), explicit `--port` not present, or several boards and none chosen |
+
+**Chip selection rule (build/flash/test/run):** `--chip` → chip of the single attached board
+(§5) → `[project] chip` in `xewe.lock` → `c3`. `--all-chips` = c3, c6, s3 in that order (D15).
+
+**No-board status line** (exact text, grep-able): `compiled, not run: no board attached (<chip>, build/out/<chip>/<bin>)`.
+
+| Command | Synopsis | What it does | No board |
+|---|---|---|---|
+| `xewe setup` | `[--latest] [--modules LIST\|all\|none] [--force] [--core-source DIR] [--modules-source DIR]` | §6. Installs everything into `build/`, then runs `modules generate` | n/a (never needs a board) |
+| `xewe build` | `[--chip C \| --all-chips] [--define KEY=VALUE]... [--clean]` | §7. Compiles; writes `build/out/<chip>/` | n/a; exit 0 on success |
+| `xewe flash` | `[--chip C] [--port P] [--baud 921600] [--erase] [--no-build] [--require-board]` | Builds if `out/<chip>` is missing, older than any source, or was built with other `--define` values/version/chip/FQBN options (`build.stamp`, §7), then §8 write-flash | prints status line, exit 0 (4 with `--require-board`) |
+| `xewe serial` | `[--port P] [--baud 115200] [--reset] [--send CMD [--expect RE] [--timeout 10]] [--duration S] [--log FILE] [--require-board]` | Listen with timestamps until Ctrl-C/`--duration`, or send one command and wait for a regex | `no board attached; nothing to listen to`, exit 0 (4 with `--require-board`) |
+| `xewe test` | `[--chip C \| --all-chips] [--port P] [--module SLUG]... [--host-only] [--require-board] [-- PYTEST_ARGS]` | §9. Runs pytest over project and selected-module tests | hardware tests compile and report compiled-not-run, exit 0 |
+| `xewe run` | `[--chip C] [--port P] [--define K=V]... [--no-serial]` | build → flash → serial (what `run.sh` calls) | builds, prints status line, exit 0 |
+| `xewe boards` | `[--no-probe] [--json] [--set-port P [--set-chip C]] [--clear]` | §5. Lists candidate ports and chips; writes `build/boards.toml` | `no board attached`, exit 0 (4 with `--require-board`) |
+| `xewe modules list` | `[--json]` | Modules in the modules checkout: slug, id, version, deps, `*` if selected | — |
+| `xewe modules select` | `LIST\|all\|none [--no-generate]` | Writes `[modules] selected` in `xewe.lock`, then generates | — |
+| `xewe modules validate` | `[PATH]` | §10 rules over a modules checkout (default `build/xewe-os-modules`) | — |
+| `xewe modules generate` | | §10. Rebuilds `src/modules/` from the lock selection | — |
+| `xewe lock show` | `[--json]` | Lock refs vs installed refs (from `build_config.toml`), drift marked `!` | — |
+| `xewe lock update` | `[core\|modules\|tools]... [--to REF]` | Resolves newest tag (§4) and rewrites `xewe.lock`; prints diff; does not run setup | — |
+| `xewe clean` | `[--all] [--modules]` | Default: delete `build/cache/`, `build/out/`, `build/gen/`. `--all`: delete all of `build/` except `.venv/` and `xewe-os-tools/` (setup must re-run). `--modules`: delete `src/modules/` | — |
+| `xewe doctor` | | Checks python, git, venv, arduino-cli version, core version, esptool, lock vs installed, free disk ≥ 6 GB, serial permissions (Linux: user in `dialout`/`uucp`), board scan | exit 0 if only warnings |
+| `xewe release` | `--version X.Y.Z [--matrix FILE] [--notes FILE]` | §11 | n/a (no board needed) |
+
+Example outputs (text is normative in spirit, not byte-exact, except the status lines):
+
+```
+$ xewe build --chip c3
+build  c3  esp32:esp32:esp32c3:CDCOnBoot=cdc,CPUFreq=160,…,UploadSpeed=921600
+       sketch xewe-os (2.0.15)  modules wifi, web-interface  core 1.0.0
+ok     c3  51 s  Sketch uses 1123456 bytes (85%)  0 warnings
+       build/out/c3/2.0.15-c3-xewe-os.bin
+
+$ xewe flash
+build  c3  up to date (build/out/c3/2.0.15-c3-xewe-os.bin)
+compiled, not run: no board attached (c3, build/out/c3/2.0.15-c3-xewe-os.bin)
+$ echo $?
+0
+
+$ xewe flash --require-board
+compiled, not run: no board attached (c3, build/out/c3/2.0.15-c3-xewe-os.bin)
+error: --require-board: no board attached
+$ echo $?
+4
+
+$ xewe serial --send '$system status' --expect 'Uptime' --timeout 5
+23:41:07.412  > $system status
+23:41:07.530  Uptime: 00:03:12
+match  'Uptime' after 0.12 s
+```
+
+---
+
+## 4. `xewe.lock` format
+
+TOML, committed, the only dependency file the template commits (D11). Read with `tomllib`, written
+by `tomlw.py` (keys in the order below, comments preserved only for the header comment block).
+
+```toml
+# xewe.lock: pinned inputs of this firmware. Edit by hand or with `xewe lock update`.
+# ./setup.sh installs exactly these refs into build/.
+schema = 1
+
+[project]
+name = "xewe-os"        # optional; default: stem of the single .ino in the project root
+version = "2.0.15"      # firmware version (replaces build/version_state, see §7)
+chip = "c3"             # chip used when --chip is not given and no board is attached
+
+[core]
+repo = "https://github.com/xewe-labs/xewe-os-core"
+ref = "1.0.0"           # library tags are X.Y.Z (git-and-releases.md)
+
+[modules]
+repo = "https://github.com/xewe-labs/xewe-os-modules"
+ref = "v1.0.0"
+selected = ["wifi", "web-interface"]   # dependencies are added at generate time, not written here
+
+[tools]
+repo = "https://github.com/xewe-labs/xewe-os-tools"
+ref = "v0.1.0"
+
+[libraries]             # extra Arduino libraries, cloned into build/libraries/<name> (replaces required_libraries.txt)
+ArduinoJson = { repo = "https://github.com/bblanchon/ArduinoJson", ref = "v7.4.2" }
+
+# [toolchain]           # optional overrides; defaults come from the tools release (src/xewe/pins.py)
+# arduino_cli = "1.5.1"
+# esp32 = "3.3.12"
+```
+
+Rules:
+- `ref` is a tag (preferred) or a branch or a full commit SHA. Setup records the resolved commit in
+  `build/build_config.toml`.
+- `--latest` (on `xewe setup`): for each of core/modules/tools, run `git ls-remote --tags --refs <repo>`,
+  keep tags matching `^v?\d+\.\d+\.\d+$`, pick the highest by numeric tuple; if none, use the remote
+  default branch HEAD with a warning. Installs those into `build/`, **never edits `xewe.lock`**;
+  `xewe lock show` and `xewe doctor` then show the drift (`!`). `[libraries]` and `[toolchain]` are not
+  affected by `--latest`.
+- `xewe lock update [core|modules|tools] [--to REF]` applies the same resolution (or `--to`) and
+  rewrites the lock; that is the only command that changes refs.
+- Local sources (`--core-source DIR`, `--modules-source DIR`, `XEWE_TOOLS_SOURCE`, and env
+  `XEWE_CORE_SOURCE`, `XEWE_MODULES_SOURCE`) override `repo`+`ref` for one run, are recorded as
+  `source = "local:<abs path>"` in `build_config.toml` (that file is not committed), and never touch the lock.
+- Unknown keys are an error (exit 2) so typos do not silently fall back to defaults.
+
+---
+
+## 5. `build/boards.toml`
+
+Generated by any command that scans for boards; not committed; the `[override]` table is preserved
+across rewrites.
+
+```toml
+# generated by xewe; [override] is yours and is kept
+schema = 1
+
+[override]              # optional; set with `xewe boards --set-port /dev/ttyACM0 --set-chip c3`
+port = "/dev/ttyACM0"
+chip = "c3"
+
+[[board]]
+port = "/dev/ttyACM0"
+chip = "c3"
+vid = "303a"
+pid = "1001"
+serial_number = "F0:F5:BD:01:23:45"
+description = "USB JTAG/serial debug unit"
+detected_by = "esptool"          # esptool | override | cache
+last_seen = "2026-10-08T12:00:00Z"
+```
+
+**Detection** (`boards.scan()`):
+1. `serial.tools.list_ports.comports()`. Keep ports whose VID:PID is a known ESP USB interface:
+   `303a:*` (Espressif native USB-Serial/JTAG and USB-OTG CDC; C3, C6, S3 all report `303a:1001`),
+   `10c4:ea60` (CP210x), `1a86:7523` (CH340), `1a86:55d3` (CH343), `0403:6001/6010/6015` (FTDI).
+   Ports with no VID (e.g. `/dev/ttyS*`) are dropped. `--port P` bypasses the filter.
+2. Chip: VID:PID cannot tell C3/C6/S3 apart, so look up `serial_number` in the previous
+   `boards.toml` (`detected_by = "cache"`); otherwise probe with the core esptool:
+   `esptool --port P --before default-reset --after hard-reset chip-id` (timeout 20 s), parse
+   `ESP32-(C3|C6|S3)` from its output. Probing resets the board; `--no-probe` skips it (chip stays
+   unknown unless overridden). A chip outside C3/C6/S3 is reported and treated as unsupported.
+3. `arduino-cli board list --format json` is not used for decisions (it only knows VID:PID); `xewe
+   boards --verbose` and `xewe doctor` print it as a cross-check.
+
+**"No board"** = after the filter there are zero candidate ports, no `--port`, and no
+`[override] port` present on the system. Exactly one candidate → that board. Several → pick the one
+matching `--chip` if unique, else exit 4 "several boards attached; pass --port" (D15: one board at
+a time). An explicit `--port` that does not exist is exit 4, never "no board" (catches typos).
+
+**User override**, highest first: `--port`/`--chip` flags → `XEWE_PORT`/`XEWE_CHIP` env →
+`[override]` in `boards.toml` → scan.
+
+---
+
+## 6. Setup procedure (`xewe setup`)
+
+Target layout (all generated; `build/.gitignore` is written as `*`):
+
+```
+build/
+├── .venv/                 python venv: xewe-os-tools + pyserial + pytest   (setup.sh)
+├── xewe-os-tools/         tools source at [tools] ref                        (setup.sh)
+├── bin/arduino-cli
+├── arduino15/             ARDUINO_DIRECTORIES_DATA: indexes, esp32 core, toolchains, esptool
+├── arduino-user/          ARDUINO_DIRECTORIES_USER: empty sketchbook (isolates ~/Arduino/libraries)
+├── libraries/XeWeCore/    core at [core] ref
+├── libraries/ArduinoJson/ [libraries]
+├── xewe-os-modules/       modules repo at [modules] ref
+├── gen/<chip>/XeWeBuildInfo/   generated per build (§7)
+├── cache/<chip>/          arduino-cli --build-path
+├── out/<chip>/            artifacts
+├── boards.toml
+└── build_config.toml
+```
+
+The arduino-cli environment is computed on every invocation from the project root (nothing stored):
+
+```
+ARDUINO_DIRECTORIES_DATA=<project>/build/arduino15
+ARDUINO_DIRECTORIES_USER=<project>/build/arduino-user
+ARDUINO_DIRECTORIES_DOWNLOADS=${XEWE_CACHE:-~/.cache/xewe-os}/arduino-staging   # shared across projects
+ARDUINO_BOARD_MANAGER_ADDITIONAL_URLS=https://espressif.github.io/arduino-esp32/package_esp32_index.json
+ARDUINO_NETWORK_CONNECTION_TIMEOUT=300s
+ARDUINO_UPDATER_ENABLE_NOTIFICATION=false
+```
+
+No `arduino-cli.yaml` is written; `~/.arduino15` and `~/Arduino` are never read or written.
+
+Steps (each is skipped when its record in `build_config.toml [installed]` matches the wanted
+version/ref and its artefact exists; `--force` redoes all):
+
+| # | Step | Today's equivalent | Detail |
+|---|---|---|---|
+| 1 | Preflight | `ensure_base_tools_linux`, `ensure_python` | Need `git`; Python ≥ 3.11 (already true, we run in it); free disk ≥ 6 GB in `build/`. No package-manager installs: missing `git` is exit 3 with a hint. |
+| 2 | Read lock | — | Validate `xewe.lock`; resolve refs (`--latest` per §4). |
+| 3 | arduino-cli | `ensure_arduino_cli` (apt/brew/install.sh into `/usr/local/bin`) | Map host: Linux x86_64 → `Linux_64bit`, Linux aarch64 → `Linux_ARM64`, Darwin arm64 → `macOS_ARM64`, Darwin x86_64 → `macOS_64bit` (Windows later: `Windows_64bit.zip`). Download `https://github.com/arduino/arduino-cli/releases/download/v<V>/arduino-cli_<V>_<plat>.tar.gz`, verify sha256 against `…/v<V>/<V>-checksums.txt`, extract `arduino-cli` to `build/bin/`, check `build/bin/arduino-cli version` contains `<V>`. |
+| 4 | esp32 core | `ensure_esp32_core`, `install_arduino_esp32.sh` | `arduino-cli core update-index`, then `arduino-cli core install esp32:esp32@<esp32 version>`. Retry up to 5 times with 10/20/40/80 s backoff. If output contains `Head "<url>"` (connection-reset case from `install_arduino_esp32.sh`), download that URL with urllib into `$ARDUINO_DIRECTORIES_DOWNLOADS/packages/` and retry (max 10 such rescues). Verify with `arduino-cli core list --format json` (esp32:esp32 at the pinned version). |
+| 5 | esptool | `ensure_venv`, `ensure_esptool` | Locate core-bundled esptool (§2); run `esptool version` to confirm it executes on this host. |
+| 6 | Core library | `ensure_libraries` (clone, `rm -rf .git`) | `git clone --quiet --depth 1 --branch <ref> <repo> build/libraries/XeWeCore` (a SHA ref: clone + `git fetch --depth 1 origin <sha>` + checkout). Clone into `build/libraries/.tmp-XeWeCore` then rename (atomic). Keep `.git` (needed for commit record and `--latest`; arduino-cli ignores it). Local source: copy tree without `.git`. Wrong ref present → delete and re-clone. |
+| 7 | Libraries | `required_libraries.txt` loop | Same as 6 for every `[libraries]` entry into `build/libraries/<name>`. |
+| 8 | Modules repo | template `setup.sh` registry + `git clone` per module | Same as 6 into `build/xewe-os-modules`. |
+| 9 | Module selection | whiptail checklist / `--modules` | `--modules LIST\|all\|none` writes `[modules] selected` (this is a lock edit the user asked for; `--modules ""` = `none`). Zero modules is a valid project and `selected = []` is the default. If `selected` is empty and stdin is a TTY: numbered menu like today's `--text` menu (no whiptail dependency), where an empty answer means none; no TTY and empty → no prompt. Either way an empty selection prints one "no modules selected" line and continues. If the modules checkout holds no module at all (neither `modules/<slug>/module.properties` nor `xewe-os-module-<slug>/module.properties`), setup warns naming the source path and both layouts; explicitly requested modules that are not found are still exit 2. |
+| 10 | Generate | template `setup.sh` staging + swap | `xewe modules generate` (§10). |
+| 11 | Project files | `ensure_project_ino`, `ensure_project_config_h`, `ensure_gitignore` | Check exactly one `*.ino` in root and `Config.h` exist (do not create them: the template owns them). Write `build/.gitignore` = `*`. Do not touch the root `.gitignore`. |
+| 12 | build_config.toml | `write_build_config` | Written last, atomically (`.tmp` + rename). |
+
+`build/build_config.toml` (relative paths only; resolved against `build/` at runtime):
+
+```toml
+# generated by xewe setup; do not edit
+schema = 1
+tools_version = "0.1.0"
+setup_completed = "2026-10-08T12:00:00Z"
+
+[paths]                  # relative to build/
+arduino_cli = "bin/arduino-cli"
+arduino_data = "arduino15"
+arduino_user = "arduino-user"
+libraries = "libraries"
+modules = "xewe-os-modules"
+esptool = "arduino15/packages/esp32/tools/esptool_py/5.3.1/esptool"
+
+[installed]
+arduino_cli = "1.5.1"
+esp32 = "3.3.12"
+core = { ref = "1.0.0", commit = "0123abc…", source = "https://github.com/xewe-labs/xewe-os-core" }
+modules = { ref = "v1.0.0", commit = "…", source = "…" }
+tools = { ref = "v0.1.0", commit = "…", source = "local:../xewe-os-tools" }
+libraries = { ArduinoJson = { ref = "v7.4.2", commit = "…" } }
+```
+
+Fix for today's relocation bug: today `write_build_config` stores `project_root`, `venv_python_bin`,
+`arduino_cli` etc. as absolute paths and `compile.sh`/`upload.sh` read them, so moving or renaming
+the project breaks every script until setup re-runs. Here, `project.py` derives the root from the
+CWD/`--project` and every stored path is relative to `build/`. One caveat: a moved venv has stale
+shebangs, so `run.sh`/`setup.sh` must call `build/.venv/bin/python -m xewe` (not the `xewe` script)
+— this works after a move.
+
+**Duration** (estimate, unverified on this machine): arduino-cli ~30 MB; esp32 core 3.3.12 for
+aarch64 Linux is ~1.7 GB of downloads (computed from the package index: `esp-rv32` 556 MB,
+`esp-x32` 314 MB, nine `*-libs` packages ~630 MB, esptool 72 MB, gdbs ~80 MB, core zip 51 MB) and
+several GB on disk. Expect 5–15 min on broadband for a first setup, < 10 s for a no-op re-run, and
+near-zero download for a second project thanks to the shared downloads cache.
+
+**Idempotent and resumable**: per-step records (above); downloads go to `<file>.part` with HTTP
+`Range` resume and are renamed only after the checksum matches; clones go to a temp name then
+rename; `arduino-cli core install` is itself resumable from the downloads dir; `build_config.toml`
+is written last, so an interrupted setup is detected (exit 3 from other commands: "setup incomplete,
+re-run ./setup.sh").
+
+---
+
+## 7. Build procedure (`xewe build`)
+
+Chip table (`chips.py`):
+
+| chip | FQBN board | chipFamily (manifest) | esptool `--chip` |
+|---|---|---|---|
+| c3 | `esp32c3` | `ESP32-C3` | `esp32c3` |
+| c6 | `esp32c6` | `ESP32-C6` | `esp32c6` |
+| s3 | `esp32s3` | `ESP32-S3` | `esp32s3` |
+
+Board options (from `compile.sh`, `compile.ps1`, `validate.sh`, minus `JTAGAdapter=default`):
+`CDCOnBoot=cdc,CPUFreq=160,DebugLevel=none,EraseFlash=all,FlashMode=qio,FlashSize=4M,PartitionScheme=no_ota,UploadSpeed=921600`
+
+Full FQBNs:
+```
+esp32:esp32:esp32c3:CDCOnBoot=cdc,CPUFreq=160,DebugLevel=none,EraseFlash=all,FlashMode=qio,FlashSize=4M,PartitionScheme=no_ota,UploadSpeed=921600
+esp32:esp32:esp32c6:CDCOnBoot=cdc,CPUFreq=160,DebugLevel=none,EraseFlash=all,FlashMode=qio,FlashSize=4M,PartitionScheme=no_ota,UploadSpeed=921600
+esp32:esp32:esp32s3:CDCOnBoot=cdc,CPUFreq=160,DebugLevel=none,EraseFlash=all,FlashMode=qio,FlashSize=4M,PartitionScheme=no_ota,UploadSpeed=921600
+```
+
+Steps per chip:
+1. Require `build_config.toml` (else exit 3) and `src/modules/Modules.h` (else exit 3 "run
+   `xewe modules generate`"). With zero modules selected, `Modules.h` exists and declares nothing.
+2. Sketch dir: the project root if the folder name equals the `.ino` stem (arduino-cli requires
+   `<dir>/<dir>.ino`); otherwise mirror `*.ino`, `*.h`, `*.cpp`, `src/` into
+   `build/gen/sketch/<stem>/` with `shutil.copy2` (mtimes kept so the cache stays warm). This is what
+   happens after "Use this template" renames the repo; today's setup instead created a second `.ino`.
+3. Generate `build/gen/<chip>/XeWeBuildInfo/library.properties` + `src/XeWeBuildInfo.h`:
+   ```c
+   // generated by xewe build; do not edit
+   #pragma once
+   #define PROJECT_NAME "xewe-os"
+   #define BUILD_VERSION "2.0.15"
+   #define BUILD_TIMESTAMP "2026-10-08T12:00:00Z"
+   #define BUILD_CHIP "c3"
+   #define LED_PIN 8            // one line per --define / release-matrix column
+   ```
+   The template's `Config.h` does `#include <XeWeBuildInfo.h>` and wraps its own defaults in
+   `#ifndef`. This replaces today's in-place rewriting of `Config.h` by `build.sh` (which dirtied
+   a committed file on every build). `--define KEY=VALUE` replaces `--config_json`; values are
+   emitted verbatim (quote strings yourself: `--define 'WIFI_SSID="net"'`).
+
+   > **Warning:** `Config.h` must `#include <XeWeBuildInfo.h>` unconditionally. Guarding it with
+   > `#if __has_include(<XeWeBuildInfo.h>)` makes arduino-cli's library discovery skip the
+   > generated library, so the `--library build/gen/<chip>/XeWeBuildInfo` defines silently never
+   > reach the sketch (proven by A6). The cost: a plain Arduino IDE build (without `xewe`) fails on
+   > that include, and the user must delete that one line from `Config.h` (the `#ifndef` defaults
+   > then apply).
+4. Compile (env from §6):
+   ```
+   build/bin/arduino-cli compile \
+     --fqbn <FQBN for chip> \
+     --build-path build/cache/<chip> \
+     --libraries build/libraries \
+     --library build/gen/<chip>/XeWeBuildInfo \
+     --warnings default \
+     --jobs 0 \
+     <sketch dir>
+   ```
+   stdout+stderr go to `build/out/<chip>/compile.log`; on failure print the last 15 lines matching
+   `error` (as `validate.sh` does) and exit 1. `--verbose` streams the log live.
+5. Artifacts into `build/out/<chip>/` (directory emptied first; no timestamped history, no `latest`
+   symlink, no copy of `src/` and libraries as today):
+   - `<version>-<chip>-<project>.bin` ← `build/cache/<chip>/<stem>.ino.merged.bin` (produced by the
+     esp32 core 3.x itself; missing → exit 1 "core did not produce merged.bin").
+   - `manifest.json` — byte-compatible with today:
+     ```json
+     {
+       "name": "xewe-os",
+       "version": "2.0.15",
+       "new_install_improv_wait_time": 0,
+       "builds": [
+         {
+           "chipFamily": "ESP32-C3",
+           "parts": [
+             { "path": "2.0.15-c3-xewe-os.bin", "offset": 0 }
+           ]
+         }
+       ]
+     }
+     ```
+   - `meta.json` — today's keys `type, chip_family, project_name, version, timestamp_param, config
+     (the --define dict, sorted), fqbn, fqbn_extra (""), compile_time_sec, artifacts{binary_filename,
+     path_rel_binary, path_rel_manifest_json, path_rel_meta_json}`; the `path_abs_*` keys are
+     dropped (they leaked `/Users/user/...` into committed releases); new keys `tools_version`,
+     `arduino_cli`, `esp32_core`, `core_ref`, `modules_ref`, `modules` (selected+resolved slugs),
+     `sketch_size` (bytes, from "Sketch uses N bytes"), `sketch_size_percent` (the "(NN%)" of
+     program storage on the same line, `null` if absent), `warnings` (count). `path_rel_*` are
+     relative to the project parent, as today (`xewe-os/build/out/c3/...`).
+   - `build.stamp` — sha256 of chip, full FQBN (board options), project version and the sorted
+     `--define` list. `flash`/`run` treat the binary as stale when the stamp differs from the
+     inputs of the current call (a build with `--define X=1` followed by a plain `xewe flash`
+     rebuilds), in addition to the mtime check against every source.
+6. Print a one-line summary (time, size with flash percentage, warnings):
+   `ok     c3  51 s  Sketch uses 1123456 bytes (85%)  0 warnings`.
+
+**Versioning — recommendation: drop auto-bump.** Today a successful upload bumps PATCH and
+BUILD_ID in the committed `build/version_state`, so every dev flash dirties the repo, the running
+firmware reports a version lower than the file, and `release.sh` then overwrites the file and drops
+`BUILD_ID`. New rule: the version is `[project] version` in `xewe.lock`; `build`, `flash` and `run`
+never change it; `BUILD_TIMESTAMP` distinguishes dev builds; `xewe release --version X.Y.Z` is the
+only writer (and must be ≥ the current version, as today). Migration: if a legacy
+`build/version_state` exists, `xewe setup` prints the `version = "M.m.P"` line to put in the lock
+and does not delete the file. `.github/guidelines/git-and-releases.md` ("Firmware PATCH is not
+hand-written — build.sh bumps it") must be updated in the same change (A13 sweep).
+
+**Parallelism**: one chip at a time, sequentially (each compile already uses all cores via
+`--jobs 0`; ~50–65 s per chip from release 1.0.0/2.0.0 meta). `--all-chips` loops c3, c6, s3, continues
+after a failure, prints a per-chip summary like `validate.sh`, exits 1 if any failed. Each chip has
+its own `cache/<chip>` and `gen/<chip>`, so incremental rebuilds stay warm across chips.
+
+---
+
+## 8. Flash and serial
+
+**Flash** (`flash.py`): resolve chip and board (§5); no board → status line, exit 0/4. Otherwise:
+
+```
+<esptool> --chip esp32c3 --port /dev/ttyACM0 --baud 921600 \
+          --before default-reset --after hard-reset \
+          write-flash 0x0 build/out/c3/2.0.15-c3-xewe-os.bin
+```
+- `--erase` runs `<esptool> --chip … --port … erase-flash` first (wipes NVS; what
+  `EraseFlash=all` would do via `arduino-cli upload`, which we do not use). Default keeps NVS, as today.
+- If the board's detected chip ≠ the selected chip → exit 2 before flashing.
+- If esptool fails at 921600, retry once at 460800 (CH340 boards), then exit 1.
+- After a hard reset the native USB port re-enumerates: wait up to 5 s for the port to reappear
+  before returning (so `run`/tests can open it).
+
+**Serial** (`serialio.Console`, pyserial):
+- Open with `dsrdtr=False, rtscts=False`; set `dtr=False, rts=False` before `open()` so UART-bridge
+  boards are not held in reset/bootloader. `--reset`: pulse RTS (EN) low for 100 ms.
+- Listen: decode UTF-8 with `errors="replace"`, split on `\n`, strip `\r`, prefix local time
+  `HH:MM:SS.mmm  `; tee to `--log FILE`. Ends on Ctrl-C (exit 0) or `--duration`.
+  If the port disappears (reset), reopen for up to 5 s, printing `-- port reconnected --`.
+- Send: write `CMD + "\n"` (the XeWe serial reader ignores `\r` and ends a line on `\n`,
+  `SerialPort.cpp`); echo it as `> CMD`; then read lines until `--expect` regex matches (exit 0)
+  or `--timeout` (default 10 s, exit 1, last 20 lines printed). Without `--expect`, collect output
+  until 500 ms of silence and exit 0.
+- Defaults: 115200 baud (today's `SERIAL_BAUD`).
+- The old fallbacks (`arduino-cli monitor`, miniterm, `screen`) are dropped.
+
+---
+
+## 9. Test runner (`xewe test`)
+
+`xewe test` builds the pytest argument list and calls `pytest.main()` in-process:
+- Test roots: `<project>/tests/` (if present) and, for each module in the resolved selection,
+  `<modules checkout>/modules/<slug>/tests/` (checkout = `build/xewe-os-modules` or
+  `--modules-source`). `--module SLUG` restricts to those modules (must be selected; else exit 2).
+- Options passed to the plugin: `--xewe-chip`, `--xewe-port`, `--xewe-require-board`,
+  `--xewe-project`. Extra args after `--` go to pytest verbatim.
+- `--host-only` → `-m host`. `--all-chips` runs the session once per chip (three `pytest.main`
+  calls), aggregating exit codes.
+
+Markers (registered by the plugin): `host` (pure logic, never needs a board or a build),
+`hardware` (needs firmware on a board). A test that uses `board`, `firmware` or `serial` is
+auto-marked `hardware`.
+
+Fixtures (`xewe.testing.plugin`, loaded through the `pytest11` entry point, so module test
+folders need no `conftest.py`):
+
+| Fixture | Scope | Behaviour |
+|---|---|---|
+| `compiled` | session | Builds the selected chip once (same code path as `xewe build`); a build failure fails every hardware test. |
+| `board` | session | Depends on `compiled`; detects the board (§5). None → `pytest.skip("compiled, not run: no board attached")`; with `--require-board` → `pytest.fail(...)`. Returns `Board(port, chip, serial_number)`. |
+| `firmware` | session | Depends on `board`; flashes `build/out/<chip>/` once per session, waits for boot (first line or 3 s). Returns `Firmware(bin_path, version, chip)`. |
+| `serial` | function | Depends on `firmware`; a `Console` on the board port with `send(cmd)`, `expect(regex, timeout=10) -> re.Match`, `command(cmd, expect, timeout) -> re.Match`, `lines` (captured since open), `drain()`. Expect failures raise `AssertionError` with the last 20 lines. |
+
+No-board summary and exit code: the plugin's `pytest_terminal_summary` lists every test skipped
+with a reason starting `compiled, not run`:
+
+```
+==== compiled, not run (no board attached, chip c3) ====
+modules/wifi/tests/test_wifi.py::test_status_reports_wifi
+modules/wifi/tests/test_wifi.py::test_scan_lists_networks
+xewe test: 4 host passed, 2 compiled, not run, 0 failed
+```
+
+Exit 0 when nothing failed (pytest already returns 0 when tests are only skipped; the plugin turns
+pytest's 5 "no tests collected" into 0 with a warning). With `--require-board` those tests fail and
+the exit is 1. Compile failure → 1.
+
+Example (illustrative only; A8 owns the final shape, Q1):
+
+```python
+# modules/wifi/tests/test_wifi.py
+import re
+import pytest
+
+pytestmark = pytest.mark.hardware
+
+
+def test_status_reports_wifi(serial):
+    m = serial.command("$system status", expect=r"(?i)wifi.*(connected|not connected)", timeout=5)
+    assert m
+
+
+def test_scan_lists_networks(serial):
+    serial.send("$wifi scan")
+    serial.expect(r"(?i)scan", timeout=15)
+
+
+@pytest.mark.host
+def test_module_id_fits_nvs_namespace():
+    props = dict(
+        line.split("=", 1)
+        for line in open("modules/wifi/module.properties").read().splitlines()
+        if "=" in line
+    )
+    assert re.fullmatch(r"[a-z][a-z0-9_]{0,14}", props["id"])
+```
+
+Host-native C++ tests (core `extras/host/`) are not run by `xewe test` in phase 1; core owns them.
+
+---
+
+## 10. Modules generation and validation
+
+Input: the modules checkout (`build/xewe-os-modules`, layout per D4/plan step 3:
+`modules/<slug>/{module.properties, src/<Folder>/, tests/, README.md}`). Until A8 fixes the contract,
+`modules.py` also accepts today's layout (one `xewe-os-module-<slug>/` per module with
+`module.properties` at its root), so A5 can test against the reference clones (read-only).
+
+`module.properties` keys used: `slug, id, name, version, description, folder, include, declare,
+depends_modules, requires_core` (new, D12; e.g. `requires_core=>=1.0.0`; today's
+`depends_libraries=XeWeOS (>=0.1.0)` is accepted as a fallback and ignored for checks).
+Parsing = today's `prop()`: first `key=` line wins, value is everything after the first `=`.
+
+`xewe modules generate`:
+1. Resolve: depth-first over `selected` in lock order, dependencies first, error on cycle
+   ("dependency cycle through module 'x'") — identical order to today's `visit()`, so `Modules.h`
+   comes out the same for the same selection. Print `x requires y; adding it` for additions.
+2. Stage in `build/gen/modules.tmp/`: copy `modules/<slug>/src/<Folder>` → `<Folder>`
+   (skip `.git`).
+3. Write `Modules.h`:
+   ```cpp
+   // Generated by xewe modules generate; do not edit. Re-run ./setup.sh or `xewe modules select` to change modules.
+   // Included by the sketch after `os`; modules are declared in dependency order.
+   #pragma once
+
+   #include "Wifi/Wifi.h"
+   #include "WebInterface/WebInterface.h"
+
+   Wifi wifi(os);
+   WebInterface web_interface(os, wifi);
+   ```
+   (`include=src/Wifi/Wifi.h` → `#include "Wifi/Wifi.h"`, as today.)
+4. Write `.gitignore` (`*`) and `modules.lock` in today's format:
+   `# generated by xewe: slug|folder|source|ref|commit` then one line per module
+   (`source` = modules repo URL or `local:<path>`, `ref` = lock ref, `commit` = checkout HEAD).
+   With an empty selection, `Modules.h` holds only the header comment and `#pragma once` (plus a
+   `// no modules selected` comment) and `modules.lock` only its header line.
+5. Replace `src/modules/` with the staged dir (rename; old dir removed only after staging succeeded).
+
+`xewe modules validate [PATH]` — runs over every module in the checkout, prints one line per
+problem, exit 1 if any:
+
+| Rule | Check |
+|---|---|
+| slug | `^[a-z0-9][a-z0-9-]*$`, unique, equals the `modules/<slug>` directory name |
+| id | `^[a-z][a-z0-9_]*$`, ≤ 15 chars (NVS namespace limit), unique |
+| folder | `^[A-Z][A-Za-z0-9]*$`, unique, `src/<folder>/` exists |
+| include | starts with `src/<folder>/`, file exists |
+| declare | matches `^(\w+)\s+(\w+)\s*\((.*)\)\s*;$`; type == folder (warning if not); variable unique across modules, ≠ `os`; every argument identifier is `os` or the variable of a transitive `depends_modules` entry |
+| depends_modules | each slug exists; no cycles; no self-dependency |
+| requires_core | parses as `>=X.Y.Z` (optionally `,<X.Y.Z`); satisfied by `[core] ref` of the harness lock when run inside a project (skipped with a note for non-semver refs) |
+| version | `X.Y.Z` |
+| description | present, one line, ≤ 100 chars |
+| required keys | all of the above present; unknown keys are warnings |
+
+The modules repo needs no copy of this code (D21): its CI runs `./setup.sh --modules-source . --modules all`
+in an `xewe-os` checkout, then `xewe modules validate build/xewe-os-modules` (or the source path),
+`xewe build --all-chips`, `xewe test`.
+
+---
+
+## 11. Release (`xewe release --version X.Y.Z`)
+
+1. Check the version is `X.Y.Z` and ≥ `[project] version` (else exit 2); check the working tree has
+   no uncommitted changes except `xewe.lock` (warning only; we never run git writes).
+2. Matrix: `release_matrix.csv` in the project root if present (format unchanged: `CHIP` column
+   required, case-insensitive; `_BUILD_NOTES` notes only; every other column becomes a `--define`
+   with today's typing: integers/`true`/`false` bare, everything else quoted), else rows c3, c6, s3.
+   Legacy `build/release_matrix.csv` is read with a warning to move it.
+3. Release notes: `--notes FILE`, else `$EDITOR` (default `vi`) on a temp file with today's 3-line
+   header, which is stripped; result saved as `static/firmware/releases/<version>/release_notes.txt`.
+4. For each row: `xewe build --chip <chip> --define …` with the release version, then move
+   `build/out/<chip>/{<bin>,manifest.json,meta.json}` into
+   `static/firmware/releases/<version>/<col1>/<col2>/…` (folder per non-notes column, values with
+   quotes/backslashes stripped, spaces → `_`, empty → `empty`; for the default matrix this is
+   `<version>/c3/`, exactly today's layout). Write `build_notes.txt` when the row has notes, and
+   `firmware_map.csv` with the header row minus `_BUILD_NOTES`, as today. Rewrite `path_rel_*` in
+   `meta.json` to the release location.
+5. Write `[project] version = "X.Y.Z"` into `xewe.lock`; create
+   `static/firmware/releases/firmware-X.Y.Z.tar.gz` (tarfile, as today).
+6. Print, do not run:
+   ```
+   git add xewe.lock static/firmware/releases/X.Y.Z
+   git commit -m "release X.Y.Z"
+   git tag -a vX.Y.Z -m "Release X.Y.Z"
+   git push origin vX.Y.Z
+   gh release create vX.Y.Z static/firmware/releases/firmware-X.Y.Z.tar.gz --verify-tag --title vX.Y.Z --notes-file static/firmware/releases/X.Y.Z/release_notes.txt
+   ```
+   Time: ~3 min for three chips.
+
+---
+
+## 12. Self-tests of the package
+
+`pytest` from the repo root; no network, no arduino-cli, no board. Fakes: `tests/fakes/arduino-cli`
+(Python script; selected with `XEWE_ARDUINO_CLI`, records argv+env to a JSON file, writes
+`<stem>.ino.merged.bin` and a "Sketch uses N bytes" line, can be told to fail), a fake esptool
+(`XEWE_ESPTOOL`), pyserial `serial_for_url("loop://")` plus a scripted fake port, and
+`list_ports.comports` monkeypatched.
+
+| File | Covers |
+|---|---|
+| `test_project.py` | root discovery, `--project`, relative paths, project moved after setup still works |
+| `test_lockfile.py` | parse/validate/write round-trip, unknown keys rejected, defaults |
+| `test_tomlw.py` | writer output parses back with `tomllib` for all value types used |
+| `test_fetch.py` | asset name per (os, arch), checksum mismatch rejected, `.part` resume via a local HTTP server |
+| `test_setup.py` | step order, skip-when-recorded idempotency, `--force`, interrupted run leaves no `build_config.toml`, local sources, `--latest` tag selection from fake `ls-remote` output, `Head "<url>"` rescue path |
+| `test_arduino.py` | env vars (no `~/.arduino15`), exact compile argv per chip, FQBN strings (golden), no `JTAGAdapter` |
+| `test_build.py` | `out/<chip>/` contents, bin name, `manifest.json` byte-equal to golden built from 2.0.0 release files, `meta.json` keys, `XeWeBuildInfo.h` content, `--define`, sketch staging when folder ≠ stem, `--all-chips` continues after failure |
+| `test_boards.py` | VID:PID filter, chip-id output parsing (sample esptool 5 output), cache by serial number, override precedence, no-board / one / several decision, `boards.toml` `[override]` preserved |
+| `test_flash.py` | esptool argv, `--erase`, baud fallback, no-board exit 0 vs `--require-board` exit 4, chip mismatch exit 2 |
+| `test_serial.py` | timestamps, `\r` stripping, send/expect match and timeout (exit 1), reconnect |
+| `test_plugin.py` | `pytester`: no board → "compiled, not run" summary and exit 0; `--require-board` → exit 1; host tests run; compile failure fails hardware tests |
+| `test_modules.py` | dependency order and cycle error against fixtures copied from the six real `module.properties`; generated `Modules.h`/`modules.lock` golden; every validator rule has a failing fixture |
+| `test_release.py` | matrix parsing and typing, folder layout, `firmware_map.csv`, version ≥ check, printed commands, never calls git |
+| `test_cli.py` | every subcommand's `--help`, exit-code table, `--verbose` |
+| `test_doctor.py` | checks report missing pieces without raising |
+
+---
+
+## 13. Migration notes
+
+**Dropped on purpose**
+- Per-OS script copies (`scripts/mac`, `scripts/linux` forwarders, `scripts/windows/*.ps1`),
+  `paths.sh`, `_paths.ps1`, sourced bash `build_config` / `build_config.ps1` and `get_cfg`.
+- System installs: Homebrew, apt/dnf/yum/pacman/zypper/apk, winget, `sudo`, `/usr/local/bin`,
+  `~/.local/bin`, `~/.arduino15`, `arduino-cli config init`.
+- `JTAGAdapter=default` from the FQBN.
+- Absolute paths in `build_config` and `meta.json` (`path_abs_*`).
+- Auto PATCH/BUILD_ID bump on upload; `build/version_state` (moved to `[project] version`).
+- In-place rewriting of `Config.h` (`--config_json`, PROJECT_NAME/BUILD_VERSION/BUILD_TIMESTAMP)
+  → generated `XeWeBuildInfo.h`.
+- Timestamped `builds/<ts>-<ver>-<chip>-<project>/` history with `src/` and `libs/` snapshots and
+  the `builds/latest` symlink → `build/out/<chip>/`.
+- `required_libraries.txt` → `[libraries]` in `xewe.lock`.
+- whiptail checklist, registry `repositories.txt` + per-module repos → modules repo at a ref.
+- Serial monitor fallbacks (arduino-cli monitor, miniterm, screen); pip-installed esptool.
+- Creating missing `.ino`/`Config.h`/`release_matrix.csv` (the template owns them).
+- `git tag`, `git push`, `gh release create` being executed (now printed).
+
+**Kept bit-for-bit**
+- Board options `CDCOnBoot=cdc,CPUFreq=160,DebugLevel=none,EraseFlash=all,FlashMode=qio,FlashSize=4M,PartitionScheme=no_ota,UploadSpeed=921600`.
+- Merged image at `0x0`, name `<version>-<chip>-<project>.bin`, flash baud 921600, serial baud 115200.
+- `manifest.json` schema and formatting (ESP Web Tools), `meta.json` keys except `path_abs_*`.
+- `static/firmware/releases/<version>/<chip>/`, `release_notes.txt`, `firmware_map.csv`,
+  `build_notes.txt`, `firmware-<version>.tar.gz`, tag name `v<version>`.
+- `release_matrix.csv` format and column typing.
+- Module resolution order, `Modules.h` include/declare form, `modules.lock` line format.
+
+---
+
+## 14. Open points (with recommendation)
+
+| # | Point | Recommendation |
+|---|---|---|
+| O1 | esp32 core version to pin | `3.3.12` (latest stable in the index on 2026-10-07; every tool has an aarch64-linux build). Fall back to `3.3.7` (referenced by `install_arduino_esp32.sh`, so likely what built 2.0.x) if Gate 1/2 compile fails on 3.3.12. |
+| O2 | arduino-cli version | `1.5.1` (latest; `Linux_ARM64` asset and `1.5.1-checksums.txt` exist). |
+| O3 | pytest as a runtime dependency | Accept (see §2). |
+| O4 | esptool from the core vs pip | Core-bundled binary; `XEWE_ESPTOOL` override. |
+| O5 | Where the firmware version lives | `[project] version` in `xewe.lock`; no auto-bump. |
+| O6 | `XeWeBuildInfo` needs a one-line change in the template `Config.h` | A6 adds `#include <XeWeBuildInfo.h>` and `#ifndef` defaults. |
+| O7 | Shared downloads cache in `~/.cache/xewe-os` | On by default (saves ~1.7 GB per extra project); `XEWE_CACHE=build/cache-dl` keeps everything inside the project. |
+| O8 | Disk: core installs libs for c5/h2/p4/s2 too (~370 MB of archives) | Accept for now; pruning risks breaking arduino-cli's install records. |
+| O9 | `modules/<slug>` vs legacy layout | Support both until A9 ports the modules; drop legacy after Gate 3. |
+| O10 | Code formatter (`tools/code_formatter/`) | Not part of this package in phase 1; decide later between `xewe format` and leaving it in core. |
+| O11 | Windows | Keep `pathlib` everywhere, `.exe` suffix in `chips/arduino` lookups, `COMx` accepted by `--port`; no PowerShell. Implement after phase 1. |
+| O12 | `serial` fixture scope | Function scope over a session-flashed board; reboot between tests only via an explicit `serial.reset()`. |

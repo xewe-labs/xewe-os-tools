@@ -1,111 +1,59 @@
-# xewe-os-build-toolchain — build, flash, release and format ESP32 firmware
+# xewe-os-tools
 
-XeWe OS tooling · 2026-04-22 → 2026-09-15 (developed inside xewe-os from 2025-10) · Solo: Max Dokukin · Status: Active
+One Python package, one command (`xewe`), for XeWe OS firmware projects: setup, build, flash,
+serial, test, boards, modules, lock and release. Linux and macOS, x86_64 and arm64. No sudo and
+no system package manager: everything goes into the project's `build/` (plus a shared download
+cache in `~/.cache/xewe-os`, or `$XEWE_CACHE`).
 
-## Overview
+## Install
 
-Build, flash, release and format tooling for ESP32 Arduino projects (C3, C6, S3), kept in
-one repository and installed into each project's `build/` folder by the project's own setup script
-(for example [xewe-os](https://github.com/xewe-labs/xewe-os) `setup.sh`). It wraps `arduino-cli`
-and `esptool` into one flow — set up the machine, compile a versioned merged image, flash it,
-open the serial monitor, build a release for every board in a matrix and publish it — on macOS,
-Linux and Windows. The toolchain never stores project data, so reinstalling it never touches a
-project's matrix, library list or build outputs.
+A project's `./setup.sh` (reference copy: `scripts/bootstrap.sh`) does this for you: it creates
+`build/.venv`, installs this package into it from `$XEWE_TOOLS_SOURCE` (a local checkout) or from
+the `[tools]` ref in `xewe.lock`, then runs `xewe setup "$@"`. `scripts/run.sh` is the reference
+`./run.sh`.
 
-## Highlights
+For development of the tools themselves (Python >= 3.11):
 
-- One setup script per platform installs arduino-cli, the `esp32:esp32` core, a Python venv with esptool and the project's pinned libraries, then writes `build/build_config` (paths only)
-- Every build writes a merged `.bin`, a `manifest.json` for ESP Web Tools and a `meta.json` (chip, version, FQBN, compile time) into `builds/<timestamp>-<version>-<chip>-<project>/`
-- `release.sh` builds every row of `release_matrix.csv` (extra columns become `Config.h` defines), writes `static/firmware/releases/<version>/`, tags `v<version>` and creates a GitHub release
-- A C++ formatter: clang-format plus 10 custom layout passes in an 11-stage pipeline, with a `--check` mode that can never drift from write mode
-- A Linux fallback installer for the ESP32 core that downloads blocked tool URLs itself and retries (up to 10 times) on networks that reset connections
-
-## How it works
-
-```
-setup → build (Config.h: PROJECT_NAME, BUILD_VERSION, BUILD_TIMESTAMP, --config_json defines)
-      → compile (arduino-cli → merged .bin, manifest.json, meta.json, builds/latest)
-      → upload (esptool write-flash 0x0; bumps PATCH + BUILD_ID) → listen_serial (115200)
-release: prompt version ≥ version_state → build every matrix row → static/firmware/releases/<version>/ → tag + gh release
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -e '.[dev]'
+.venv/bin/python -m pytest -q
 ```
 
-- **`scripts/common/paths.sh`, `scripts/windows/_paths.ps1`** — resolve three roots from the script's own location (toolchain root = `<project>/build`, build root, project root), overridable with `XEWE_BUILD_ROOT` and `XEWE_PROJECT_ROOT`.
-- **`scripts/mac/*.sh`** — the bash implementation; **`scripts/linux/*.sh`** forward to it, except `setup.sh` (apt/dnf/yum/pacman/zypper/apk) and `install_arduino_esp32.sh`.
-- **`scripts/windows/*.ps1`** — PowerShell equivalents (winget for installs; no release script).
-- **`tools/code_formatter/`** — `format.py` orchestrates `inline_move`, `method_order`, clang-format, `header_layout`, `align_decls`, `param_split`, `ctor_brace`, `open_break`, `dangling_close` and `modeconfig_layout` over an in-memory copy of `src/`.
+Runtime dependencies: `pyserial`, `pytest`. esptool comes from the pinned esp32 core
+(`XEWE_ESPTOOL` overrides it).
 
-Board options used for every build: `CDCOnBoot=cdc, CPUFreq=160, DebugLevel=none, EraseFlash=all,
-FlashMode=qio, FlashSize=4M, PartitionScheme=no_ota, UploadSpeed=921600`.
+## Commands
 
-### Project layout
+| Command | What it does |
+|---|---|
+| `xewe setup [--modules LIST\|all\|none] [--latest] [--force] [--core-source DIR] [--modules-source DIR] [--arduino-data DIR]` | arduino-cli, esp32 core, core library, libraries and modules into `build/`; generates `src/modules/` (zero modules is valid: `--modules none`, or no selection) |
+| `xewe build [--chip C \| --all-chips] [--define K=V]... [--clean] [--dry-run]` | compile into `build/out/<chip>/`; prints `Sketch uses N bytes (NN%)` (`--dry-run` prints the arduino-cli command only) |
+| `xewe flash [--chip C] [--port P] [--erase] [--no-build] [--require-board]` | build if stale (sources, version or `--define` values changed), then write the merged image at 0x0 |
+| `xewe serial [--port P] [--send CMD [--expect RE]] [--duration S] [--log FILE]` | timestamped console |
+| `xewe test [--chip C \| --all-chips] [--module SLUG]... [--host-only] [-- PYTEST_ARGS]` | pytest over `tests/` and the selected modules' `tests/` |
+| `xewe run [--chip C] [--define K=V]... [--no-serial]` | build, flash, listen |
+| `xewe boards [--no-probe] [--json] [--set-port P [--set-chip C]] [--clear]` | list boards, set an override |
+| `xewe modules list\|select\|validate\|generate` | the modules checkout and `src/modules/` |
+| `xewe lock show\|update` | lock refs vs installed refs; move refs to new tags |
+| `xewe clean [--all] [--modules]` | delete generated output |
+| `xewe doctor` | check the environment |
+| `xewe release --version X.Y.Z [--matrix FILE] [--notes FILE]` | release matrix into `static/firmware/releases/<version>/`; prints the git/gh commands |
+
+Global flags (before the command): `--project DIR`, `--verbose`, `--version`.
+Exit codes: 0 ok, 1 failure, 2 usage, 3 not set up / tool missing, 4 board required but missing.
+
+## Without a board
+
+Every hardware command still compiles, then prints
 
 ```
-<project>/
-├── <project>.ino, Config.h, src/        your firmware
-├── setup.sh                             project setup: copies scripts/ and tools/ of this repo into build/
-└── build/
-    ├── release_matrix.csv               project data (committed; created if missing)
-    ├── required_libraries.txt           project data (committed; created if missing)
-    ├── version_state                    version counter (committed; created if missing)
-    ├── .gitignore                       committed; setup adds the lines below
-    ├── scripts/  tools/                 this repository (installed, ignored)
-    ├── build_config, build_config.ps1   generated by setup (ignored)
-    └── .venv/  libraries/  builds/      generated (ignored)
+compiled, not run: no board attached (c3, build/out/c3/2.0.15-c3-xewe-os.bin)
 ```
 
-## Results
+and exits 0. `xewe test` runs host tests and reports hardware tests as "compiled, not run".
+`--require-board` (or `XEWE_REQUIRE_BOARD=1`) turns this into exit 4 (exit 1 for `xewe test`).
 
-| Metric | Value | Baseline / note |
-|---|---|---|
-| Platforms | macOS, Linux, Windows | Windows has no release script |
-| Boards | ESP32-C3, ESP32-C6, ESP32-S3 | `-c c3\|c6\|s3` |
-| Scripts | 23 files: 2,196 lines of bash, 873 lines of PowerShell | `scripts/` |
-| Formatter | 2,350 lines of Python in 8 modules, 11 stages | `tools/code_formatter/` |
-| Used by | xewe-os releases 1.0.0 and 2.0.0 (48–64 s compile per chip) | xewe-os `static/firmware/releases/*/meta.json` |
+## License
 
-## Getting started
-
-### Install into a project
-
-Copy `scripts/` and `tools/code_formatter/` of this repository into `<project>/build/`
-(projects such as [xewe-os](https://github.com/xewe-labs/xewe-os) do this in their `setup.sh`;
-pin a version there with `--toolchain-ref vX.Y.Z`), then run the setup for your platform.
-
-### Use
-
-Scripts can be run from any directory; they locate the project from their own path.
-
-```bash
-# once per machine/project: arduino-cli, ESP32 core, venv + esptool, libraries, missing project
-# files (release_matrix.csv, required_libraries.txt, .ino, Config.h), build_config, build/.gitignore
-build/scripts/mac/setup.sh                                    # also linux/setup.sh and windows/setup.ps1
-
-build/scripts/mac/build.sh -c c3                              # compile
-build/scripts/mac/build.sh -c s3 -p /dev/cu.usbmodem1101      # compile + flash + monitor
-build/scripts/mac/build.sh -c c6 --config_json '{"LED_PIN": "8"}' -n "notes"
-build/scripts/mac/upload.sh -c c3 -p /dev/ttyACM0             # flash latest build
-build/scripts/mac/listen_serial.sh -p /dev/ttyACM0
-build/scripts/mac/release.sh                                  # build every matrix row, tag, GitHub release
-build/scripts/mac/format.sh [--check] [paths...]              # default: <project>/src
-```
-
-Linux scripts forward to `scripts/mac` (except `setup.sh`); Windows has PowerShell equivalents
-(no release script). On WSL or networks that reset downloads, `scripts/linux/install_arduino_esp32.sh`
-installs the ESP32 core with retries.
-
-Requirements: bash (or PowerShell 5.1+), git, Python 3, and Homebrew (macOS), a supported package
-manager (Linux) or winget (Windows) for the automatic installs; `gh` (authenticated) and `tar` for
-`release.sh`.
-
-### Changing the toolchain
-
-Keep scripts runnable from any directory and from their installed location in `<project>/build/`;
-a change to a `build_config` key must be made in the mac, linux and windows setup scripts. Test bash
-with `bash -n`. Agent-facing rules are in [CLAUDE.md](CLAUDE.md). Releases of this repo are tagged
-`vX.Y.Z` on `main` so projects can install a fixed version.
-
-## Documents
-
-- [CLAUDE.md](CLAUDE.md) — invariants, the three roots, script flow
-- Used by: [xewe-os](https://github.com/xewe-labs/xewe-os)
-- License: see [LICENSE.txt](LICENSE.txt) (GPL-3.0).
+GPL-3.0-only (see `LICENSE.txt`).

@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+"""Fake esptool: records argv in $FAKE_ESPTOOL_LOG; FAKE_ESPTOOL_CHIP sets the chip-id answer;
+FAKE_ESPTOOL_FAIL_BAUD makes write-flash fail at that baud."""
+
+import json
+import os
+import sys
+
+argv = sys.argv[1:]
+log = os.environ.get("FAKE_ESPTOOL_LOG")
+if log:
+    with open(log, "a") as f:
+        f.write(json.dumps(argv) + "\n")
+if argv == ["version"]:
+    print("esptool v5.3.1")
+elif "chip-id" in argv:
+    print("Connecting....")
+    print(f"Detecting chip type... {os.environ.get('FAKE_ESPTOOL_CHIP', 'ESP32-C3')}")
+    print(f"Chip type:          {os.environ.get('FAKE_ESPTOOL_CHIP', 'ESP32-C3')} (QFN32) (revision v0.4)")
+elif "write-flash" in argv:
+    baud = argv[argv.index("--baud") + 1] if "--baud" in argv else ""
+    if baud and baud == os.environ.get("FAKE_ESPTOOL_FAIL_BAUD"):
+        print("A fatal error occurred: Failed to communicate with the flash chip")
+        sys.exit(2)
+    print("Hash of data verified.")
+elif "erase-flash" in argv:
+    print("Flash memory erased successfully")

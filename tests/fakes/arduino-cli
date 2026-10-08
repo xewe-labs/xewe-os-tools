@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""Fake arduino-cli for the self-tests.
+
+Records argv, cwd and ARDUINO_* env as one JSON line per call in $FAKE_ARDUINO_LOG.
+Behaviour switches (env):
+  FAKE_ARDUINO_COMPILE_FAIL   comma list of FQBN board ids (esp32c6, ...) or "all" whose compile fails
+  FAKE_ARDUINO_NO_MERGED      "1": compile succeeds but writes no merged.bin
+  FAKE_ARDUINO_INSTALL_FAILS  number of `core install` calls that fail before one succeeds
+  FAKE_ARDUINO_HEAD_URL       first `core install` fails with  Head "<url>": connection reset
+"""
+
+import json
+import os
+import sys
+from pathlib import Path
+
+argv = sys.argv[1:]
+log = os.environ.get("FAKE_ARDUINO_LOG")
+if log:
+    with open(log, "a") as f:
+        env = {k: v for k, v in os.environ.items() if k.startswith("ARDUINO_")}
+        f.write(json.dumps({"argv": argv, "cwd": os.getcwd(), "env": env}) + "\n")
+
+data = Path(os.environ.get("ARDUINO_DIRECTORIES_DATA", "."))
+state = data / "fake-core.json"
+
+
+def counter(name: str) -> int:
+    path = data / f"fake-{name}.count"
+    n = int(path.read_text()) if path.exists() else 0
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(str(n + 1))
+    return n
+
+
+if argv[:1] == ["version"]:
+    print("arduino-cli  Version: 1.5.1 Commit: fake Date: 2026-06-05T10:22:11Z")
+elif argv[:2] == ["core", "update-index"]:
+    print("Downloading index: package_index.tar.bz2 downloaded")
+elif argv[:2] == ["core", "list"]:
+    installed = json.loads(state.read_text()) if state.exists() else None
+    platforms = [{"id": "esp32:esp32", "installed_version": installed}] if installed else []
+    print(json.dumps({"platforms": platforms}))
+elif argv[:2] == ["core", "install"]:
+    n = counter("install")
+    head = os.environ.get("FAKE_ARDUINO_HEAD_URL")
+    if head and n == 0:
+        print(f'Error during install: Get "{head}": Head "{head}": connection reset by peer')
+        sys.exit(1)
+    if n < int(os.environ.get("FAKE_ARDUINO_INSTALL_FAILS", "0")):
+        print("Error during install: network unreachable")
+        sys.exit(1)
+    version = argv[2].split("@", 1)[1]
+    tool = data / "packages/esp32/tools/esptool_py/5.3.1/esptool"
+    tool.parent.mkdir(parents=True, exist_ok=True)
+    tool.write_text("#!/bin/sh\necho 'esptool v5.3.1'\n")
+    tool.chmod(0o755)
+    state.write_text(json.dumps(version))
+    print(f"Platform esp32:esp32@{version} installed")
+elif argv[:1] == ["compile"]:
+    opts = dict(zip(argv[1::2], argv[2::2]))
+    fqbn = opts["--fqbn"]
+    board = fqbn.split(":")[2]
+    fail = os.environ.get("FAKE_ARDUINO_COMPILE_FAIL", "")
+    if fail == "all" or board in fail.split(","):
+        print("sketch.ino:1:1: error: 'nothing' does not name a type")
+        sys.exit(1)
+    sketch = Path(argv[-1])
+    build = Path(opts["--build-path"])
+    build.mkdir(parents=True, exist_ok=True)
+    if os.environ.get("FAKE_ARDUINO_NO_MERGED") != "1":
+        (build / f"{sketch.resolve().name}.ino.merged.bin").write_bytes(b"\xe9" + board.encode())
+    print("src/x.cpp:3:5: warning: unused variable 'x' [-Wunused-variable]")
+    print("Sketch uses 1123456 bytes (85%) of program storage space. Maximum is 1310720 bytes.")
+elif argv[:2] == ["board", "list"]:
+    print("[]")
+else:
+    print(f"fake arduino-cli: unsupported {argv}", file=sys.stderr)
+    sys.exit(2)
