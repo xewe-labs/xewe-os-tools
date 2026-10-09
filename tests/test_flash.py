@@ -127,3 +127,41 @@ def test_port_exists_uses_device_nodes(tmp_path: Path, no_ports: None) -> None:
     node = tmp_path / "ttyX"
     node.write_text("")
     assert boards.port_exists(str(node)) and not boards.port_exists(str(tmp_path / "nope"))
+
+
+def _merged_image() -> bytes:
+    """A 4 MB merged image laid out like the real S3 one: bootloader, partition table at 0x8000,
+    blank nvs, otadata with content, app, blank spiffs and coredump."""
+    import struct
+
+    img = bytearray(b"\xff" * 0x400000)
+    img[0:4] = b"\xe9BOOT"[:4]
+    table = [(1, 2, 0x9000, 0x5000, b"nvs"), (1, 0, 0xE000, 0x2000, b"otadata"),
+             (0, 16, 0x10000, 0x200000, b"app0"), (1, 130, 0x210000, 0x1E0000, b"spiffs"),
+             (1, 3, 0x3F0000, 0x10000, b"coredump")]
+    for i, (ptype, sub, off, size, name) in enumerate(table):
+        img[0x8000 + 32 * i:0x8000 + 32 * (i + 1)] = struct.pack("<2sBBII16sI", b"\xaa\x50", ptype, sub, off, size, name, 0)
+    img[0xE000:0xE004] = b"\x00\x00\x00\x00"
+    img[0x10000:0x10004] = b"\xe9APP"
+    return bytes(img)
+
+
+def test_flash_segments_skip_blank_data_partitions() -> None:
+    image = _merged_image()
+    pieces = flash.flash_segments(image)
+    assert [(off, len(data)) for off, data in pieces] == [(0x0, 0x9000), (0xE000, 0x202000)]
+    assert b"".join(data for _, data in pieces) == image[:0x9000] + image[0xE000:0x210000]
+    assert flash.flash_segments(b"\xe9tiny") == [(0, b"\xe9tiny")]  # no partition table: whole image
+
+
+def test_write_image_keeps_nvs(tmp_path: Path, fake_esptool, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Flashing without --erase must not write over NVS (it holds the provisioning)."""
+    binary = tmp_path / "2.0.0-s3-xewe-os.bin"
+    binary.write_bytes(_merged_image())
+    monkeypatch.setattr(flash, "wait_for_port", lambda port, exists: None)
+    from xewe import esptool
+    flash.write_image(esptool.command(Paths(tmp_path)), boards.Board(port="/dev/x"), "s3", binary)
+    (call,) = [c for c in fake_esptool() if "write-flash" in c]
+    files = call[call.index("write-flash") + 1:]
+    assert files[::2] == ["0x0", "0xe000"]
+    assert "0x9000" not in files and "0x210000" not in files

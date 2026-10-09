@@ -30,7 +30,8 @@ Runtime dependencies: `pyserial`, `pytest`. esptool comes from the pinned esp32 
 | `xewe setup [--modules LIST\|all\|none] [--latest] [--force] [--core-source DIR] [--modules-source DIR] [--arduino-data DIR]` | arduino-cli, esp32 core, core library, libraries and modules into `build/`; generates `src/modules/` (zero modules is valid: `--modules none`, or no selection) |
 | `xewe build [--chip C \| --all-chips] [--define K=V]... [--clean] [--dry-run]` | compile into `build/out/<chip>/`; prints `Sketch uses N bytes (NN%)` (`--dry-run` prints the arduino-cli command only) |
 | `xewe flash [--chip C] [--port P] [--erase] [--no-build] [--require-board]` | build if stale (sources, version or `--define` values changed), then write the merged image at 0x0 |
-| `xewe serial [--port P] [--send CMD [--expect RE]] [--duration S] [--log FILE]` | timestamped console |
+| `xewe serial [--port P] [--send CMD [--expect RE] [--boot-timeout S]] [--duration S] [--log FILE]` | timestamped console; the tools open the port without resetting the board (`--reset` or flashing resets it); `--send` waits out a boot in progress (see below) |
+| `xewe provision [--port P] [--name NAME] [--modules all\|none\|LIST] [--timezone GMT+HH:MM] [--env FILE] [--no-reset] [--log FILE]` | answer the first-boot prompts of a flashed board (settings from `.env`) |
 | `xewe test [--chip C \| --all-chips] [--module SLUG]... [--host-only] [-- PYTEST_ARGS]` | pytest over `tests/` and the selected modules' `tests/` |
 | `xewe run [--chip C] [--define K=V]... [--no-serial]` | build, flash, listen |
 | `xewe boards [--no-probe] [--json] [--set-port P [--set-chip C]] [--clear]` | list boards, set an override |
@@ -42,6 +43,68 @@ Runtime dependencies: `pyserial`, `pytest`. esptool comes from the pinned esp32 
 
 Global flags (before the command): `--project DIR`, `--verbose`, `--version`.
 Exit codes: 0 ok, 1 failure, 2 usage, 3 not set up / tool missing, 4 board required but missing.
+
+## Serial and resets
+
+The tools open the port without resetting the board; `--reset` or flashing resets it. The chip
+resets on the control-line state DTR=0 & RTS=1 (native USB, ESP32-S3/C3/C6 USB-Serial/JTAG
+`303a:1001`: `rst:0x15 (USB_UART_CHIP_RESET)`; bridge boards: EN pulled low). The kernel raises
+DTR and RTS on open and pyserial applies DTR before RTS, so `Console.open` configures DTR high and
+RTS low for the open (1/1 -> 1/0) and drops DTR afterwards (-> 0/0), never passing through 0/1.
+On this VM's USB passthrough a reset re-enumerates the port and can lose it, which is why opening
+must not reset. After a reset, `xewe serial` shows the ROM lines (`ESP-ROM:...`, `rst:0x...`) and
+the boot log. With `--send`, the command is sent right away when nothing boot-like arrives within
+2 s of opening (the normal case), or, if a boot is in progress, after `System Setup Complete` (up to
+`--boot-timeout`, default 90 s: Wi-Fi + NTP can take ~30 s). An unprovisioned board (`Name your device`) exits 1 without sending: run
+`xewe provision`. A `boot: ...` line records which case happened.
+
+## Provision
+
+A freshly flashed (or erased) board stops at `Name your device`, then asks which modules to
+enable, the Wi-Fi network and password, and whether the detected time is right. `xewe provision`
+resets the board and answers those prompts:
+
+```sh
+build/.venv/bin/python -m xewe provision                      # settings from .env, board auto-selected
+build/.venv/bin/python -m xewe provision --port /dev/ttyACM0
+```
+
+Values come from flags, then the environment (`XEWE_DEVICE_NAME`, `XEWE_WIFI_SSID`,
+`XEWE_WIFI_PASSWORD`, `XEWE_TIMEZONE`, `XEWE_PROVISION_MODULES`), then the `.env` file (next
+section), then defaults (name from `xewe.lock`, all modules, accept the detected timezone). The
+password has no flag and is printed as `********`.
+
+A board whose earlier provisioning stopped part-way (for example at Wi-Fi) keeps what it stored and
+starts at a later prompt after the reset, such as the Wi-Fi network list; the tool answers whatever
+prompt comes first. The SSID is picked by its number in the list; an SSID not in the scan gets one
+rescan (`-2`), then is entered as a custom SSID (`-3`). `! Invalid number` is answered again. The
+one empty "nudge" line (sent when no prompt appears within 10 s of the reset, for a board that
+printed its prompt before the port was opened) is never sent after the first prompt. Exit 0 when provisioned or already provisioned, 2 for missing
+or bad settings (before the port is touched), 1 when the board stops answering as expected, 4
+without a board.
+
+## Credentials and settings: .env
+
+Credentials and per-bench settings live in a dotenv file that is never committed (`.env` and
+`.env.*` are git-ignored here and in the xewe-os template; `.env.example` is the committed
+template). Copy `.env.example` to `.env` and fill it in. Which file is used, first found wins:
+
+1. `--env FILE` (`xewe provision --from FILE` is an alias), else the `XEWE_ENV` variable (must exist;
+   exit 2 otherwise);
+2. `.env` in the project directory (the harness, where `xewe.lock` is);
+3. `.env` in the xewe-os-tools source checkout: the `local:<path>` source that `./setup.sh` recorded
+   for tools in `build/build_config.toml` (`XEWE_TOOLS_SOURCE`), else the checkout this package is
+   installed from (an install from a path).
+
+No file is fine. Keys: `XEWE_DEVICE_NAME`, `XEWE_WIFI_SSID`, `XEWE_WIFI_PASSWORD`, `XEWE_TIMEZONE`,
+`XEWE_PROVISION_MODULES` (provision), `XEWE_TEST_BUTTONS_PIN`, `XEWE_TEST_PINS_ADC_PIN` (module
+tests), `XEWE_PORT`, `XEWE_CHIP` (board selection). Format: `KEY=VALUE`, `#` comments, blank lines,
+optional `export ` prefix, optional single or double quotes, no interpolation; an empty value counts
+as unset. Variables already in the environment win over the file, flags win over both.
+
+`xewe provision`, `xewe test` (and the pytest plugin, so module tests see the pins without exports),
+`xewe serial`, `xewe flash`, `xewe run` and `xewe boards` read it. The tools log only
+`loaded N keys from <path>`, never a value; the Wi-Fi password is masked as `********` in all output.
 
 ## Without a board
 

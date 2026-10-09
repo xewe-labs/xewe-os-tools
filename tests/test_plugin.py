@@ -244,3 +244,27 @@ def test_port_not_back_after_flash_maps_to_exit_4(project: Paths, board_attached
     _write_tests(project, SESSION_TESTS)
     monkeypatch.setattr(flash, "write_image", gone)
     assert main(["test"]) == 4
+
+
+PIN_TESTS = '''
+import os
+
+import pytest
+
+
+@pytest.mark.host
+def test_pins_from_dotenv():
+    assert os.environ["XEWE_TEST_BUTTONS_PIN"] == "7"
+    assert os.environ["XEWE_TEST_PINS_ADC_PIN"] == "3"  # the real environment won
+'''
+
+
+def test_dotenv_pins_reach_module_tests(pytester: pytest.Pytester, project: Paths,
+                                        monkeypatch: pytest.MonkeyPatch) -> None:
+    (project.root / "tests").mkdir()
+    (project.root / "tests" / "test_pins_env.py").write_text(PIN_TESTS)
+    dotfile = project.root / ("." + "env")
+    dotfile.write_text("XEWE_TEST_BUTTONS_PIN=7\nXEWE_TEST_PINS_ADC_PIN=5\n")
+    monkeypatch.setenv("XEWE_TEST_PINS_ADC_PIN", "3")
+    res = _run(pytester, project)
+    res.assert_outcomes(passed=1)

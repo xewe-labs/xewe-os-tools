@@ -17,10 +17,12 @@ from xewe import (
     clean,
     config,
     doctor,
+    dotenv,
     flash,
     lockcmd,
     lockfile,
     modules,
+    provision,
     release,
     serialio,
     setup,
@@ -53,9 +55,19 @@ def _require_board(sp: argparse.ArgumentParser) -> None:
                     help="exit 4 (or fail tests) when no board is attached; also XEWE_REQUIRE_BOARD=1")
 
 
+ENV_HELP = ("dotenv file with XEWE_* settings; default: XEWE_ENV, else .env in the project, else .env in "
+            "the xewe-os-tools source checkout (first found wins; the real environment wins over the file)")
+ENV_COMMANDS = frozenset({"flash", "serial", "provision", "test", "run", "boards"})
+"""Commands that read XEWE_* settings (port, chip, provisioning, test pins) from the dotenv file."""
+
+
+def _env_arg(sp: argparse.ArgumentParser, *aliases: str) -> None:
+    sp.add_argument("--env", *aliases, dest="env_file", type=Path, metavar="FILE", help=ENV_HELP)
+
+
 def parser() -> argparse.ArgumentParser:
     """The full argument parser."""
-    ap = argparse.ArgumentParser(prog="xewe", description="XeWe OS firmware tools: setup, build, flash, serial, test.")
+    ap = argparse.ArgumentParser(prog="xewe", description="XeWe OS firmware tools: setup, build, flash, serial, provision, test.")
     ap.add_argument("--project", metavar="DIR", help="project root (default: nearest ancestor with xewe.lock)")
     ap.add_argument("-v", "--verbose", action="store_true", help="print every subprocess command and its output")
     ap.add_argument("--version", action="version", version=f"xewe-os-tools {__version__}")
@@ -83,17 +95,46 @@ def parser() -> argparse.ArgumentParser:
     sp.add_argument("--erase", action="store_true", help="erase the whole flash (NVS too) first")
     sp.add_argument("--no-build", action="store_true", help="flash the existing image")
     _require_board(sp)
+    _env_arg(sp)
 
-    sp = sub.add_parser("serial", help="listen to the board, or send a command and wait for a reply")
+    sp = sub.add_parser(
+        "serial", help="listen to the board, or send a command and wait for a reply",
+        description="Listen to the board, or send one command and wait for a reply. The tools open the port "
+                    "without resetting the board; --reset or flashing resets it (then the boot log is shown). "
+                    "With --send, the command is sent right away if no boot output appears within 2 s, or once "
+                    "a booting board printed 'System Setup Complete' (up to --boot-timeout); an "
+                    "unprovisioned board ('Name your device') exits 1 without sending.")
     sp.add_argument("--port", help="serial port")
     sp.add_argument("--baud", type=int, default=115200)
     sp.add_argument("--reset", action="store_true", help="pulse EN (RTS) before listening")
     sp.add_argument("--send", metavar="CMD", help="send one command")
     sp.add_argument("--expect", metavar="RE", help="with --send: wait for a line matching RE")
     sp.add_argument("--timeout", type=float, default=10.0, help="seconds to wait for --expect")
+    sp.add_argument("--boot-timeout", type=float, default=serialio.BOOT_TIMEOUT_SECONDS, metavar="S",
+                    help="with --send: seconds to wait for the boot to finish before sending (default %(default)g)")
     sp.add_argument("--duration", type=float, help="listen for this many seconds")
     sp.add_argument("--log", type=Path, metavar="FILE", help="append timestamped lines to FILE")
     _require_board(sp)
+    _env_arg(sp)
+
+    sp = sub.add_parser(
+        "provision", help="answer the first-boot prompts (name, modules, Wi-Fi, timezone) of a flashed board",
+        description="Answer the first-boot prompts of a freshly flashed board. Values: flags, then the environment "
+                    "(XEWE_DEVICE_NAME, XEWE_WIFI_SSID, XEWE_WIFI_PASSWORD, XEWE_TIMEZONE, XEWE_PROVISION_MODULES), "
+                    "then the dotenv file, then defaults. Dotenv file, first found wins: --env/--from FILE, else "
+                    "XEWE_ENV, else .env in the project directory, else .env in the xewe-os-tools source checkout "
+                    "(see .env.example). With the file in place no flags are needed. The Wi-Fi password has no "
+                    "flag and is masked in the output and log.")
+    sp.add_argument("--port", help="serial port")
+    sp.add_argument("--name", help="device name (default: [project] name in xewe.lock, else the folder name)")
+    sp.add_argument("--modules", metavar="all|none|LIST", help="modules to enable at their prompt (default: all)")
+    sp.add_argument("--timezone", metavar="GMT+HH:MM", help="answer n to the detected time and set this offset "
+                    "(default: accept the detected timezone)")
+    _env_arg(sp, "--from")
+    sp.add_argument("--timeout", type=float, default=provision.START_TIMEOUT,
+                    help="seconds from reset to the first prompt (default %(default)g)")
+    sp.add_argument("--no-reset", action="store_true", help="do not reset the board first")
+    sp.add_argument("--log", type=Path, metavar="FILE", help="append timestamped lines to FILE (password masked)")
 
     sp = sub.add_parser("test", help="run project and module tests with pytest (args after -- go to pytest)")
     _chip_args(sp)
@@ -101,12 +142,14 @@ def parser() -> argparse.ArgumentParser:
     sp.add_argument("--module", action="append", default=[], metavar="SLUG", help="only this module's tests")
     sp.add_argument("--host-only", action="store_true", help="only tests marked host")
     _require_board(sp)
+    _env_arg(sp)
 
     sp = sub.add_parser("run", help="build, flash, then listen (what run.sh calls)")
     _chip_args(sp, all_chips=False)
     sp.add_argument("--port", help="serial port")
     sp.add_argument("--define", action="append", default=[], metavar="KEY=VALUE")
     sp.add_argument("--no-serial", action="store_true", help="stop after flashing")
+    _env_arg(sp)
 
     sp = sub.add_parser("boards", help="list attached boards; set a port/chip override")
     sp.add_argument("--no-probe", action="store_true", help="do not reset boards to read their chip")
@@ -115,6 +158,7 @@ def parser() -> argparse.ArgumentParser:
     sp.add_argument("--set-chip", choices=chips.ALL_CHIPS, help="with --set-port: [override] chip")
     sp.add_argument("--clear", action="store_true", help="remove the [override]")
     _require_board(sp)
+    _env_arg(sp)
 
     sp = sub.add_parser("modules", help="list, select, validate and generate modules")
     msub = sp.add_subparsers(dest="modules_command", required=True, metavar="ACTION")
@@ -227,6 +271,8 @@ def dispatch(args: argparse.Namespace, extra: list[str]) -> int:
     """Run the parsed command."""
     p = Paths(find_root(args.project))
     cmd = args.command
+    if cmd in ENV_COMMANDS:
+        dotenv.load_settings(p.root, getattr(args, "env_file", None))
     if cmd == "setup":
         opts = setup.SetupOptions(
             latest=args.latest,
@@ -255,9 +301,13 @@ def dispatch(args: argparse.Namespace, extra: list[str]) -> int:
         return serialio.serial_main(
             args.port,
             lambda port: boards.select(p, port=port, probe=False),
-            args.baud, args.reset, args.send, args.expect, args.timeout, args.duration, args.log,
+            args.baud, args.reset, args.send, args.expect, args.timeout, args.boot_timeout, args.duration, args.log,
             _require_board_flag(args),
         )
+    if cmd == "provision":
+        settings = provision.resolve(lock.name or p.root.name, args.name, args.modules, args.timezone)
+        return provision.provision_main(args.port, lambda port: boards.select(p, port=port, probe=False),
+                                        settings, args.timeout, not args.no_reset, args.log)
     if cmd == "test":
         return run_tests(p, lock, _chips(args, p, lock), args.port, args.module, args.host_only,
                          _require_board_flag(args), extra)

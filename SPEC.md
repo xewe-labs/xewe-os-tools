@@ -61,7 +61,9 @@ xewe-os-tools/
 │   ├── boards.py          port scan, VID:PID filter, esptool probe, boards.toml
 │   ├── esptool.py         locate core-bundled esptool, run write-flash / chip-id
 │   ├── flash.py           xewe flash
-│   ├── serialio.py        Console: open, reset, listen with timestamps, send/expect
+│   ├── serialio.py        Console: open, reset, listen with timestamps, send/expect, boot-banner wait
+│   ├── provision.py       xewe provision: answer the first-boot prompts
+│   ├── dotenv.py          settings and credentials from .env (§15)
 │   ├── modules.py         registry of a modules checkout, resolve deps, generate src/modules/, validate
 │   ├── release.py         release matrix, static/firmware/releases/<version>/
 │   ├── doctor.py          environment checks
@@ -160,7 +162,8 @@ Common flags: `--chip c3|c6|s3`, `--all-chips`, `--port PATH`, `--require-board`
 | `xewe setup` | `[--latest] [--modules LIST\|all\|none] [--force] [--core-source DIR] [--modules-source DIR]` | §6. Installs everything into `build/`, then runs `modules generate` | n/a (never needs a board) |
 | `xewe build` | `[--chip C \| --all-chips] [--define KEY=VALUE]... [--clean]` | §7. Compiles; writes `build/out/<chip>/` | n/a; exit 0 on success |
 | `xewe flash` | `[--chip C] [--port P] [--baud 921600] [--erase] [--no-build] [--require-board]` | Builds if `out/<chip>` is missing, older than any source, or was built with other `--define` values/version/chip/FQBN options (`build.stamp`, §7), then §8 write-flash | prints status line, exit 0 (4 with `--require-board`) |
-| `xewe serial` | `[--port P] [--baud 115200] [--reset] [--send CMD [--expect RE] [--timeout 10]] [--duration S] [--log FILE] [--require-board]` | Listen with timestamps until Ctrl-C/`--duration`, or send one command and wait for a regex | `no board attached; nothing to listen to`, exit 0 (4 with `--require-board`) |
+| `xewe serial` | `[--port P] [--baud 115200] [--reset] [--send CMD [--expect RE] [--timeout 10] [--boot-timeout 90]] [--duration S] [--log FILE] [--require-board]` | Listen with timestamps until Ctrl-C/`--duration` (opening the port resets the board on native USB; the boot log is shown), or wait for the boot to finish, send one command and wait for a regex (§8) | `no board attached; nothing to listen to`, exit 0 (4 with `--require-board`) |
+| `xewe provision` | `[--port P] [--name NAME] [--modules all\|none\|LIST] [--timezone GMT+HH:MM] [--env\|--from FILE] [--timeout 60] [--no-reset] [--log FILE]` | §8, §15. Resets the board and answers its first-boot prompts (name, modules, Wi-Fi, timezone); exit 0 also when already provisioned, 2 bad/missing settings (checked before the port is opened), 1 prompt timeout or unexpected sequence | `no board attached; nothing to provision`, exit 4 |
 | `xewe test` | `[--chip C \| --all-chips] [--port P] [--module SLUG]... [--host-only] [--require-board] [-- PYTEST_ARGS]` | §9. Runs pytest over project and selected-module tests | hardware tests compile and report compiled-not-run, exit 0 |
 | `xewe run` | `[--chip C] [--port P] [--define K=V]... [--no-serial]` | build → flash → serial (what `run.sh` calls) | builds, prints status line, exit 0 |
 | `xewe boards` | `[--no-probe] [--json] [--set-port P [--set-chip C]] [--clear]` | §5. Lists candidate ports and chips; writes `build/boards.toml` | `no board attached`, exit 0 (4 with `--require-board`) |
@@ -521,10 +524,17 @@ its own `cache/<chip>` and `gen/<chip>`, so incremental rebuilds stay warm acros
 ```
 <esptool> --chip esp32c3 --port /dev/ttyACM0 --baud 921600 \
           --before default-reset --after hard-reset \
-          write-flash 0x0 build/out/c3/2.0.15-c3-xewe-os.bin
+          write-flash 0x0 <piece at 0x0> 0xe000 <piece at 0xe000>
 ```
+- The merged image spans the whole flash. Written as one piece at `0x0` it would fill every data
+  partition with the image's 0xFF, so a flash without `--erase` would still wipe NVS (the
+  provisioning). `flash_segments` reads the partition table at `0x8000` of the image and leaves
+  out every data partition whose bytes in the image are all 0xFF (nvs, spiffs, coredump); the
+  rest (bootloader, partition table, otadata, app) is written in one `write-flash` call. An image
+  without a readable partition table is written whole at `0x0`. Verified on an ESP32-S3
+  (2026-10-08): provisioning survives the flash.
 - `--erase` runs `<esptool> --chip … --port … erase-flash` first, then waits for the port (below) (wipes NVS; what
-  `EraseFlash=all` would do via `arduino-cli upload`, which we do not use). Default keeps NVS, as today.
+  `EraseFlash=all` would do via `arduino-cli upload`, which we do not use). Default keeps NVS (see `flash_segments` above).
 - If the board's detected chip ≠ the selected chip → exit 2 before flashing.
 - If esptool fails at 921600, retry once at 460800 (CH340 boards), then exit 1.
 - After each esptool command (erase-flash, write-flash) the hard reset re-enumerates a native
@@ -533,17 +543,82 @@ its own `cache/<chip>` and `gen/<chip>`, so incremental rebuilds stay warm acros
   stable port. Not back in time → exit 4.
 
 **Serial** (`serialio.Console`, pyserial):
-- Open with `dsrdtr=False, rtscts=False`; set `dtr=False, rts=False` before `open()` so UART-bridge
-  boards are not held in reset/bootloader. `--reset`: pulse RTS (EN) low for 100 ms.
+- Open without resetting the board: `dsrdtr=False, rtscts=False`; set `dtr=True, rts=False`
+  before `open()` and `dtr=False` after it. The chip resets on DTR=0 & RTS=1 (native USB
+  USB-Serial/JTAG `303a:1001`: `rst:0x15 (USB_UART_CHIP_RESET)`; bridges: EN low). cdc_acm raises
+  both lines on open and pyserial applies DTR then RTS, so this goes 1/1 -> 1/0 -> 0/0 and never
+  through 0/1. `--reset`: pulse RTS (EN) low for 100 ms (deliberately 0/1). Flashing also resets.
 - Listen: decode UTF-8 with `errors="replace"`, split on `\n`, strip `\r`, prefix local time
   `HH:MM:SS.mmm  `; tee to `--log FILE`. Ends on Ctrl-C (exit 0) or `--duration`.
   If the port disappears (reset), reopen for up to 5 s, printing `-- port reconnected --`.
+- Before sending (`serialio.wait_until_ready`): wait for a boot in progress (after `--reset`
+  or a flash). `System Setup Complete` → send. `Name your device` → `board is unprovisioned; run
+  xewe provision`, exit 1, nothing sent. No ROM/boot line (`ESP-ROM:`, `rst:0x`, either banner)
+  within 2 s of opening → no boot in progress (the normal case), send right away. A boot
+  that starts but shows neither line within `--boot-timeout` (default 90 s; Wi-Fi + NTP take up to
+  ~30 s) → exit 1, last 20 lines, nothing sent. One status line says what happened:
+  `boot: System Setup Complete after 12.3 s`.
 - Send: write `CMD + "\n"` (the XeWe serial reader ignores `\r` and ends a line on `\n`,
   `SerialPort.cpp`); echo it as `> CMD`; then read lines until `--expect` regex matches (exit 0)
   or `--timeout` (default 10 s, exit 1, last 20 lines printed). Without `--expect`, collect output
   until 500 ms of silence and exit 0.
 - Defaults: 115200 baud (today's `SERIAL_BAUD`).
 - The old fallbacks (`arduino-cli monitor`, miniterm, `screen`) are dropped.
+- Boot wait (`serialio.wait_for_banner`, shared by `xewe provision` and the test plugin §9):
+  optionally reset, then wait for a regex until a deadline, retrying while a native-USB port is
+  gone (first boot ends with `Initial Setup Complete`, `Rebooting`, a port drop, then
+  `System Setup Complete`). Lines read before the reset (the boot the open itself started on
+  native USB) are skipped, so only a match from the boot after the reset counts; ROM lines and a
+  prompt printed twice are harmless. `xewe provision` and the `firmware` fixture open the port and
+  reset deliberately right away, so the open-reset boot is cut short and the wait covers the
+  second boot.
+
+**Provision** (`provision.py`, `xewe provision`): answers the first-boot prompts of a freshly
+flashed (or erased) board so nobody has to type them.
+- Settings, in precedence order: flags (`--name`, `--modules`, `--timezone`), environment
+  (`XEWE_DEVICE_NAME`, `XEWE_WIFI_SSID`, `XEWE_WIFI_PASSWORD`, `XEWE_TIMEZONE`,
+  `XEWE_PROVISION_MODULES`), the dotenv file (§15: `--env`/`--from FILE`, `XEWE_ENV`, `.env` in the
+  project, `.env` in the tools checkout; applied to the environment without overriding it), defaults (name = `[project] name` or the folder name,
+  modules = all, timezone unset = accept the detected one). Empty values count as unset (except
+  `XEWE_PROVISION_MODULES=""` = none). SSID and password have no flag (argv is visible to other
+  users). Wi-Fi enabled without SSID and password, a bad name or a timezone that is not
+  `GMT[+-]HH:MM` (≤ 14:00) → exit 2 before the port is opened.
+- Board: selected like `xewe serial`; none → exit 4. Unless `--no-reset`, RTS is pulsed. Then wait
+  up to `--timeout` (60 s) for the first prompt of any kind (table below; `Name your device` on a
+  fresh board) or `System Setup Complete` (→ `already provisioned`, exit 0, nothing sent). The
+  firmware stores each answer as it goes (device name, each module's choice), so a board whose
+  earlier provisioning stopped part-way skips those after the reset and starts at a later prompt,
+  e.g. `Stored WiFi credentials not found` + the network list. Only in this wait, and only before
+  any prompt was seen, one empty line ("nudge") is sent after 10 s: a board already sitting at the
+  name prompt answers `Confirm ""?` (declined, so the name prompt prints again); one sitting at the
+  Wi-Fi selection answers `! Invalid number` (answered `-2`, so the list prints again). After the
+  first prompt silence never triggers a nudge (scan, join and NTP are slow).
+- Prompts (firmware: core `XeWeOs.cpp`, `Module.cpp`, `Serial.cpp`; modules `Wifi.cpp`, `Time.cpp`).
+  Each prompt is a CRLF line followed by an input line `> ` or `(y/n) > `; input typed before the
+  prompt is discarded (`clear_input`), so each answer is sent only after its input line. The tool
+  reacts to what it sees, in any order, with 30 s between prompts (progress lines such as
+  `Joined`, `Detecting Timezone`, `<Module> Setup` restart the timer):
+
+  | Board prints | Answer |
+  |---|---|
+  | `Name your device (ex: Kitchen Lights):` | the name |
+  | `Confirm "<name>"?` | `y` if it is our name, else `n` (re-asks) |
+  | `Would you like to enable <Name> module?` (modules that can be disabled: buttons, pins, wifi, time) | `y` if the slug of `<Name>` is selected, else `n` |
+  | `Scanning WiFi networks...`, `N. <SSID>`…, blank, menu, `Selection: ` (then `> ` on its own line) | `N` whose SSID equals `XEWE_WIFI_SSID` (every `N. ` line between the scan and `Selection:` is an entry, whatever it contains: spaces, punctuation, a leading `!`); not listed → `-2` (rescan) once, then `-3` |
+  | `! Invalid number. Please enter a base-10 integer.` + `> ` (get_int re-prompt) | the last selection again (`-2` if nothing was answered yet) |
+  | `Enter custom SSID: ` | the SSID |
+  | `Selected: '<ssid>'` / `Password: ` | the password (the firmware echoes it) |
+  | `Is your time: <date> (<GMT±HH:MM>)?` | `y` without a timezone setting, else `n` |
+  | `Enter your timezone offset (e.g. GMT-08:00)` | the configured offset; none configured → exit 1 |
+  | `Initial Setup Complete`, `Rebooting`, port drop, `System Setup Complete` | — (boot wait, 90 s) |
+
+  `Unable to join` / `Invalid choice`, a fifth `Selection:`, a fourth `! Invalid number`, any other
+  `! …` error line, an input line for
+  an unknown prompt, or `Name your device` after the reboot → exit 1 with the last 20 lines.
+- Output: board lines echoed with timestamps as `xewe serial` (and `--log FILE`); any line that
+  contains the password, typed or echoed, is replaced by `********` there and in the tail. Last
+  line: `provisioned in N s: name "<name>"; modules <enabled>; wifi "<ssid>" (network N of M |
+  custom SSID, not in the scan); timezone <y, board detected GMT+02:00 | n, set GMT-08:00 …>`.
 
 ---
 
@@ -569,7 +644,7 @@ folders need no `conftest.py`):
 |---|---|---|
 | `compiled` | session | Builds the selected chip once (same code path as `xewe build`); a build failure fails every hardware test. |
 | `board` | session | Depends on `compiled`; detects the board (§5). None → `pytest.skip("compiled, not run: no board attached")`; with `--require-board` → `pytest.fail(...)`. Returns `Board(port, chip, serial_number)`. |
-| `firmware` | session | Depends on `board`; flashes `build/out/<chip>/` once per session, opens the session's one `Console`, pulses reset and waits up to 90 s for `System Setup Complete` (through a first-boot `Initial Setup Complete`/`Rebooting` and port drops), then 0.5 s of silence. `Name your device` (unprovisioned board) fails with a pointer to the runbook's first-boot provisioning. The console is closed at session end. Returns `Firmware(bin_path, version, chip, console)`. |
+| `firmware` | session | Depends on `board`; flashes `build/out/<chip>/` once per session, opens the session's one `Console`, pulses reset and waits up to 90 s for `System Setup Complete` (through a first-boot `Initial Setup Complete`/`Rebooting` and port drops), then 0.5 s of silence. `Name your device` (unprovisioned board) fails with a pointer to `xewe provision` and the runbook's first-boot provisioning. The wait is `serialio.wait_for_banner` (§8), shared with `xewe provision`. The console is closed at session end. Returns `Firmware(bin_path, version, chip, console)`. |
 | `serial` | function | Depends on `firmware`; the session `Console` (never opened/closed per test), drained and with `lines` emptied at test start: `send(cmd)`, `expect(regex, timeout=10) -> re.Match`, `command(cmd, expect, timeout) -> re.Match`, `lines` (captured since the test started), `drain()`, `reset()`. Expect failures raise `AssertionError` with the last 20 lines. |
 
 No-board summary and exit code: the plugin's `pytest_terminal_summary` lists every test skipped
@@ -731,7 +806,9 @@ in an `xewe-os` checkout, then `xewe modules validate build/xewe-os-modules` (or
 | `test_boards.py` | VID:PID filter, chip-id output parsing (sample esptool 5 output), cache by serial number, override precedence, no-board / one / several decision, `boards.toml` `[override]` preserved |
 | `test_flash.py` | esptool argv, `--erase` (port wait after erase and after write), port not back → exit 4, baud fallback, no-board exit 0 vs `--require-board` exit 4, chip mismatch exit 2 |
 | `test_serial.py` | timestamps, `\r` stripping, send/expect match and timeout (exit 1), reconnect, reset across a port drop, `wait_for_port` settle and timeout (exit 4) |
-| `test_plugin.py` | `pytester`: no board → "compiled, not run" summary and exit 0; `--require-board` → pytest 1, `xewe test` 4; faked board: one port open per session, boot banner wait (first-boot reboot, unprovisioned, timeout); host tests run; compile failure fails hardware tests |
+| `test_provision.py` | scripted first-boot transcript: answers in order, SSID by number (the real S3 list), rescan then `-3` custom, `! Invalid number` re-answered, board resuming at the network list, nudge only before the first prompt (fake clock), timezone `y` / `n` + offset, already provisioned sends nothing, nudge, port drop at reboot, prompt timeout exit 1 with masked tail, password never in stdout/log; settings precedence flags > env > dotenv file > defaults, settings from `<project>/.env` with no flags, exit 2 before the port, exit 4 without a board |
+| `test_dotenv.py` | parsing (comments, quotes, `export`, no interpolation), errors without values, real environment wins, resolution order (`--env`, `XEWE_ENV`, project, tools checkout from `build_config.toml` or the package checkout), missing file is not an error, only the key count is logged, `.env.example` lists every key |
+| `test_plugin.py` | `pytester`: no board → "compiled, not run" summary and exit 0; `--require-board` → pytest 1, `xewe test` 4; faked board: one port open per session, boot banner wait (first-boot reboot, unprovisioned, timeout); host tests run; compile failure fails hardware tests; pins from the project `.env` reach `os.environ` (real environment wins) |
 | `test_modules.py` | dependency order and cycle error against fixtures copied from the six real `module.properties`; generated `Modules.h`/`modules.lock` golden; every validator rule has a failing fixture |
 | `test_release.py` | matrix parsing and typing, folder layout, `firmware_map.csv`, version ≥ check, printed commands, never calls git |
 | `test_cli.py` | every subcommand's `--help`, exit-code table, `--verbose` |
@@ -761,7 +838,7 @@ in an `xewe-os` checkout, then `xewe modules validate build/xewe-os-modules` (or
 
 **Kept bit-for-bit**
 - Board options `CDCOnBoot=cdc,CPUFreq=160,DebugLevel=none,EraseFlash=all,FlashMode=qio,FlashSize=4M,PartitionScheme=no_ota,UploadSpeed=921600`.
-- Merged image at `0x0`, name `<version>-<chip>-<project>.bin`, flash baud 921600, serial baud 115200.
+- Merged image (written in pieces that skip blank data partitions, §8), name `<version>-<chip>-<project>.bin`, flash baud 921600, serial baud 115200.
 - `manifest.json` schema and formatting (ESP Web Tools), `meta.json` keys except `path_abs_*`.
 - `static/firmware/releases/<version>/<chip>/`, `release_notes.txt`, `firmware_map.csv`,
   `build_notes.txt`, `firmware-<version>.tar.gz`, tag name `v<version>`.
@@ -786,3 +863,32 @@ in an `xewe-os` checkout, then `xewe modules validate build/xewe-os-modules` (or
 | O10 | Code formatter (`tools/code_formatter/`) | Not part of this package in phase 1; decide later between `xewe format` and leaving it in core. |
 | O11 | Windows | Keep `pathlib` everywhere, `.exe` suffix in `chips/arduino` lookups, `COMx` accepted by `--port`; no PowerShell. Implement after phase 1. |
 | O12 | `serial` fixture scope | Function scope over a session-flashed board; reboot between tests only via an explicit `serial.reset()`. |
+
+---
+
+## 15. Configuration: `.env` (`dotenv.py`)
+
+Credentials and bench settings come from a dotenv file that is never committed (`.env`, `.env.*`
+git-ignored in the tools repo, `.env` in the xewe-os template; `.env.example` at the tools repo root
+is the committed template).
+
+- File, first found wins: (1) `--env FILE` (on flash, serial, provision, test, run, boards;
+  `provision --from` is an alias), else `XEWE_ENV`; a named file must exist (exit 2); (2) `.env` in
+  the project root (nearest ancestor with `xewe.lock`, i.e. the harness); (3) `.env` in the tools
+  source checkout: `installed.tools.source = "local:<path>"` in `build/build_config.toml` (written by
+  setup when `XEWE_TOOLS_SOURCE` is used), else `Path(dotenv.__file__).resolve().parents[2]` when
+  that directory holds `pyproject.toml` (package installed from a path). No file is not an error.
+- Format: `KEY=VALUE`; `#` comment lines, blank lines, optional `export ` prefix, optional matching
+  single or double quotes around the value; no interpolation; a line without `=` is exit 2 naming
+  file and line only.
+- Keys: `XEWE_DEVICE_NAME`, `XEWE_WIFI_SSID`, `XEWE_WIFI_PASSWORD`, `XEWE_TIMEZONE`,
+  `XEWE_PROVISION_MODULES`, `XEWE_TEST_BUTTONS_PIN`, `XEWE_TEST_PINS_ADC_PIN`, `XEWE_PORT`,
+  `XEWE_CHIP` (other `XEWE_*` variables the tools read are accepted; an unknown `XEWE_*` key is a
+  warning naming the key). Only `XEWE_*` keys with a non-empty value are applied, through
+  `apply()`, which sets `os.environ[key]` only when the variable is not set: the real environment
+  wins, flags win over both.
+- Applied by the CLI before flash, serial, provision, test, run and boards (so `XEWE_PORT`/`XEWE_CHIP`
+  reach board selection and the chip rule), and by the pytest plugin at `pytest_configure` inside a
+  project (so module tests read `XEWE_TEST_*` from `os.environ`).
+- Logging: `loaded N keys from <path>` only; values are never logged. The Wi-Fi password is masked
+  (`********`) in console output, `--log` files and failure tails (§8).

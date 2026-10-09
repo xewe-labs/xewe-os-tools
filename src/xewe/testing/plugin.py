@@ -5,12 +5,14 @@ session, find the board, flash it once, wait for the firmware to finish booting,
 test the session's one serial console. Without a board, hardware tests are skipped with a reason
 starting ``compiled, not run`` and the run exits 0; ``--xewe-require-board`` turns those skips
 into failures (``xewe test`` then exits 4, see ``board_missing``).
+
+At configure time the project's dotenv file is applied (:mod:`xewe.dotenv`; the real environment
+wins), so ``XEWE_TEST_*`` pins, ``XEWE_PORT`` and ``XEWE_CHIP`` reach the tests without exports.
 """
 
 from __future__ import annotations
 
 import os
-import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,12 +20,12 @@ from pathlib import Path
 import pytest
 from serial import SerialException
 
-from xewe import boards, build, flash, lockfile
+from xewe import boards, build, dotenv, flash, lockfile
 from xewe.boards import Board
 from xewe.lockfile import Lock
 from xewe.project import Paths, find_root
 from xewe.report import EXIT_NO_BOARD, NO_BOARD, XeweError
-from xewe.serialio import Console, ExpectTimeout
+from xewe.serialio import BOOT_READY, BOOT_UNPROVISIONED, Console, ExpectTimeout, wait_for_banner
 
 NOT_RUN = "compiled, not run"
 HARDWARE_FIXTURES = frozenset({"compiled", "board", "firmware", "serial"})
@@ -31,11 +33,9 @@ BOOT_TIMEOUT_SECONDS = 90.0
 """Longest wait for the end-of-boot banner (Wi-Fi + NTP, plus the one reboot after first boot)."""
 BOOT_WAIT_SECONDS = 0.5
 """Settle after the banner: read until this much silence before the first test."""
-BOOT_READY = r"System Setup Complete"
-BOOT_UNPROVISIONED = r"Name your device"
 UNPROVISIONED_MESSAGE = (
     "board on {port} is unprovisioned (first-boot prompt 'Name your device'); "
-    "provision it once by hand (RUNBOOK section 3, first-boot provisioning), then re-run the tests"
+    "provision it once with `xewe provision` (RUNBOOK section 3, first-boot provisioning), then re-run the tests"
 )
 
 
@@ -113,7 +113,15 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "host: pure logic; never needs a board or a build")
     config.addinivalue_line("markers", "hardware: needs firmware on a board")
-    config.stash[_KEY] = XeweContext(config)
+    ctx = XeweContext(config)
+    config.stash[_KEY] = ctx
+    # XEWE_TEST_* pins, XEWE_PORT, XEWE_CHIP from the dotenv file (real environment wins), before
+    # collection so module tests read them from os.environ. Only inside a xewe project.
+    if ctx.paths is not None:
+        try:
+            dotenv.load_settings(ctx.paths.root)
+        except XeweError as exc:
+            raise pytest.UsageError(str(exc)) from None
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -167,22 +175,13 @@ def wait_for_boot(console: Console, timeout: float = BOOT_TIMEOUT_SECONDS) -> No
     ``Initial Setup Complete`` and ``Rebooting`` and boots again: that is waited through, as is
     the native-USB port dropping and coming back during either reset.
     """
-    deadline = time.monotonic() + timeout
     try:
-        console.reset()
-    except XeweError:
-        pass  # the port is gone for now; polling below keeps reconnecting until the deadline
-    rx = f"{BOOT_READY}|{BOOT_UNPROVISIONED}"
-    while True:
-        try:
-            m = console.expect(rx, timeout=max(0.0, deadline - time.monotonic()))
-            break
-        except ExpectTimeout as exc:
-            pytest.fail(f"board on {console.port} did not finish booting within {timeout:g} s "
-                        f"(no {BOOT_READY!r}); {exc}", pytrace=False)
-        except XeweError as exc:  # port gone longer than one reconnect window
-            if time.monotonic() >= deadline:
-                pytest.fail(f"board on {console.port} did not finish booting within {timeout:g} s: {exc}", pytrace=False)
+        m = wait_for_banner(console, f"{BOOT_READY}|{BOOT_UNPROVISIONED}", timeout)
+    except ExpectTimeout as exc:
+        pytest.fail(f"board on {console.port} did not finish booting within {timeout:g} s "
+                    f"(no {BOOT_READY!r}); {exc}", pytrace=False)
+    except XeweError as exc:  # port still gone at the deadline
+        pytest.fail(f"board on {console.port} did not finish booting within {timeout:g} s: {exc}", pytrace=False)
     if m.group(0) == BOOT_UNPROVISIONED:
         pytest.fail(UNPROVISIONED_MESSAGE.format(port=console.port), pytrace=False)
     console.collect(silence=BOOT_WAIT_SECONDS)

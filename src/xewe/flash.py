@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import struct
+import tempfile
 from pathlib import Path
 
 from xewe import boards, build, chips, config, esptool
@@ -13,6 +15,42 @@ from xewe.serialio import Console, wait_for_port
 
 DEFAULT_BAUD = 921600
 FALLBACK_BAUD = 460800
+
+PARTITION_TABLE_OFFSET = 0x8000
+"""Where the ESP-IDF/Arduino partition table sits in a merged image (all ESP32 chips)."""
+PARTITION_ENTRY = struct.Struct("<2sBBII16sI")
+PARTITION_MAGIC = b"\xaa\x50"
+PARTITION_TYPE_DATA = 1
+
+
+def flash_segments(image: bytes) -> list[tuple[int, bytes]]:
+    """(offset, bytes) pieces of a merged image to write, leaving out data partitions it carries
+    nothing for.
+
+    The merged image spans the whole flash, so writing it at 0x0 fills NVS (provisioning, Wi-Fi
+    credentials), SPIFFS and coredump with 0xFF: a flash "without erase" would still wipe them.
+    Every data partition whose bytes in the image are all 0xFF is skipped; everything else
+    (bootloader, partition table, otadata, app) is written. Without a readable partition table
+    the whole image is one piece at 0x0.
+    """
+    spans: list[tuple[int, int]] = []
+    for i in range(PARTITION_TABLE_OFFSET, min(len(image), PARTITION_TABLE_OFFSET + 0xC00), PARTITION_ENTRY.size):
+        entry = image[i:i + PARTITION_ENTRY.size]
+        if len(entry) < PARTITION_ENTRY.size or entry[:2] != PARTITION_MAGIC:
+            break
+        _, ptype, _, offset, size, _, _ = PARTITION_ENTRY.unpack(entry)
+        end = min(offset + size, len(image))
+        if ptype == PARTITION_TYPE_DATA and offset < end and image[offset:end].count(0xFF) == end - offset:
+            spans.append((offset, end))
+    pieces: list[tuple[int, bytes]] = []
+    pos = 0
+    for start, end in sorted(spans):
+        if start > pos:
+            pieces.append((pos, image[pos:start]))
+        pos = max(pos, end)
+    if pos < len(image):
+        pieces.append((pos, image[pos:]))
+    return pieces
 
 
 def esptool_cmd(p: Paths) -> list[str]:
@@ -44,7 +82,11 @@ def ensure_built(
 
 
 def write_image(cmd: list[str], board: Board, chip: str, binary: Path, baud: int = DEFAULT_BAUD, erase: bool = False) -> None:
-    """erase (optional) + write-flash at 0x0, retrying once at 460800 baud.
+    """erase (optional) + write-flash of the merged image, retrying once at 460800 baud.
+
+    The image is written in pieces (``flash_segments``) so that data partitions the image leaves
+    blank (NVS with the provisioning, SPIFFS, coredump) keep their contents; only ``--erase``
+    clears them.
 
     esptool hard-resets the board after each command, which re-enumerates a native-USB port, so
     after erase-flash and after write-flash we wait until the port is back and stable
@@ -58,16 +100,28 @@ def write_image(cmd: list[str], board: Board, chip: str, binary: Path, baud: int
             raise XeweError(f"esptool erase-flash failed:\n{proc.stdout.strip()[-2000:]}")
         wait_for_port(board.port, boards.port_exists)
     bauds = [baud] + ([FALLBACK_BAUD] if baud == DEFAULT_BAUD else [])
-    for i, rate in enumerate(bauds):
-        args = [*base, "--baud", str(rate), "--before", "default-reset", "--after", "hard-reset",
-                "write-flash", "0x0", str(binary)]
-        proc = esptool.run(cmd, args)
-        if proc.returncode == 0:
-            break
-        if i + 1 < len(bauds):
-            log.warning("esptool failed at %d baud; retrying at %d", rate, bauds[i + 1])
+    image = binary.read_bytes()
+    pieces = flash_segments(image)
+    with tempfile.TemporaryDirectory(prefix="xewe-flash-") as tmp:
+        if len(pieces) == 1 and pieces[0][0] == 0:
+            files = ["0x0", str(binary)]
         else:
-            raise XeweError(f"esptool write-flash failed:\n{proc.stdout.strip()[-2000:]}")
+            files = []
+            for offset, data in pieces:
+                part = Path(tmp) / f"{binary.stem}-{offset:#x}.bin"
+                part.write_bytes(data)
+                files += [f"{offset:#x}", str(part)]
+            log.debug("writing %s; data partitions left as they are (NVS kept)", " ".join(files[::2]))
+        for i, rate in enumerate(bauds):
+            args = [*base, "--baud", str(rate), "--before", "default-reset", "--after", "hard-reset",
+                    "write-flash", *files]
+            proc = esptool.run(cmd, args)
+            if proc.returncode == 0:
+                break
+            if i + 1 < len(bauds):
+                log.warning("esptool failed at %d baud; retrying at %d", rate, bauds[i + 1])
+            else:
+                raise XeweError(f"esptool write-flash failed:\n{proc.stdout.strip()[-2000:]}")
     wait_for_port(board.port, boards.port_exists)
 
 

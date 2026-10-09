@@ -9,7 +9,7 @@ from xewe import __version__, fetch, lockfile
 from xewe.cli import main
 from xewe.project import Paths
 
-COMMANDS = ["setup", "build", "flash", "serial", "test", "run", "boards", "modules", "lock", "clean", "doctor", "release"]
+COMMANDS = ["setup", "build", "flash", "serial", "provision", "test", "run", "boards", "modules", "lock", "clean", "doctor", "release"]
 SUBCOMMANDS = ["modules list", "modules select", "modules validate", "modules generate", "lock show", "lock update"]
 
 

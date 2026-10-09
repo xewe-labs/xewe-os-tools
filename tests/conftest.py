@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 from serial.tools import list_ports
 
-from xewe import config
+from xewe import config, dotenv
 from xewe.modules import Registry
 from xewe.project import Paths
 
@@ -71,11 +72,19 @@ def write_project(root: Path, selected: str = '["wifi", "web-interface"]', ino: 
 
 
 @pytest.fixture(autouse=True)
-def _isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def _isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
     for var in ("XEWE_PORT", "XEWE_CHIP", "XEWE_REQUIRE_BOARD", "XEWE_ARDUINO_CLI", "XEWE_ESPTOOL",
-                "XEWE_ARDUINO_DATA", "XEWE_CORE_SOURCE", "XEWE_MODULES_SOURCE", "XEWE_TOOLS_SOURCE"):
+                "XEWE_ARDUINO_DATA", "XEWE_CORE_SOURCE", "XEWE_MODULES_SOURCE", "XEWE_TOOLS_SOURCE",
+                *dotenv.KEYS, dotenv.ENV_VAR):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("XEWE_CACHE", str(tmp_path / "xdg-cache"))
+    # Never read the dotenv file of this checkout (the developer's credentials): no tools checkout
+    # is found unless a test sets one up.
+    monkeypatch.setattr(dotenv, "package_checkout", lambda module_file=None: None)
+    saved = dict(os.environ)  # dotenv.apply writes os.environ directly; undo it after each test
+    yield
+    os.environ.clear()
+    os.environ.update(saved)
 
 
 @pytest.fixture
@@ -156,15 +165,21 @@ class FakeSerial:
         self.script = script
         self.fail_reads = 0
         self.rts_history: list[bool] = []
+        self.line_history: list[tuple[bool, bool]] = []
+        """(dtr, rts) after each line change and at open, in order (open starts from cdc_acm's 1/1)."""
         FakeSerial.instances.append(self)
 
     def __setattr__(self, name: str, value: Any) -> None:
         if name == "rts" and "rts_history" in self.__dict__:
             self.rts_history.append(value)
         object.__setattr__(self, name, value)
+        if name in ("dtr", "rts") and self.__dict__.get("is_open"):
+            self.line_history.append((self.dtr, self.rts))
 
     def open(self) -> None:
+        # Like cdc_acm + pyserial posix: the kernel raises both lines, then DTR, then RTS is applied.
         self.dtr_at_open, self.rts_at_open = self.dtr, self.rts
+        self.line_history += [(True, True), (self.dtr, True), (self.dtr, self.rts)]
         self.is_open = True
 
     def close(self) -> None:

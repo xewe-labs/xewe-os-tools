@@ -56,6 +56,24 @@ Reuse an installed esp32 core instead of downloading ~1.7 GB again:
 hold `packages/esp32/...`. Setup checks the pinned core version and installs it there if missing,
 and remembers the directory in `build/build_config.toml`.
 
+## Provisioning a board
+
+A flashed board waits at `Name your device` until it is provisioned (`xewe test` fails with a
+pointer to this). `xewe provision` answers the first-boot prompts; with the `.env` file in place no
+flags are needed: `build/.venv/bin/python -m xewe provision` (or `--port P`). Exit 2 naming
+`XEWE_WIFI_*` means the user has not filled in `.env` yet: ask them to, do not invent values. Exit 2 means
+settings are missing (nothing was sent), 1 means the board did something unexpected (last 20
+lines printed), 0 includes `already provisioned`.
+
+## Credentials: .env
+
+The user keeps credentials and bench settings (`XEWE_WIFI_SSID`, `XEWE_WIFI_PASSWORD`, test pins,
+`XEWE_PORT`, `XEWE_CHIP`) in a git-ignored `.env` in the project directory or the xewe-os-tools
+checkout (template: `.env.example`; resolution order in the README). Agents never read, print,
+copy, create or edit `.env`; the tools read it. Never put Wi-Fi credentials on the command line, in
+a repo or in your output. The tools log only `loaded N keys from <path>`, and the password is masked
+as `********` in all output, including `--log` files and failure tails.
+
 ## Rules
 
 - `xewe` never runs git writes; `xewe release` prints the git/gh commands for a human.
