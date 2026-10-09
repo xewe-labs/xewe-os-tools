@@ -10,7 +10,7 @@ core/modules/tools refs, module selection, libraries). The full layout is in SPE
 
 ## Install
 
-A project's `./setup.sh` (reference copy: `scripts/bootstrap.sh`) does this for you: it creates
+A project's `./setup.sh` (reference copy: `scripts/setup.sh`) does this for you: it creates
 `build/tools/.venv`, installs this package into it from `$XEWE_TOOLS_SOURCE` (a local checkout) or
 from the `[tools]` ref in `xewe.toml` cloned into `build/tools` (a tag, a branch that is followed on
 every run, or a commit SHA), then runs `xewe setup "$@"`. `scripts/run.sh` is the reference

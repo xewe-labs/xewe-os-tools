@@ -456,8 +456,8 @@ def test_toolchain_lock_is_exclusive(tmp_path: Path) -> None:
 
 
 def test_tools_branch_ref_is_recorded(fresh: Paths, monkeypatch: pytest.MonkeyPatch) -> None:
-    """[tools] ref may be a branch (bootstrap.sh follows its remote head); setup records the ref and
-    the commit of build/tools. bootstrap.sh itself has no shell test in this suite."""
+    """[tools] ref may be a branch (setup.sh follows its remote head); setup records the ref and
+    the commit of build/tools. setup.sh itself has no shell test in this suite."""
     fresh.lock.write_text(fresh.lock.read_text().replace('ref = "v0.1.1"', 'ref = "main"'))
     fresh.tools_checkout.mkdir(parents=True)
     commits: list[Path] = []
@@ -474,9 +474,9 @@ def test_bootstrap_scripts_use_new_layout() -> None:
     import subprocess
 
     scripts = REPO / "scripts"
-    for name in ("bootstrap.sh", "run.sh"):
+    for name in ("setup.sh", "run.sh"):
         assert subprocess.run(["bash", "-n", str(scripts / name)]).returncode == 0
-    boot = (scripts / "bootstrap.sh").read_text()
+    boot = (scripts / "setup.sh").read_text()
     assert 'VENV="${BUILD}/tools/.venv"' in boot and 'SRC="${BUILD}/tools"' in boot
     assert 'reset --quiet --hard "origin/${TRACK}"' in boot  # branch refs follow the remote head
     # `latest`: the default branch from ls-remote --symref (else main), then followed like a branch
@@ -541,13 +541,13 @@ def test_latest_refs_follow_the_default_branch(fresh: Paths, latest_remote: dict
                                                caplog: pytest.LogCaptureFixture,
                                                capsys: pytest.CaptureFixture[str]) -> None:
     fresh.tools_checkout.mkdir(parents=True)
-    latest_remote["heads"][fresh.tools_checkout] = HEAD_SHA  # bootstrap.sh checked out the tools head
+    latest_remote["heads"][fresh.tools_checkout] = HEAD_SHA  # setup.sh checked out the tools head
     caplog.set_level("INFO", logger="xewe")
     assert main(["setup", "--modules", "wifi"]) == 0
     core = "https://github.com/xewe-labs/xewe-os-core"
     mods = "https://github.com/xewe-labs/xewe-os-modules"
     assert latest_remote["clones"] == [(core, "main"), (mods, "main"), (FASTLED, "main")]
-    assert sorted(latest_remote["ls"]) == sorted([core, mods, FASTLED])  # tools: bootstrap.sh resolved it
+    assert sorted(latest_remote["ls"]) == sorted([core, mods, FASTLED])  # tools: setup.sh resolved it
     cfg = config.load(fresh)
     assert cfg is not None
     for name, repo in (("core", core), ("modules", mods), ("tools", "https://github.com/xewe-labs/xewe-os-tools")):

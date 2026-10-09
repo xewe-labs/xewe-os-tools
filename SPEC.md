@@ -50,7 +50,7 @@ only without eager re-exports); `xewe.testing` also holds `module_dir`.
 xewe-os-tools/
 ├── pyproject.toml
 ├── README.md  AGENTS.md  SPEC.md  LICENSE.txt  .gitignore
-├── scripts/               bootstrap.sh (venv + install for a harness), run.sh
+├── scripts/               setup.sh (venv + install for a harness), run.sh
 ├── src/                   the `xewe` package
 │   ├── __init__.py        __version__ = "0.1.1"
 │   ├── __main__.py        python -m xewe
@@ -122,7 +122,7 @@ xewe = "src"
 ```
 
 A subpackage missing from `packages` ships silently absent, so a new area is added there too. A
-non-editable install builds inside the source tree; `scripts/bootstrap.sh` deletes `<source>/build/`
+non-editable install builds inside the source tree; `scripts/setup.sh` deletes `<source>/build/`
 and `<source>/*.egg-info` first so a stale build tree cannot ship deleted modules. Type-check by
 package name, not folder: `mypy src` sees a package called `src`, so check a symlink
 `<tmp>/xewe -> src` with `mypy <tmp>/xewe`.
@@ -938,7 +938,7 @@ fixtures and fakes (`tests/README.md`); `pytest tests/<area>` runs one area.
 | `modules/test_lockfile.py` | parse/validate/write round-trip, unknown keys rejected, defaults |
 | `modules/test_tomlw.py` | writer output parses back with `tomllib` for all value types used |
 | `env/test_fetch.py` | asset name per (os, arch), checksum mismatch rejected, `.part` resume via a local HTTP server |
-| `env/test_setup.py` | shared toolchain reused by a second project (no second download or core install), `XEWE_HOME` override, `build-tools/.lock`, step order, skip-when-recorded idempotency, `--force`, interrupted run leaves no `build_config.toml`, local sources, `--latest` tag selection from fake `ls-remote` output, `Head "<url>"` rescue path, module libraries from the modules `libraries.toml` catalogue vs a `[libraries]` pin in the manifest (manifest wins), missing/bad catalogue, `manifest show` origin, shared modules checkout per ref (reused by a second project, branch followed, other-repo checkout re-cloned), no `build/tmp` after setup, ref `latest` (core/modules/tools/library resolved from fake `ls-remote --symref`, recorded with branch+commit, followed when the head moves, local source wins, offline keeps the checkout), bootstrap.sh `latest` string check |
+| `env/test_setup.py` | shared toolchain reused by a second project (no second download or core install), `XEWE_HOME` override, `build-tools/.lock`, step order, skip-when-recorded idempotency, `--force`, interrupted run leaves no `build_config.toml`, local sources, `--latest` tag selection from fake `ls-remote` output, `Head "<url>"` rescue path, module libraries from the modules `libraries.toml` catalogue vs a `[libraries]` pin in the manifest (manifest wins), missing/bad catalogue, `manifest show` origin, shared modules checkout per ref (reused by a second project, branch followed, other-repo checkout re-cloned), no `build/tmp` after setup, ref `latest` (core/modules/tools/library resolved from fake `ls-remote --symref`, recorded with branch+commit, followed when the head moves, local source wins, offline keeps the checkout), setup.sh `latest` string check |
 | `env/test_arduino.py` | env vars (no `~/.arduino15`), exact compile argv per chip, FQBN strings (golden), no `JTAGAdapter` |
 | `build/test_compile.py` | `builds/<chip>/out/` contents, bin name, `manifest.json` byte-equal to golden built from 2.0.0 release files, `meta.json` keys, `XeWeBuildInfo.h` content, `--define`, sketch staging when folder ≠ stem, `--all-chips` continues after failure |
 | `board/test_boards.py` | VID:PID filter, chip-id output parsing (sample esptool 5 output), cache by serial number, override precedence, no-board / one / several decision, `boards.toml` `[override]` preserved |

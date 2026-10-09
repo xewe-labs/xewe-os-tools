@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bootstrap.sh: reference ./setup.sh for XeWe OS projects (copy it to the project root as setup.sh).
+# setup.sh: reference ./setup.sh for XeWe OS projects (copy it to the project root as setup.sh).
 #
 # Installs xewe-os-tools into build/tools/.venv, then runs `xewe setup "$@"`. Everything else
 # (arduino-cli, esp32 core, esptool and the modules repo once per machine in ~/.xewe-os/build-tools;

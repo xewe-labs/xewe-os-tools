@@ -247,7 +247,7 @@ def run_setup(p: Paths, opts: SetupOptions, sleep: Callable[[float], None] = tim
         refs[name] = fetch.resolve_latest(src.repo) if opts.latest and locals_[name] is None else src.ref
         if refs[name] != src.ref:
             log.info("--latest: %s %s (lock says %s; xewe.toml is not changed)", name, refs[name], src.ref)
-        # ref "latest": the default branch head, resolved now (tools: bootstrap.sh already checked it out)
+        # ref "latest": the default branch head, resolved now (tools: setup.sh already checked it out)
         track = fetch.is_latest(refs[name]) and locals_[name] is None and name != "tools"
         heads[name] = latest_head(name, src.repo, (old.installed if old else {}).get(name)) if track else None
 
