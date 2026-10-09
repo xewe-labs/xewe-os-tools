@@ -2,8 +2,8 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
-build/
-dist/
+/build/
+/dist/
 .pytest_cache/
 # credentials and settings (xewe.dotenv); only the example is committed
 .env

@@ -42,53 +42,70 @@ No read was blocked.
 
 ## 2. Package layout
 
+`src/` is the `xewe` package (no extra `xewe/` directory); its modules are grouped in five areas.
+Every area `__init__.py` is a docstring only (the areas import each other both ways, which is safe
+only without eager re-exports); `xewe.testing` also holds `module_dir`.
+
 ```
 xewe-os-tools/
 ├── pyproject.toml
-├── README.md  AGENTS.md  LICENSE.txt  .gitignore
-├── src/xewe/
+├── README.md  AGENTS.md  SPEC.md  LICENSE.txt  .gitignore
+├── scripts/               bootstrap.sh (venv + install for a harness), run.sh
+├── src/                   the `xewe` package
 │   ├── __init__.py        __version__ = "0.1.1"
 │   ├── __main__.py        python -m xewe
 │   ├── cli.py             argparse: subcommands, global flags, exit codes
-│   ├── project.py         find project root (walk up to xewe.toml), Paths dataclass (build/ layout + shared toolchain, §6)
-│   ├── lockfile.py        read/write xewe.toml (the manifest), defaults, validation
-│   ├── manifest.py        xewe manifest show / update
-│   ├── tomlw.py           minimal TOML writer (tomllib reads; stdlib has no writer)
-│   ├── pins.py            tool versions shipped with this release (arduino-cli, esp32 core, URLs)
-│   ├── fetch.py           HTTP download (urllib) with .part + resume + sha256; git clone/ls-remote wrappers
-│   ├── arduino.py         arduino-cli install, env, core install (retry + staging fallback), compile
-│   ├── chips.py           c3/c6/s3 table: FQBN board, chip family, esptool id
-│   ├── setup.py           xewe setup steps + build_config.toml
-│   ├── build.py           compile, XeWeBuildInfo generation, builds/<chip>/out/ artifacts
-│   ├── boards.py          port scan, VID:PID filter, esptool probe, boards.toml
-│   ├── esptool.py         locate core-bundled esptool, run write-flash / chip-id
-│   ├── flash.py           xewe flash
-│   ├── serialio.py        Console: open, reset, listen with timestamps, send/expect, boot-banner wait
-│   ├── provision.py       xewe provision: answer the first-boot prompts
-│   ├── dotenv.py          settings and credentials from .env (§15)
-│   ├── modules.py         registry of a modules checkout, resolve deps, generate build/modules/ + src/Modules.h, validate
-│   ├── release.py         release matrix, static/firmware/releases/<version>/
-│   ├── doctor.py          environment checks
-│   ├── report.py          output helpers (status lines, --verbose, no-board summary)
-│   └── testing/
-│       ├── __init__.py
-│       └── plugin.py      pytest plugin: fixtures board/firmware/serial, markers, summary
-└── tests/                 self-tests (§12)
-    └── fakes/arduino-cli  fake arduino-cli (Python script) used by the self-tests
+│   ├── report.py          output helpers (status lines, --verbose, no-board summary), exit codes
+│   ├── env/               xewe.env: the machine and the project
+│   │   ├── setup.py       xewe setup steps + build_config.toml
+│   │   ├── doctor.py      environment checks
+│   │   ├── clean.py       xewe clean
+│   │   ├── fetch.py       HTTP download (urllib) with .part + resume + sha256; git clone/ls-remote wrappers
+│   │   ├── arduino.py     arduino-cli install, env, core install (retry + staging fallback), compile
+│   │   ├── esptool.py     locate core-bundled esptool, run write-flash / chip-id
+│   │   ├── pins.py        tool versions shipped with this release (arduino-cli, esp32 core, URLs)
+│   │   ├── project.py     find project root (walk up to xewe.toml), Paths dataclass (build/ layout + shared toolchain, §6)
+│   │   ├── config.py      build/config/build_config.toml: what setup installed and where
+│   │   └── dotenv.py      settings and credentials from .env (§15)
+│   ├── build/             xewe.build: firmware out of the project
+│   │   ├── compile.py     compile, XeWeBuildInfo generation, builds/<chip>/out/ artifacts
+│   │   ├── flash.py       xewe flash
+│   │   ├── release.py     release matrix, static/firmware/releases/<version>/
+│   │   └── chips.py       c3/c6/s3 table: FQBN board, chip family, esptool id
+│   ├── board/             xewe.board: the attached board
+│   │   ├── serialio.py    Console: open, reset, listen with timestamps, send/expect, boot-banner wait
+│   │   ├── boards.py      port scan, VID:PID filter, esptool probe, boards.toml
+│   │   └── provision.py   xewe provision: answer the first-boot prompts
+│   ├── modules/           xewe.modules: modules and the manifest
+│   │   ├── registry.py    registry of a modules checkout, resolve deps, generate build/modules/ + src/Modules.h, validate
+│   │   ├── manifest.py    xewe manifest show / update
+│   │   ├── lockfile.py    read/write xewe.toml (the manifest), defaults, validation
+│   │   └── tomlw.py       minimal TOML writer (tomllib reads; stdlib has no writer)
+│   └── testing/           xewe.testing
+│       ├── __init__.py    module_dir(): the module folder of a module test
+│       ├── plugin.py      pytest plugin: fixtures board/firmware/serial, markers, summary
+│       └── runner.py      xewe test
+└── tests/                 self-tests (§12), mirroring src/: tests/<area>/test_<module>.py
+    ├── conftest.py        the only conftest: shared fixtures and helpers (tests/README.md)
+    ├── fakes/             arduino-cli, esptool (Python scripts) used by the self-tests
+    ├── fixtures/          golden manifest.json, the six real module.properties
+    ├── test_cli.py
+    ├── env/  build/  board/  modules/  testing/
 ```
 
-`pyproject.toml`:
+`pyproject.toml` (setuptools; the version is static and matches `xewe.__version__`):
 
 ```toml
 [build-system]
-requires = ["flit_core>=3.9,<4"]
-build-backend = "flit_core.buildapi"
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "xewe-os-tools"
-dynamic = ["version", "description"]
+version = "0.1.1"
 requires-python = ">=3.11"
-license = { file = "LICENSE.txt" }
+license = "GPL-3.0-only"
+license-files = ["LICENSE.txt"]
 dependencies = ["pyserial>=3.5", "pytest>=8.0"]
 
 [project.scripts]
@@ -97,9 +114,18 @@ xewe = "xewe.cli:main"
 [project.entry-points.pytest11]
 xewe = "xewe.testing.plugin"
 
-[tool.flit.module]
-name = "xewe"
+[tool.setuptools]
+packages = ["xewe", "xewe.env", "xewe.build", "xewe.board", "xewe.modules", "xewe.testing"]
+
+[tool.setuptools.package-dir]
+xewe = "src"
 ```
+
+A subpackage missing from `packages` ships silently absent, so a new area is added there too. A
+non-editable install builds inside the source tree; `scripts/bootstrap.sh` deletes `<source>/build/`
+and `<source>/*.egg-info` first so a stale build tree cannot ship deleted modules. Type-check by
+package name, not folder: `mypy src` sees a package called `src`, so check a symlink
+`<tmp>/xewe -> src` with `mypy <tmp>/xewe`.
 
 **Dependencies.** stdlib (`tomllib`, `urllib`, `tarfile`, `zipfile`, `hashlib`, `subprocess`,
 `argparse`, `json`, `shutil`) + `pyserial` + `pytest`.
@@ -126,7 +152,9 @@ name = "xewe"
    pushed) or a checkout of `<repo>` in `build/tools`. The ref may be a tag (`git clone --depth 1
    --branch <ref>`; skipped when `git -C build/tools describe --tags --exact-match` is that tag), a
    branch (cloned the same way, then `git fetch` + `git reset --hard origin/<ref>` on every run, so a
-   moving `main` is picked up without tags) or a commit SHA (fetched and checked out once).
+   moving `main` is picked up without tags), `latest` (the default branch from
+   `git ls-remote --symref <repo> HEAD`, else `main`, then handled like that branch; prints
+   `tools: latest -> main@<sha7>`) or a commit SHA (fetched and checked out once).
 4. `python3 -m venv build/tools/.venv`; if `build/tools/.venv/bin/python -m pip --version` fails, run
    `build/tools/.venv/bin/python -m ensurepip --upgrade`.
 5. `build/tools/.venv/bin/python -m pip install --quiet --upgrade <tools source dir>` (non-editable;
@@ -189,9 +217,9 @@ Agents in compile-only mode must set `XEWE_NO_BOARD=1`.
 | `xewe modules validate` | `[PATH]` | §10 rules over a modules repo checkout (default: the one setup uses, `[paths] modules`) | — |
 | `xewe modules generate` | | §10. Rebuilds `build/modules/` and `src/Modules.h` from the manifest selection | — |
 | `xewe manifest show` | `[--json]` | Manifest refs vs installed refs (from `build_config.toml`), drift marked `!` | — |
-| `xewe manifest update` | `[core\|modules\|tools]... [--to REF]` | Resolves newest tag (§4) and rewrites `xewe.toml`; prints diff; does not run setup | — |
+| `xewe manifest update` | `[core\|modules\|tools]... [--to REF]` | Resolves newest tag (§4) and rewrites `xewe.toml` (so it freezes a `latest` ref; `--to latest` tracks the default branch again); prints diff; does not run setup | — |
 | `xewe clean` | `[--all] [--modules]` | Default: delete `build/builds/` and `build/tmp/`. `--all`: delete all of `build/` except `tools/` (the tools checkout and its venv; setup must re-run). `--modules`: also delete `build/modules/` and `src/Modules.h`. Never touches `~/.xewe-os/build-tools` (toolchain and shared modules checkouts) | — |
-| `xewe doctor` | | Checks python, git, venv, the shared toolchain (`XEWE_HOME` resolved; cli and core present), arduino-cli version, core version, esptool, lock vs installed, free disk ≥ 6 GB, serial permissions (Linux: user in `dialout`/`uucp`), Rosetta 2 on Apple silicon (the esp32 core's `ctags` is x86_64: "bad CPU type" without it; probe `pgrep -q oahd` or `arch -x86_64 /usr/bin/true`; warns with `softwareupdate --install-rosetta --agree-to-license`), board scan | exit 0 if only warnings |
+| `xewe doctor` | | Checks python, git, venv, the shared toolchain (`XEWE_HOME` resolved; cli and core present), arduino-cli version, core version, esptool, manifest (`xewe.toml`) vs installed, free disk ≥ 6 GB, serial permissions (Linux: user in `dialout`/`uucp`), Rosetta 2 on Apple silicon (the esp32 core's `ctags` is x86_64: "bad CPU type" without it; probe `pgrep -q oahd` or `arch -x86_64 /usr/bin/true`; warns with `softwareupdate --install-rosetta --agree-to-license`), board scan | exit 0 if only warnings |
 | `xewe release` | `--version X.Y.Z [--matrix FILE] [--notes FILE]` | §11 | n/a (no board needed) |
 
 Example outputs (text is normative in spirit, not byte-exact, except the status lines):
@@ -233,7 +261,8 @@ The resolved commits live in `build/config/` (generated). Read with `tomllib`, w
 
 ```toml
 # xewe.toml: this firmware's manifest (pinned inputs). Edit by hand or with `xewe manifest update`.
-# ./setup.sh installs exactly these refs into build/.
+# ./setup.sh installs exactly these refs into build/. A tag freezes; ref = "latest" tracks the newest
+# commit of the default branch (development); `xewe manifest update` freezes it at the newest tag.
 schema = 1
 
 [project]
@@ -257,14 +286,26 @@ ref = "v0.1.1"
 [libraries]             # extra Arduino libraries, cloned into build/libraries/<name> (replaces required_libraries.txt)
 ArduinoJson = { repo = "https://github.com/bblanchon/ArduinoJson", ref = "v7.4.2" }
 
-# [toolchain]           # optional overrides; defaults come from the tools release (src/xewe/pins.py)
+# [toolchain]           # optional overrides; defaults come from the tools release (src/env/pins.py)
 # arduino_cli = "1.5.1"
 # esp32 = "3.3.12"
 ```
 
 Rules:
-- `ref` is a tag (preferred) or a branch or a full commit SHA. Setup records the resolved commit in
+- `ref` is a tag (preferred) or a branch or a full commit SHA or `latest`. Setup records the resolved commit in
   `build/config/build_config.toml`. For `[tools]`, `setup.sh` follows a branch's remote head on every run (§2).
+- **Tags freeze, `latest` tracks.** `ref = "latest"` (accepted in `[core]`, `[modules]`, `[tools]` and
+  every `[libraries]` entry) means the newest commit on the repository's default branch, resolved
+  with `git ls-remote --symref <repo> HEAD` (no symref reported: `main`). It is for development:
+  every setup resolves it again and brings the checkout to that head (fetch + reset, like a branch;
+  nothing is fetched when the checkout already is at that commit; an unreachable remote keeps the
+  installed checkout with a warning, and fails only when nothing is installed yet). Setup prints
+  `core: latest -> main@<sha7>` and records `{ ref = "latest", branch = "main", commit = "<sha>", source = ... }`;
+  the modules checkout is `sources/xewe-os-modules/latest/`. `xewe manifest show` prints
+  `latest (main@<sha7>)` in the installed column and marks drift (`!`, with `remote main@<sha7>`) when
+  the remote head moved since setup (one `ls-remote` per `latest` entry; unreachable = no drift, a
+  warning). To freeze tested code, `xewe manifest update [NAME]` replaces `latest` with the newest tag
+  (or `--to vX.Y.Z`); `--to latest` sets it back. A local source (`XEWE_*_SOURCE`, `--*-source`) still wins.
 - `--latest` (on `xewe setup`): for each of core/modules/tools, run `git ls-remote --tags --refs <repo>`,
   keep tags matching `^v?\d+\.\d+\.\d+$`, pick the highest by numeric tuple; if none, use the remote
   default branch HEAD with a warning. Installs those, **never edits `xewe.toml`**;
@@ -273,7 +314,7 @@ Rules:
 - `xewe manifest update [core|modules|tools] [--to REF]` applies the same resolution (or `--to`) and
   rewrites the manifest; that is the only command that changes refs.
 - `[modules] ref` is checked out once per machine and ref in `~/.xewe-os/build-tools/sources/xewe-os-modules/<ref>/`
-  (§6 step 8); a branch ref is fetched and reset to the remote head on every setup, like `[tools]`.
+  (§6 step 8); a branch ref (and `latest`, in `.../latest/`) is fetched and reset to the remote head on every setup, like `[tools]`.
 - Local sources (`--core-source DIR`, `--modules-source DIR`, `XEWE_TOOLS_SOURCE`, and env
   `XEWE_CORE_SOURCE`, `XEWE_MODULES_SOURCE`) override `repo`+`ref` for one run, are recorded as
   `source = "local:<abs path>"` in `build_config.toml` (that file is not committed), and never touch the manifest.
@@ -422,6 +463,7 @@ esp32 = "3.3.12"
 core = { ref = "1.0.0", commit = "0123abc…", source = "https://github.com/xewe-labs/xewe-os-core" }
 modules = { ref = "v1.0.0", commit = "…", source = "…" }
 tools = { ref = "v0.1.1", commit = "…", source = "local:../xewe-os-tools" }
+# a `latest` ref: core = { ref = "latest", branch = "main", commit = "…", source = "…" }
 libraries = { ArduinoJson = { ref = "v7.4.2", commit = "…", source = "…", origin = "xewe.toml" } }
 ```
 
@@ -780,7 +822,7 @@ runs it with g++ (skipped when g++ is missing).
 Input: the modules repo checkout (`~/.xewe-os/build-tools/sources/xewe-os-modules/<ref>/` or
 `XEWE_MODULES_SOURCE`, §6 step 8; layout per D4/plan step 3:
 `modules/<slug>/{module.properties, src/<Folder>/, tests/, README.md}`). Until A8 fixes the contract,
-`modules.py` also accepts today's layout (one `xewe-os-module-<slug>/` per module with
+`modules/registry.py` also accepts today's layout (one `xewe-os-module-<slug>/` per module with
 `module.properties` at its root), so A5 can test against the reference clones (read-only).
 
 `module.properties` keys used: `slug, id, name, version, description, folder, include, declare,
@@ -887,27 +929,31 @@ in an `xewe-os` checkout, then `xewe modules validate` (the checkout setup used,
 `<stem>.ino.merged.bin` and a "Sketch uses N bytes" line, can be told to fail), a fake esptool
 (`XEWE_ESPTOOL`), pyserial `serial_for_url("loop://")` plus a scripted fake port, and
 `list_ports.comports` monkeypatched.
+Layout: `tests/<area>/test_<module>.py` mirrors `src/` (§2); one `tests/conftest.py` holds the shared
+fixtures and fakes (`tests/README.md`); `pytest tests/<area>` runs one area.
 
 | File | Covers |
 |---|---|
-| `test_project.py` | root discovery, `--project`, relative paths, project moved after setup still works |
-| `test_lockfile.py` | parse/validate/write round-trip, unknown keys rejected, defaults |
-| `test_tomlw.py` | writer output parses back with `tomllib` for all value types used |
-| `test_fetch.py` | asset name per (os, arch), checksum mismatch rejected, `.part` resume via a local HTTP server |
-| `test_setup.py` | shared toolchain reused by a second project (no second download or core install), `XEWE_HOME` override, `build-tools/.lock`, step order, skip-when-recorded idempotency, `--force`, interrupted run leaves no `build_config.toml`, local sources, `--latest` tag selection from fake `ls-remote` output, `Head "<url>"` rescue path, module libraries from the modules `libraries.toml` catalogue vs a `[libraries]` pin in the manifest (manifest wins), missing/bad catalogue, `manifest show` origin, shared modules checkout per ref (reused by a second project, branch followed, other-repo checkout re-cloned), no `build/tmp` after setup |
-| `test_arduino.py` | env vars (no `~/.arduino15`), exact compile argv per chip, FQBN strings (golden), no `JTAGAdapter` |
-| `test_build.py` | `builds/<chip>/out/` contents, bin name, `manifest.json` byte-equal to golden built from 2.0.0 release files, `meta.json` keys, `XeWeBuildInfo.h` content, `--define`, sketch staging when folder ≠ stem, `--all-chips` continues after failure |
-| `test_boards.py` | VID:PID filter, chip-id output parsing (sample esptool 5 output), cache by serial number, override precedence, no-board / one / several decision, `boards.toml` `[override]` preserved |
-| `test_flash.py` | esptool argv, `--erase` (port wait after erase and after write), port not back → exit 4, baud fallback, no-board exit 0 vs `--require-board` exit 4, chip mismatch exit 2 |
-| `test_serial.py` | timestamps, `\r` stripping, send/expect match and timeout (exit 1), reconnect, reset across a port drop, `wait_for_port` settle and timeout (exit 4); interactive mode: typed line sent, `--no-input` and non-TTY stdin listen only, EOF exit 0, reconnect, raw lines and no `> CMD` echo (timestamped with `--timestamps`, in `--send` mode, listen-only and the log), stdin flushed only when interactive on a TTY |
-| `test_provision.py` | scripted first-boot transcript: answers in order, SSID by number (the real S3 list), rescan then `-3` custom, `! Invalid number` re-answered, board resuming at the network list, nudge only before the first prompt (fake clock), timezone `y` / `n` + offset, already provisioned sends nothing, nudge, port drop at reboot, prompt timeout exit 1 with masked tail, password never in stdout/log; settings precedence flags > env > dotenv file > defaults, settings from `<project>/.env` with no flags, exit 2 before the port, exit 4 without a board |
-| `test_dotenv.py` | parsing (comments, quotes, `export`, no interpolation), errors without values, real environment wins, resolution order (`--env`, `XEWE_ENV`, project, tools checkout from `build_config.toml` or the package checkout), missing file is not an error, only the key count is logged, `.env.example` lists every key |
-| `test_plugin.py` | `pytester`: no board → "compiled, not run" summary and exit 0; `--require-board` → pytest 1, `xewe test` 4; faked board: one port open per session, boot banner wait (first-boot reboot, unprovisioned, timeout); unit tests run; `--unit-only` runs only `unit` tests and builds nothing; board tests found under `modules/<slug>/tests/board/`; compile failure fails board tests; pins from the project `.env` reach `os.environ` (real environment wins) |
-| `test_modules.py` | dependency order and cycle error against fixtures copied from the six real `module.properties`; generated `build/modules/` (`library.properties`, `XeWeModules.h`, `tests/<slug>/{board,unit}/`, `modules.lock`) and `src/Modules.h` golden, empty selection, legacy `src/modules/`, `build/modules-lib/` and `build/config/modules.lock` removal; every validator rule (tests layout included) has a failing fixture |
-| `test_release.py` | matrix parsing and typing, folder layout, `firmware_map.csv`, version ≥ check, printed commands, never calls git |
-| `test_cli.py` | every subcommand's `--help`, exit-code table, `--verbose`, `clean` (`--all` keeps `build/tools`, never touches `build-tools`) |
-| `test_no_board.py` | `--no-board` / `XEWE_NO_BOARD=1`: discovery returns nothing (ports never listed), console never opens, flash/run build then exit 4, serial/provision/boards exit 4, `boards --set-port` still works, `xewe test --no-board` compiled-not-run exit 0 (4 with `--require-board`), plugin `--xewe-no-board`; `-v` after the subcommand |
-| `test_doctor.py` | checks report missing pieces without raising; Rosetta check on Apple silicon (installed / missing), skipped elsewhere |
+| `env/test_project.py` | root discovery, `--project`, relative paths, project moved after setup still works |
+| `modules/test_lockfile.py` | parse/validate/write round-trip, unknown keys rejected, defaults |
+| `modules/test_tomlw.py` | writer output parses back with `tomllib` for all value types used |
+| `env/test_fetch.py` | asset name per (os, arch), checksum mismatch rejected, `.part` resume via a local HTTP server |
+| `env/test_setup.py` | shared toolchain reused by a second project (no second download or core install), `XEWE_HOME` override, `build-tools/.lock`, step order, skip-when-recorded idempotency, `--force`, interrupted run leaves no `build_config.toml`, local sources, `--latest` tag selection from fake `ls-remote` output, `Head "<url>"` rescue path, module libraries from the modules `libraries.toml` catalogue vs a `[libraries]` pin in the manifest (manifest wins), missing/bad catalogue, `manifest show` origin, shared modules checkout per ref (reused by a second project, branch followed, other-repo checkout re-cloned), no `build/tmp` after setup, ref `latest` (core/modules/tools/library resolved from fake `ls-remote --symref`, recorded with branch+commit, followed when the head moves, local source wins, offline keeps the checkout), bootstrap.sh `latest` string check |
+| `env/test_arduino.py` | env vars (no `~/.arduino15`), exact compile argv per chip, FQBN strings (golden), no `JTAGAdapter` |
+| `build/test_compile.py` | `builds/<chip>/out/` contents, bin name, `manifest.json` byte-equal to golden built from 2.0.0 release files, `meta.json` keys, `XeWeBuildInfo.h` content, `--define`, sketch staging when folder ≠ stem, `--all-chips` continues after failure |
+| `board/test_boards.py` | VID:PID filter, chip-id output parsing (sample esptool 5 output), cache by serial number, override precedence, no-board / one / several decision, `boards.toml` `[override]` preserved |
+| `build/test_flash.py` | esptool argv, `--erase` (port wait after erase and after write), port not back → exit 4, baud fallback, no-board exit 0 vs `--require-board` exit 4, chip mismatch exit 2 |
+| `board/test_serial.py` | timestamps, `\r` stripping, send/expect match and timeout (exit 1), reconnect, reset across a port drop, `wait_for_port` settle and timeout (exit 4); interactive mode: typed line sent, `--no-input` and non-TTY stdin listen only, EOF exit 0, reconnect, raw lines and no `> CMD` echo (timestamped with `--timestamps`, in `--send` mode, listen-only and the log), stdin flushed only when interactive on a TTY (interactive mode in `board/test_serial_interactive.py`) |
+| `board/test_provision.py` | scripted first-boot transcript: answers in order, SSID by number (the real S3 list), rescan then `-3` custom, `! Invalid number` re-answered, board resuming at the network list, nudge only before the first prompt (fake clock), timezone `y` / `n` + offset, already provisioned sends nothing, nudge, port drop at reboot, prompt timeout exit 1 with masked tail, password never in stdout/log; settings precedence flags > env > dotenv file > defaults, settings from `<project>/.env` with no flags, exit 2 before the port, exit 4 without a board |
+| `env/test_dotenv.py` | parsing (comments, quotes, `export`, no interpolation), errors without values, real environment wins, resolution order (`--env`, `XEWE_ENV`, project, tools checkout from `build_config.toml` or the package checkout), missing file is not an error, only the key count is logged, `.env.example` lists every key |
+| `testing/test_plugin.py` | `pytester`: no board → "compiled, not run" summary and exit 0; `--require-board` → pytest 1, `xewe test` 4; faked board: one port open per session, boot banner wait (first-boot reboot, unprovisioned, timeout); unit tests run; `--unit-only` runs only `unit` tests and builds nothing; board tests found under `modules/<slug>/tests/board/`; compile failure fails board tests; pins from the project `.env` reach `os.environ` (real environment wins) |
+| `modules/test_registry.py` | dependency order and cycle error against fixtures copied from the six real `module.properties`; generated `build/modules/` (`library.properties`, `XeWeModules.h`, `tests/<slug>/{board,unit}/`, `modules.lock`) and `src/Modules.h` golden, empty selection, legacy `src/modules/`, `build/modules-lib/` and `build/config/modules.lock` removal; every validator rule (tests layout included) has a failing fixture |
+| `build/test_release.py` | matrix parsing and typing, folder layout, `firmware_map.csv`, version ≥ check, printed commands, never calls git |
+| `test_cli.py` | every subcommand's `--help`, exit-code table, `--verbose` |
+| `env/test_clean.py` | `clean` levels (`--modules`; `--all` keeps `build/tools`, never touches `build-tools`) |
+| `modules/test_manifest.py` | `manifest show` drift marks, `manifest update` (latest tag, `--to`, usage errors); ref `latest`: `latest (main@<sha7>)`, drift when the remote head moved, unreachable remote, freeze with `update` and `--to latest` |
+| `testing/test_no_board.py` | `--no-board` / `XEWE_NO_BOARD=1`: discovery returns nothing (ports never listed), console never opens, flash/run build then exit 4, serial/provision/boards exit 4, `boards --set-port` still works, `xewe test --no-board` compiled-not-run exit 0 (4 with `--require-board`), plugin `--xewe-no-board`; `-v` after the subcommand |
+| `env/test_doctor.py` | checks report missing pieces without raising; Rosetta check on Apple silicon (installed / missing), skipped elsewhere |
 
 ---
 

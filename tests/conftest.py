@@ -1,4 +1,5 @@
-"""Shared fixtures: a fake project, fake arduino-cli/esptool, no serial ports, a fake serial port."""
+"""Shared fixtures and helpers for every area (see tests/README.md): a scratch project, fake
+arduino-cli/esptool, fake serial ports and a fake serial port, a fake clock."""
 
 from __future__ import annotations
 
@@ -6,20 +7,32 @@ import json
 import os
 import shutil
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
+import serial as pyserial
 from serial.tools import list_ports
 
-from xewe import config, dotenv
-from xewe.modules import Registry
-from xewe.project import Paths
+from xewe.board import serialio
+from xewe.board.boards import Board
+from xewe.env import config, dotenv
+from xewe.env.project import Paths
+from xewe.modules.registry import Registry
 
 HERE = Path(__file__).parent
+REPO = HERE.parent
+"""The tools checkout (``scripts/``, ``.env.example``)."""
 FAKES = HERE / "fakes"
 FIXTURES = HERE / "fixtures"
 PROPERTIES = FIXTURES / "module_properties"
+
+BIN = "build/builds/c3/out/2.0.15-c3-xewe-os.bin"
+"""The c3 image ``xewe build`` makes for the ``project`` fixture (relative to its root)."""
+PORT = "/dev/ttyFAKE"
+DROP = object()
+"""``FakeSerial`` chunk marker: the port vanishes for one read (native-USB reboot)."""
 
 
 def make_modules_checkout(dest: Path, layout: str = "modules", board_tests: bool = False) -> Path:
@@ -54,12 +67,14 @@ def test_status(serial):
 '''
 
 
-def write_tests(root: Path) -> None:
-    """``tests/unit/test_logic.py`` (one unit test) and ``tests/board/test_fw.py`` (one board test)."""
-    (root / "tests" / "unit").mkdir(parents=True)
-    (root / "tests" / "unit" / "test_logic.py").write_text(UNIT_TESTS)
-    (root / "tests" / "board").mkdir()
-    (root / "tests" / "board" / "test_fw.py").write_text(BOARD_TESTS)
+def write_tests(root: Path, board: str = BOARD_TESTS, unit: str | None = UNIT_TESTS) -> None:
+    """``tests/board/test_fw.py`` (``board``; one board test by default) and, unless ``unit`` is None,
+    ``tests/unit/test_logic.py`` (one unit test)."""
+    if unit is not None:
+        (root / "tests" / "unit").mkdir(parents=True, exist_ok=True)
+        (root / "tests" / "unit" / "test_logic.py").write_text(unit)
+    (root / "tests" / "board").mkdir(parents=True, exist_ok=True)
+    (root / "tests" / "board" / "test_fw.py").write_text(board)
 
 
 LOCK = """\
@@ -120,6 +135,38 @@ def no_ports(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(list_ports, "comports", lambda: [])
 
 
+@dataclass
+class Port:
+    """What ``list_ports.comports()`` yields."""
+
+    device: str
+    vid: int | None = None
+    pid: int | None = None
+    serial_number: str | None = None
+    description: str = ""
+
+
+@pytest.fixture
+def ports(monkeypatch: pytest.MonkeyPatch) -> list[Port]:
+    """The system's serial ports: append ``Port`` entries to the returned list."""
+    found: list[Port] = []
+    monkeypatch.setattr(list_ports, "comports", lambda: list(found))
+    return found
+
+
+@pytest.fixture
+def port_node(tmp_path: Path) -> str:
+    """A port path that exists as a file (``boards.port_exists`` is true for it)."""
+    node = tmp_path / "ttyACM0"
+    node.write_text("")
+    return str(node)
+
+
+def select_board(board: Board | None) -> Callable[[str | None], Board | None]:
+    """A ``select`` callable for ``serial_main``/``provision_main`` that always returns ``board``."""
+    return lambda port: board
+
+
 @pytest.fixture
 def fake_cli(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[[], list[dict[str, Any]]]:
     """Use tests/fakes/arduino-cli; returns a reader of its call log."""
@@ -149,7 +196,7 @@ def fake_esptool(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[[]
 @pytest.fixture
 def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_cli: Any, no_ports: None) -> Paths:
     """A set-up project (as if `xewe setup` ran): lock, sketch, modules, build_config.toml."""
-    from xewe import modules
+    from xewe.modules import registry as modules
 
     p = write_project(tmp_path / "xewe-os")
     checkout = make_modules_checkout(tmp_path / "modules-src")  # as XEWE_MODULES_SOURCE
@@ -171,12 +218,47 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_cli: Any, no_p
     return p
 
 
+@pytest.fixture
+def project_with_tests(project: Paths) -> Paths:
+    """``project`` plus ``write_tests`` (one unit test, one board test)."""
+    write_tests(project.root)
+    return project
+
+
+class FakeClock:
+    """Fake ``time`` for serialio: ``sleep`` advances ``monotonic``; each ``monotonic`` call also
+    advances ``tick`` seconds, so polling loops over a FakeSerial end in fake time."""
+
+    def __init__(self, tick: float = 0.0) -> None:
+        self.now = 0.0
+        self.tick = tick
+
+    def monotonic(self) -> float:
+        self.now += self.tick
+        return self.now
+
+    def sleep(self, s: float) -> None:
+        self.now += s
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> FakeClock:
+    """serialio on a ``FakeClock`` ticking 1 ms per ``monotonic`` call."""
+    c = FakeClock(tick=0.001)
+    monkeypatch.setattr(serialio, "time", c)
+    return c
+
+
 class FakeSerial:
-    """In-memory stand-in for ``serial.Serial`` (unopened on construction, like pyserial)."""
+    """In-memory stand-in for ``serial.Serial`` (unopened on construction, like pyserial).
+
+    ``incoming`` is readable at once; ``chunks`` arrive one per ``read`` (``DROP`` raises like a
+    vanished USB port); ``script`` maps each ``write`` to bytes the board answers."""
 
     instances: list[FakeSerial] = []
 
-    def __init__(self, script: Callable[[bytes], bytes] | None = None, incoming: bytes = b"") -> None:
+    def __init__(self, script: Callable[[bytes], bytes] | None = None, incoming: bytes = b"",
+                 chunks: list[Any] | None = None) -> None:
         self.port: str | None = None
         self.baudrate = 9600
         self.timeout: float | None = None
@@ -191,6 +273,8 @@ class FakeSerial:
         self.written = bytearray()
         self.script = script
         self.fail_reads = 0
+        self.chunks: list[Any] = list(chunks or [])
+        self.opens = 0
         self.rts_history: list[bool] = []
         self.line_history: list[tuple[bool, bool]] = []
         """(dtr, rts) after each line change and at open, in order (open starts from cdc_acm's 1/1)."""
@@ -208,6 +292,7 @@ class FakeSerial:
         self.dtr_at_open, self.rts_at_open = self.dtr, self.rts
         self.line_history += [(True, True), (self.dtr, True), (self.dtr, self.rts)]
         self.is_open = True
+        self.opens += 1
 
     def close(self) -> None:
         self.is_open = False
@@ -219,9 +304,13 @@ class FakeSerial:
     def read(self, n: int = 1) -> bytes:
         if self.fail_reads:
             self.fail_reads -= 1
-            import serial
-
-            raise serial.SerialException("device disconnected")
+            raise pyserial.SerialException("device disconnected")
+        if self.chunks:
+            chunk = self.chunks.pop(0)
+            if chunk is DROP:
+                raise pyserial.SerialException("device reports readiness to read but returned no data")
+            self.rx += chunk
+            n = max(n, len(self.rx))
         data = bytes(self.rx[:n])
         del self.rx[:n]
         return data

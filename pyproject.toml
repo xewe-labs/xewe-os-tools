@@ -23,9 +23,15 @@ xewe = "xewe.cli:main"
 [project.entry-points.pytest11]
 xewe = "xewe.testing.plugin"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.setuptools]
+# src/ is the `xewe` package; list every subpackage (a missing one ships silently absent).
+packages = ["xewe", "xewe.env", "xewe.build", "xewe.board", "xewe.modules", "xewe.testing"]
+
+[tool.setuptools.package-dir]
+xewe = "src"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-p pytester"
+# pytest's default norecursedirs skips any "build" folder, which would drop tests/build/.
+norecursedirs = [".*", "*.egg", "_darcs", "CVS", "dist", "node_modules", "venv", "{arch}", "__pycache__"]

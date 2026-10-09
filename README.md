@@ -24,6 +24,11 @@ python3 -m venv .venv
 .venv/bin/python -m pytest -q
 ```
 
+`src/` is the `xewe` package (`xewe.env`, `xewe.build`, `xewe.board`, `xewe.modules`, `xewe.testing`;
+SPEC §2), so import it as `xewe.<area>.<module>` and type-check it under that name, not as `src`.
+The self-tests mirror it (`tests/<area>/test_<module>.py`, one shared `tests/conftest.py`); run one
+area with `.venv/bin/python -m pytest tests/board` (`tests/README.md`).
+
 Runtime dependencies: `pyserial`, `pytest`. esptool comes from the pinned esp32 core
 (`XEWE_ESPTOOL` overrides it).
 
@@ -40,7 +45,7 @@ Runtime dependencies: `pyserial`, `pytest`. esptool comes from the pinned esp32 
 | `xewe run [--chip C] [--define K=V]... [--no-serial] [--no-input] [--timestamps]` | build, flash, then the console (interactive on a terminal, like `xewe serial`) |
 | `xewe boards [--no-probe] [--json] [--set-port P [--set-chip C]] [--clear]` | list boards, set an override |
 | `xewe modules list\|select\|validate\|generate` | the modules repo checkout, `build/modules/` and `src/Modules.h` |
-| `xewe manifest show\|update` | `xewe.toml` refs vs installed refs; move refs to new tags |
+| `xewe manifest show\|update` | `xewe.toml` refs vs installed refs; move refs to new tags. `ref = "latest"` tracks the newest commit of the repo's default branch (development, re-fetched on every setup); a tag freezes it (`xewe manifest update` replaces `latest` with the newest tag, `--to latest` sets it back) |
 | `xewe clean [--all] [--modules]` | delete generated output (`build/builds`, `build/tmp`; `--all`: all of `build/` but `tools/`; `--modules`: also `build/modules` and `src/Modules.h`; never `~/.xewe-os/build-tools`) |
 | `xewe doctor` | check the environment (on Apple silicon also Rosetta 2, which the esp32 core's `ctags` needs) |
 | `xewe release --version X.Y.Z [--matrix FILE] [--notes FILE]` | release matrix into `static/firmware/releases/<version>/`; prints the git/gh commands |
