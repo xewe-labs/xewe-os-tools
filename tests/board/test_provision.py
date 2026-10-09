@@ -291,10 +291,55 @@ def test_summary_name_kept_from_board(capsys: pytest.CaptureFixture[str]) -> Non
     assert "name: kept from board; modules time;" in out and 'name "Kitchen Lights"' not in out
 
 
-def test_unknown_prompt_fails(caplog: pytest.LogCaptureFixture) -> None:
-    transcript = [*name_block("Kitchen Lights"), "Pick a colour:", "> ", IN]
+def level_block() -> list[Any]:
+    """The template's YourModuleFull ``begin_routines_init``: ``get_uint16`` with two attempts; an
+    empty line is an invalid number, the second one returns the default."""
+    return ["Starting level (0-100)?", "> ", IN, INVALID, "> ", IN, "No answer: level stays 50"]
+
+
+def template_first_boot(full_enabled: bool) -> list[Any]:
+    """Template first boot with ``selected = []``: name, Your Module, Your Module Full (+ level prompt)."""
+    out = [*name_block("Kitchen Lights"), *module_block("Your Module"), *module_block("Your Module Full")]
+    if full_enabled:
+        out += level_block()
+    return out + [*header("Initial Setup Complete"), *header("Rebooting"), "ESP-ROM:esp32s3-20210327",
+                  *header("System Setup Complete")]
+
+
+def test_unlisted_module_gets_n_and_is_logged(caplog: pytest.LogCaptureFixture,
+                                              capsys: pytest.CaptureFixture[str]) -> None:
+    fake = FakeBoard(template_first_boot(full_enabled=False))
+    s = settings(modules=frozenset({"your-module"}), ssid=None, password=None)
+    with caplog.at_level("INFO", logger="xewe"):
+        assert run(fake, s) == 0
+    assert fake.answers == ["Kitchen Lights", "y", "y", "n"]
+    assert "auto-answer n (the default) to 'Would you like to enable Your Module Full module?'" in caplog.text
+    assert "declined your-module-full" in capsys.readouterr().out
+
+
+def test_unknown_value_prompt_gets_enter_until_default(caplog: pytest.LogCaptureFixture,
+                                                       capsys: pytest.CaptureFixture[str]) -> None:
+    """XEWE_PROVISION_MODULES unset (all): Your Module Full is enabled, its level prompt gets Enter."""
+    fake = FakeBoard(template_first_boot(full_enabled=True))
+    with caplog.at_level("INFO", logger="xewe"):
+        assert run(fake, settings(modules=None)) == 0
+    assert fake.answers == ["Kitchen Lights", "y", "y", "y", "", ""]
+    autos = [r.getMessage() for r in caplog.records if r.getMessage().startswith("auto-answer Enter")]
+    assert len(autos) == 2 and "'Starting level (0-100)?'" in autos[0] and "Your Module Full" in autos[0]
+    assert "2 prompt(s) answered with their default" in capsys.readouterr().out
+
+
+def test_unknown_yn_prompt_gets_n() -> None:
+    transcript = [*name_block("Kitchen Lights"), "Reset the counter?", "(y/n) > ", IN, *finish_block()]
+    fake = FakeBoard(transcript)
+    assert run(fake, settings(modules=frozenset(), ssid=None, password=None)) == 0
+    assert fake.answers == ["Kitchen Lights", "y", "n"]
+
+
+def test_unknown_prompt_that_never_ends_fails(caplog: pytest.LogCaptureFixture) -> None:
+    transcript = [*name_block("Kitchen Lights"), "Pick a colour:", *(["> ", IN] * (provision.MAX_AUTO + 1))]
     assert run(FakeBoard(transcript), settings()) == 1
-    assert "asks for input this tool does not know" in caplog.text
+    assert "keeps asking for input this tool does not know" in caplog.text
 
 
 # --------------------------------------------------------------------------- the real S3 Wi-Fi prompt

@@ -145,6 +145,36 @@ def test_tty_empty_answer_means_zero_modules(fresh: Paths, monkeypatch: pytest.M
     assert fresh.src_modules_h.is_file() and (fresh.modules / "library.properties").is_file()
 
 
+def _no_module_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [r.getMessage() for r in caplog.records
+            if r.levelname == "WARNING" and r.getMessage().startswith("no modules selected")]
+
+
+def test_no_modules_warning_names_both_fixes(fresh: Paths, monkeypatch: pytest.MonkeyPatch,
+                                            caplog: pytest.LogCaptureFixture,
+                                            capsys: pytest.CaptureFixture[str]) -> None:
+    """Enter at the menu keeps "none", but setup, build and run each print one warning line."""
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda *a: "")
+    assert main(["setup"]) == 0
+    (msg,) = _no_module_warnings(caplog)
+    assert "./setup.sh --modules LIST" in msg and "xewe modules select" in msg and "\n" not in msg
+    err = capsys.readouterr().err
+    assert sum(1 for line in err.splitlines() if line.startswith("warning: no modules selected")) == 1
+    caplog.clear()
+    assert main(["build", "--chip", "c3"]) == 0
+    assert len(_no_module_warnings(caplog)) == 1
+    caplog.clear()
+    main(["run", "--no-board"])  # exit 4 (board access disabled) after building
+    assert len(_no_module_warnings(caplog)) == 1
+
+
+def test_no_warning_with_modules_selected(fresh: Paths, caplog: pytest.LogCaptureFixture) -> None:
+    assert main(["setup", "--modules", "wifi"]) == 0
+    assert main(["build", "--chip", "c3"]) == 0
+    assert _no_module_warnings(caplog) == []
+
+
 @pytest.mark.parametrize("value", ["", "none"])
 def test_modules_flag_none(fresh: Paths, value: str) -> None:
     assert main(["setup", "--modules", "wifi"]) == 0

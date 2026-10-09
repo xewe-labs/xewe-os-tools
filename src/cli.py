@@ -106,7 +106,9 @@ def parser() -> argparse.ArgumentParser:
     _chip_args(sp, all_chips=False)
     sp.add_argument("--port", help="serial port")
     sp.add_argument("--baud", type=int, default=flash.DEFAULT_BAUD)
-    sp.add_argument("--erase", action="store_true", help="erase the whole flash (NVS too) first")
+    sp.add_argument("--erase", action="store_true",
+                    help="erase the whole flash (NVS too) first, so the board starts with a first boot; "
+                         "default: NVS (name, Wi-Fi, module choices) is kept")
     sp.add_argument("--no-build", action="store_true", help="flash the existing image")
     _require_board(sp)
     _env_arg(sp)
@@ -166,10 +168,16 @@ def parser() -> argparse.ArgumentParser:
     _require_board(sp)
     _env_arg(sp)
 
-    sp = sub.add_parser("run", help="build, flash, then listen (what run.sh calls)")
+    sp = sub.add_parser(
+        "run", help="build, erase, flash, then listen (what run.sh calls)",
+        description="Build when stale, erase the whole flash (NVS too: name, Wi-Fi, module choices), flash, then "
+                    "open the console. Every run is a true first boot (the board asks for its name); --keep-nvs "
+                    "skips the erase. The 'flashed' line ends with 'flash erased: first boot' or 'nvs kept'.")
     _chip_args(sp, all_chips=False)
     sp.add_argument("--port", help="serial port")
     sp.add_argument("--define", action="append", default=[], metavar="KEY=VALUE")
+    sp.add_argument("--keep-nvs", action="store_true",
+                    help="do not erase the flash first; the board keeps its name, Wi-Fi and module choices")
     sp.add_argument("--no-serial", action="store_true", help="stop after flashing")
     sp.add_argument("--no-input", action="store_true",
                     help="listen only; do not send lines typed on the terminal")
@@ -328,6 +336,8 @@ def dispatch(args: argparse.Namespace, extra: list[str]) -> int:
     if cmd == "clean":
         return clean.clean(p, args.all, args.modules)
     lock = lockfile.load(p.lock)
+    if cmd in ("build", "run"):
+        setup.warn_no_modules(lock.selected)
     if cmd == "build":
         return build.build(p, lock, _chips(args, p, lock), build.parse_defines(args.define), args.clean, args.dry_run)
     if cmd == "flash":
@@ -353,7 +363,7 @@ def dispatch(args: argparse.Namespace, extra: list[str]) -> int:
                          _require_board_flag(args), extra)
     if cmd == "run":
         return flash.run(p, lock, args.chip, args.port, build.parse_defines(args.define), args.no_serial,
-                         no_input=args.no_input, timestamps=args.timestamps)
+                         no_input=args.no_input, timestamps=args.timestamps, erase=not args.keep_nvs)
     if cmd == "manifest":
         if args.manifest_command == "show":
             return manifest.show(p, lock, args.json)

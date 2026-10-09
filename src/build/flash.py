@@ -1,4 +1,8 @@
-"""``xewe flash`` and ``xewe run``: build if stale, write the merged image with esptool (SPEC §8)."""
+"""``xewe flash`` and ``xewe run``: build if stale, write the merged image with esptool (SPEC §8).
+
+``xewe run`` erases the whole flash (NVS too) first by default, so every run is a true first boot
+(``--keep-nvs`` skips the erase); ``xewe flash`` keeps NVS unless ``--erase`` is given.
+"""
 
 from __future__ import annotations
 
@@ -18,6 +22,11 @@ from xewe.report import EXIT_FAIL, EXIT_OK, EXIT_USAGE, XeweError, board_disable
 
 DEFAULT_BAUD = 921600
 FALLBACK_BAUD = 460800
+
+ERASED_HINT = "flash erased: first boot"
+KEPT_HINT = "nvs kept"
+"""Suffixes of the ``flashed`` line: whether the board starts with a first boot or keeps its name,
+Wi-Fi and module choices."""
 
 PARTITION_TABLE_OFFSET = 0x8000
 """Where the ESP-IDF/Arduino partition table sits in a merged image (all ESP32 chips)."""
@@ -151,16 +160,17 @@ def flash_with_board(
     if board.chip and board.chip != chip:
         raise XeweError(f"board on {board.port} is {board.chip}, selected chip is {chip}", EXIT_USAGE)
     write_image(esptool_cmd(p), board, chip, binary, baud, erase)
-    result(f"flashed  {chip}  {board.port}  {p.rel(binary)}")
+    result(f"flashed  {chip}  {board.port}  {p.rel(binary)}  ({ERASED_HINT if erase else KEPT_HINT})")
     return EXIT_OK, board
 
 
 def run(
     p: Paths, lock: Lock, chip_flag: str | None, port: str | None, defines: dict[str, str], no_serial: bool, baud: int = 115200,
-    no_input: bool = False, timestamps: bool = False,
+    no_input: bool = False, timestamps: bool = False, erase: bool = True,
 ) -> int:
-    """build (when stale for these ``defines``) -> flash -> serial console, interactive on a terminal (what run.sh calls)."""
-    code, board = flash_with_board(p, lock, chip_flag, port, defines=defines)
+    """build (when stale for these ``defines``) -> erase (unless ``erase`` is False, i.e. ``--keep-nvs``)
+    -> flash -> serial console, interactive on a terminal (what run.sh calls)."""
+    code, board = flash_with_board(p, lock, chip_flag, port, erase=erase, defines=defines)
     if code != EXIT_OK or board is None or no_serial:
         return code
     with Console(board.port, baud, echo=True) as console:

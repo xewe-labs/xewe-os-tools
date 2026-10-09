@@ -62,6 +62,39 @@ def test_erase_and_probe(project: Paths, one_board: str, fake_esptool, monkeypat
     assert len(calls) == 5
 
 
+def test_flash_keeps_nvs_by_default(project: Paths, one_board: str, fake_esptool,
+                                    capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["flash"]) == 0
+    assert not any("erase-flash" in c for c in fake_esptool())
+    assert "(nvs kept)" in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        main(["flash", "--keep-nvs"])  # run only
+
+
+def test_run_erases_by_default(project: Paths, one_board: str, fake_esptool,
+                               capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["run", "--no-serial"]) == 0
+    calls = [c for c in fake_esptool() if "chip-id" not in c]
+    assert calls[0] == ["--chip", "esp32c3", "--port", one_board, "erase-flash"]
+    assert "write-flash" in calls[1]
+    assert "(flash erased: first boot)" in capsys.readouterr().out
+
+
+def test_run_keep_nvs_does_not_erase(project: Paths, one_board: str, fake_esptool,
+                                     capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["run", "--no-serial", "--keep-nvs"]) == 0
+    calls = fake_esptool()
+    assert not any("erase-flash" in c for c in calls) and any("write-flash" in c for c in calls)
+    assert "(nvs kept)" in capsys.readouterr().out
+
+
+def test_run_help_says_it_erases(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        main(["run", "--help"])
+    out = capsys.readouterr().out
+    assert "--keep-nvs" in out and "erase" in out
+
+
 def test_port_not_back_after_flash_exit_4(project: Paths, one_board: str, fake_esptool,
                                           monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     real = serialio.wait_for_port

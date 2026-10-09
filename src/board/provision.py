@@ -9,6 +9,13 @@ The firmware prompts (xewe-os-core ``XeWeOs.cpp``/``Module.cpp``/``Serial.cpp``,
 ``Wifi.cpp``/``Time.cpp``) wait forever and drop input typed before the prompt is printed
 (``get_core`` calls ``clear_input`` first), so each answer is sent only after its input line
 (``> `` or ``(y/n) > ``) has been seen.
+
+A prompt this tool has no answer for gets the prompt's default instead of failing: a module's
+"enable?" question for a module left out of ``XEWE_PROVISION_MODULES``/``--modules`` is answered
+``n``, and any other input line nothing was queued for (e.g. the template's ``Starting level
+(0-100)?``) is answered ``n`` at ``(y/n) > `` and an empty line (Enter) at ``> ``. A bounded
+firmware prompt takes an empty line as a wrong answer and, once its attempts are used, returns its
+default. Each such auto-answer is logged.
 """
 
 from __future__ import annotations
@@ -83,6 +90,10 @@ JOIN_RETRIES = 1
 """``Unable to join``: the firmware prints the network list again; answer it again (same SSID, same
 password) this many times before giving up. A single failed join is common right after a reset."""
 MAX_INVALID = 3
+MAX_AUTO = 16
+"""More auto-answers than this in one run: the board is stuck in a prompt; give up."""
+AUTO = "auto"
+"""Prompt kind of an auto-answer (the prompt's default: ``n`` or Enter)."""
 
 # --------------------------------------------------------------------------- settings
 
@@ -189,6 +200,8 @@ class Outcome:
     timezone: str = "not asked"
     name_asked: bool = False
     join_failures: int = 0
+    auto: list[str] = field(default_factory=list)
+    """Prompts answered with their default (see ``Driver._auto``)."""
 
 
 class Driver:
@@ -206,6 +219,8 @@ class Driver:
         self.networks: dict[int, str] = {}
         self.rescans = 0
         self.seen: dict[str, int] = {}
+        self.module = ""
+        """Display name of the module whose "enable?" question came last (for the auto-answer log)."""
 
     def classify(self, line: str) -> tuple[str, re.Match[str]] | None:
         """The event a line is (counted in ``seen``), or None for a line that is none."""
@@ -274,7 +289,8 @@ class Driver:
         s = self.s
         if kind == "input":
             if self.pending is None:
-                raise ProvisionFailed(f"the board asks for input this tool does not know (line before: {self._before()!r})")
+                self._auto(m[0])
+                return
             self.last, self.pending = self.pending, None
             self.console.send(self.last[1])
         elif kind == "name":
@@ -285,9 +301,13 @@ class Driver:
         elif kind == "confirm":
             self._answer(kind, "y" if m[1] == s.name else "n")  # "n" re-asks the name (e.g. after a nudge)
         elif kind == "module":
+            self.module = m[1]
             mod = slug(m[1])
             yes = s.enables(mod)
             (self.out.enabled if yes else self.out.declined).append(mod)
+            if not yes:
+                log.info("auto-answer n (the default) to 'Would you like to enable %s module?': "
+                         "%s is not in XEWE_PROVISION_MODULES/--modules", m[1], mod)
             self._answer(kind, "y" if yes else "n")
         elif kind == "scan":
             self.networks = {}
@@ -333,11 +353,15 @@ class Driver:
                 raise ProvisionFailed(f"the board rejected an answer {MAX_INVALID + 1} times: {m.string.strip()}")
             if self.last is None:
                 self._answer("selection", "-2")
+            elif self.last[0] == AUTO:
+                pass  # the firmware asks again with "> " (auto-answered again) or returns its default
             elif self.last[0] == "selection":
                 self._answer(*self.last)
             else:
                 raise ProvisionFailed(f"the board rejected an answer: {m.string.strip()}")
         elif kind == "error":
+            if self.last is not None and self.last[0] == AUTO and self.seen["error"] <= MAX_INVALID:
+                return  # e.g. "! Timeout." or "! Out of range" after an auto-answer: the prompt goes on
             if self.last is None:
                 raise ProvisionFailed(f"the board was waiting at a prompt printed before the port was opened "
                                       f"({m.string.strip()}); run again without --no-reset")
@@ -345,6 +369,19 @@ class Driver:
         elif kind == "ready":
             raise ProvisionFailed("the board finished booting without 'Initial Setup Complete'")
         # "progress": nothing to answer; the prompt timer restarts
+
+    def _auto(self, input_line: str) -> None:
+        """Answer an input line nothing was queued for with the prompt's default and log it."""
+        if len(self.out.auto) >= MAX_AUTO:
+            raise ProvisionFailed("the board keeps asking for input this tool does not know")
+        answer = "n" if input_line.startswith("(y/n)") else ""
+        prompt = self._before().strip()
+        where = f" (module {self.module})" if self.module else ""
+        log.info("auto-answer %s (the prompt's default) to %r%s: not a prompt this tool knows",
+                 "n" if answer else "Enter", prompt, where)
+        self.out.auto.append(prompt)
+        self.last = (AUTO, answer)
+        self.console.send(answer)
 
     def _before(self) -> str:
         lines = self.console.lines
@@ -388,6 +425,8 @@ def _summary(s: Settings, out: Outcome, seconds: float) -> str:
     else:
         parts.append("wifi not configured")
     parts.append(f"timezone {out.timezone}")
+    if out.auto:
+        parts.append(f"{len(out.auto)} prompt(s) answered with their default")
     return f"provisioned in {seconds:.0f} s: " + "; ".join(parts)
 
 

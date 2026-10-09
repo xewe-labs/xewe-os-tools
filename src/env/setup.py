@@ -159,6 +159,18 @@ def modules_checkout(
     return dest, {"ref": ref, "commit": commit, "source": src.repo}
 
 
+NO_MODULES_WARNING = ("no modules selected (selected = [] in xewe.toml): the image has no Wi-Fi, time or other "
+                      "modules; select some with `./setup.sh --modules LIST` or `xewe modules select LIST`")
+
+
+def warn_no_modules(selected: list[str]) -> bool:
+    """One ``warning:`` line when the project selects no modules (setup, build, run); True if warned."""
+    if selected:
+        return False
+    log.warning("%s", NO_MODULES_WARNING)
+    return True
+
+
 def _menu(registry: modules.Registry) -> list[str]:
     """Numbered module menu on stderr; returns the chosen slugs."""
     slugs = registry.slugs()
@@ -332,8 +344,7 @@ def run_setup(p: Paths, opts: SetupOptions, sleep: Callable[[float], None] = tim
     elif not lock.selected and sys.stdin.isatty() and registry.all:
         lock.selected = _menu(registry)
         lockfile.save(lock, p.lock)
-    if not lock.selected:
-        log.info("no modules selected (src/Modules.h declares nothing; add some with `xewe modules select`)")
+    warn_no_modules(lock.selected)
 
     # 10 generate
     mod = cfg.installed["modules"]

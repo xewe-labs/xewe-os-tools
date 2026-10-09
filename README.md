@@ -38,11 +38,11 @@ Runtime dependencies: `pyserial`, `pytest`. esptool comes from the pinned esp32 
 |---|---|
 | `xewe setup [--modules LIST\|all\|none] [--latest] [--force] [--core-source DIR] [--modules-source DIR] [--arduino-data DIR]` | arduino-cli, esp32 core and the modules repo (`sources/xewe-os-modules/<ref>/`, or `XEWE_MODULES_SOURCE` as is) into the shared `~/.xewe-os/build-tools` (once per machine and ref; a branch ref is followed), core library and libraries into `build/`; generates `build/modules/` (the `XeWeModules` library, the selected modules' tests, `modules.lock`) and `src/Modules.h` (zero modules is valid: `--modules none`, or no selection); installs the selected modules' `depends_libraries` from the modules repo's `libraries.toml` unless `xewe.toml` `[libraries]` pins that name (the manifest wins) |
 | `xewe build [--chip C \| --all-chips] [--define K=V]... [--clean] [--dry-run]` | compile into `build/builds/<chip>/out/`; prints `Sketch uses N bytes (NN%)` (`--dry-run` prints the arduino-cli command only) |
-| `xewe flash [--chip C] [--port P] [--erase] [--no-build] [--require-board]` | build if stale (sources, version or `--define` values changed), then write the merged image at 0x0 |
+| `xewe flash [--chip C] [--port P] [--erase] [--no-build] [--require-board]` | build if stale (sources, version or `--define` values changed), then write the merged image at 0x0; NVS (name, Wi-Fi, module choices) is kept unless `--erase` |
 | `xewe serial [--port P] [--send CMD [--expect RE] [--boot-timeout S]] [--duration S] [--no-input] [--timestamps] [--log FILE]` | timestamped console; the tools open the port without resetting the board (`--reset` or flashing resets it); `--send` waits out a boot in progress (see below); without `--send` on a terminal it is interactive: keys typed during flash/boot are discarded, board lines are shown raw (`--timestamps` adds the time; `--log` always has it), each typed line is sent on Enter, Ctrl-C or Ctrl-D exits (`--no-input` or non-terminal stdin: listen only) |
 | `xewe provision [--port P] [--name NAME] [--modules all\|none\|LIST] [--timezone GMT+HH:MM] [--env FILE] [--no-reset] [--log FILE]` | answer the first-boot prompts of a flashed board (settings from `.env`) |
 | `xewe test [--chip C \| --all-chips] [--module SLUG]... [--unit-only] [--no-board] [-- PYTEST_ARGS]` | pytest over `tests/` (`tests/unit/`, `tests/board/`) and the selected modules' tests in `build/modules/tests/<slug>/` |
-| `xewe run [--chip C] [--define K=V]... [--no-serial] [--no-input] [--timestamps]` | build, flash, then the console (interactive on a terminal, like `xewe serial`) |
+| `xewe run [--chip C] [--define K=V]... [--keep-nvs] [--no-serial] [--no-input] [--timestamps]` | build, erase the whole flash (NVS too, so every run is a true first boot; `--keep-nvs` skips the erase), flash, then the console (interactive on a terminal, like `xewe serial`). The `flashed` line ends with `(flash erased: first boot)` or `(nvs kept)` |
 | `xewe boards [--no-probe] [--json] [--set-port P [--set-chip C]] [--clear]` | list boards, set an override |
 | `xewe modules list\|select\|validate\|generate` | the modules repo checkout, `build/modules/` and `src/Modules.h` |
 | `xewe manifest show\|update` | `xewe.toml` refs vs installed refs; move refs to new tags. `ref = "latest"` tracks the newest commit of the repo's default branch (development, re-fetched on every setup); a tag freezes it (`xewe manifest update` replaces `latest` with the newest tag, `--to latest` sets it back) |
@@ -71,9 +71,16 @@ the boot log. With `--send`, the command is sent right away when nothing boot-li
 
 ## Provision
 
-A freshly flashed (or erased) board stops at `Name your device`, then asks which modules to
-enable, the Wi-Fi network and password, and whether the detected time is right. `xewe provision`
-resets the board and answers those prompts:
+Flashing keeps NVS: a board flashed with `xewe flash` (no `--erase`) keeps its name, Wi-Fi and
+module choices and asks nothing it has stored. `xewe run` (what `./run.sh` calls) erases the flash
+first by default, so its board starts with a first boot (`--keep-nvs` keeps NVS). A board with
+erased NVS (or one never set up) stops at `Name your device`; then, in the sketch's declaration
+order, each module that can be disabled asks `Would you like to enable <Name> module?` and an
+enabled module runs its own setup (Wi-Fi: the network list and password; Time: whether the
+detected time is right; a template module may ask its own values); then `Initial Setup Complete`
+and a restart. Only selected modules are in the image: with `selected = []` there is no Wi-Fi or
+Time prompt at all (setup, build and run print a `warning:` line). `xewe provision` resets the
+board and answers those prompts:
 
 ```sh
 build/tools/.venv/bin/python -m xewe provision                # settings from .env, board auto-selected
@@ -83,7 +90,11 @@ build/tools/.venv/bin/python -m xewe provision --port /dev/ttyACM0
 Values come from flags, then the environment (`XEWE_DEVICE_NAME`, `XEWE_WIFI_SSID`,
 `XEWE_WIFI_PASSWORD`, `XEWE_TIMEZONE`, `XEWE_PROVISION_MODULES`), then the `.env` file (next
 section), then defaults (name from `xewe.toml`, all modules, accept the detected timezone). The
-password has no flag and is printed as `********`.
+password has no flag and is printed as `********`. A prompt the tool has no value for gets the
+prompt's default instead of failing, and each such auto-answer is logged: the "enable?" question of
+a module not in `XEWE_PROVISION_MODULES`/`--modules` is answered `n`, any other unknown prompt `n`
+at `(y/n) > ` and Enter at `> ` (e.g. the template's `Starting level (0-100)?`, which then keeps
+its default).
 
 A board whose earlier provisioning stopped part-way (for example at Wi-Fi) keeps what it stored and
 starts at a later prompt after the reset, such as the Wi-Fi network list; the tool answers whatever
