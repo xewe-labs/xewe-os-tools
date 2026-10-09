@@ -11,7 +11,7 @@ from xewe.boards import Board
 from xewe.lockfile import Lock
 from xewe.project import Paths
 from xewe.report import EXIT_FAIL, EXIT_OK, EXIT_USAGE, XeweError, board_disabled, board_disabled_exit, log, no_board, result
-from xewe.serialio import Console, wait_for_port
+from xewe.serialio import Console, console_session, wait_for_port
 
 DEFAULT_BAUD = 921600
 FALLBACK_BAUD = 460800
@@ -153,15 +153,13 @@ def flash_with_board(
 
 
 def run(
-    p: Paths, lock: Lock, chip_flag: str | None, port: str | None, defines: dict[str, str], no_serial: bool, baud: int = 115200
+    p: Paths, lock: Lock, chip_flag: str | None, port: str | None, defines: dict[str, str], no_serial: bool, baud: int = 115200,
+    no_input: bool = False,
 ) -> int:
-    """build (when stale for these ``defines``) -> flash -> serial (what run.sh calls)."""
+    """build (when stale for these ``defines``) -> flash -> serial console, interactive on a terminal (what run.sh calls)."""
     code, board = flash_with_board(p, lock, chip_flag, port, defines=defines)
     if code != EXIT_OK or board is None or no_serial:
         return code
     with Console(board.port, baud, echo=True) as console:
-        try:
-            console.listen()
-        except KeyboardInterrupt:
-            pass
+        console_session(console, no_input=no_input)
     return EXIT_OK

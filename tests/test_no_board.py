@@ -10,7 +10,7 @@ from xewe.cli import main
 from xewe.project import Paths
 from xewe.report import BOARD_DISABLED, XeweError
 
-BIN = "build/out/c3/2.0.15-c3-xewe-os.bin"
+BIN = "build/builds/c3/out/2.0.15-c3-xewe-os.bin"
 TESTS = '''
 import pytest
 

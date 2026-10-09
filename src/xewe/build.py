@@ -1,4 +1,4 @@
-"""``xewe build``: XeWeBuildInfo generation, arduino-cli compile, ``build/out/<chip>/`` (SPEC §7)."""
+"""``xewe build``: XeWeBuildInfo generation, arduino-cli compile, ``build/builds/<chip>/out/`` (SPEC §7)."""
 
 from __future__ import annotations
 
@@ -100,13 +100,13 @@ def _now() -> str:
 def stage_sketch(p: Paths) -> Path:
     """Sketch directory for arduino-cli: the root when its name equals the .ino stem, else a mirror.
 
-    The mirror ``build/gen/sketch/<stem>/`` holds the root's sketch files and ``src/``, copied with
+    The mirror ``build/tmp/sketch/<stem>/`` holds the root's sketch files and ``src/``, copied with
     their mtimes so the compile cache stays warm.
     """
     ino = p.sketch_ino()
     if p.root.name == ino.stem:
         return p.root
-    dest = p.gen / "sketch" / ino.stem
+    dest = p.sketch_mirror(ino.stem)
     shutil.rmtree(dest, ignore_errors=True)
     dest.mkdir(parents=True)
     for f in p.root.iterdir():
@@ -141,12 +141,12 @@ def write_build_info(p: Paths, chip: str, header: str) -> Path:
 
 
 def cli_path(p: Paths, cfg: config.BuildConfig | None) -> Path:
-    """arduino-cli to run: XEWE_ARDUINO_CLI, the recorded one, or build/bin/arduino-cli."""
+    """arduino-cli to run: XEWE_ARDUINO_CLI, the recorded one, or the shared ``bin/arduino-cli-<version>``."""
     return arduino.cli_override() or (cfg.path(p, "arduino_cli") if cfg else None) or arduino.default_cli(p)
 
 
 def _resolved_modules(p: Paths) -> list[str]:
-    lock_file = p.src_modules / "modules.lock"
+    lock_file = p.modules_lock
     if not lock_file.is_file():
         return []
     return [line.split("|", 1)[0] for line in lock_file.read_text().splitlines() if line and not line.startswith("#")]
@@ -155,7 +155,7 @@ def _resolved_modules(p: Paths) -> list[str]:
 def _sources(p: Paths) -> list[Path]:
     files = [f for f in p.root.iterdir() if f.is_file() and f.suffix in SKETCH_SUFFIXES]
     files.append(p.lock)
-    for d in (p.root / "src", p.libraries):
+    for d in (p.root / "src", p.libraries, p.modules_lib):
         if d.is_dir():
             files += [f for f in d.rglob("*") if f.is_file() and ".git" not in f.parts]
     return files
@@ -224,19 +224,21 @@ def build_chip(
     version: str | None = None,
     dry_run: bool = False,
 ) -> BuildResult:
-    """Build one chip; on success ``build/out/<chip>/`` holds the bin, manifest.json, meta.json."""
+    """Build one chip; on success ``build/builds/<chip>/out/`` holds the bin, manifest.json, meta.json."""
     chip = chips.get(chip_name)
     defines = defines or {}
     version = version or lock.version
     cfg = config.load(p) if dry_run else config.require(p)
-    if not dry_run and not (p.src_modules / "Modules.h").is_file():
-        raise XeweError("src/modules/Modules.h missing; run `xewe modules generate`", EXIT_NOT_SETUP)
+    if not dry_run:
+        for needed in (p.src_modules_h, p.modules_lib / "library.properties"):
+            if not needed.is_file():
+                raise XeweError(f"{p.rel(needed)} missing; run `xewe modules generate`", EXIT_NOT_SETUP)
     cli = cli_path(p, cfg)
     stem = p.sketch_ino().stem
     if p.root.name == stem:
         sketch_dir = p.root
     elif dry_run:
-        sketch_dir = p.gen / "sketch" / stem
+        sketch_dir = p.sketch_mirror(stem)
     else:
         sketch_dir = stage_sketch(p)
     argv = arduino.compile_argv(p.rel(cli), chip, p, sketch_dir)

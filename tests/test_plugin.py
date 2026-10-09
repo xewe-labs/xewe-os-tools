@@ -47,7 +47,7 @@ def test_no_board_reports_compiled_not_run(pytester: pytest.Pytester, proj: Path
         "*test_fw.py::test_status",
         "xewe test: 1 host passed, 1 compiled, not run, 0 failed",
     ])
-    assert (proj.out / "c3/2.0.15-c3-xewe-os.bin").is_file()  # hardware tests still compile
+    assert (proj.out_dir("c3") / "2.0.15-c3-xewe-os.bin").is_file()  # hardware tests still compile
 
 
 def test_require_board_fails(pytester: pytest.Pytester, proj: Paths) -> None:
@@ -67,7 +67,7 @@ def test_xewe_test_require_board_exits_4(proj: Paths, monkeypatch: pytest.Monkey
 def test_host_only_deselects_hardware(pytester: pytest.Pytester, proj: Paths) -> None:
     res = _run(pytester, proj, "-m", "host")
     res.assert_outcomes(passed=1, deselected=1)
-    assert not (proj.out / "c3").exists()
+    assert not proj.out_dir("c3").exists()
 
 
 def test_compile_failure_fails_hardware_tests(pytester: pytest.Pytester, proj: Paths,
@@ -102,7 +102,7 @@ def test_xewe_test_all_chips(proj: Paths, capsys: pytest.CaptureFixture[str]) ->
     out = capsys.readouterr().out
     for chip in ("c3", "c6", "s3"):
         assert f"no board attached, chip {chip}" in out
-        assert (proj.out / chip).is_dir()
+        assert proj.out_dir(chip).is_dir()
 
 
 def test_xewe_test_without_tests(project: Paths, capsys: pytest.CaptureFixture[str]) -> None:

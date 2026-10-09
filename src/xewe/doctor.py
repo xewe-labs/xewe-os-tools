@@ -52,6 +52,19 @@ def _group_exists(name: str) -> bool:
     return True
 
 
+def _toolchain(p: Paths, lock: Lock) -> Check:
+    """The shared toolchain folder (``XEWE_HOME`` resolved) and whether the pinned cli and core are in it."""
+    cli = arduino.default_cli(p, lock.arduino_cli_version)
+    core = p.default_arduino_data / "packages" / "esp32" / "hardware" / "esp32" / lock.esp32_version
+    if not p.build_tools.is_dir():
+        return Check(WARN, "toolchain", f"{p.build_tools} missing (./setup.sh installs it once per machine)")
+    have_cli = "present" if cli.is_file() else "missing"
+    have_core = "present" if core.is_dir() else "missing"
+    level = OK if cli.is_file() and core.is_dir() else WARN
+    return Check(level, "toolchain", f"{p.build_tools}: arduino-cli {lock.arduino_cli_version} {have_cli}, "
+                                     f"esp32 core {lock.esp32_version} {have_core}")
+
+
 def checks(p: Paths, lock: Lock) -> list[Check]:
     """Run every check; never raises for a missing piece."""
     out = [Check(OK, "python", sys.version.split()[0])]
@@ -62,10 +75,11 @@ def checks(p: Paths, lock: Lock) -> list[Check]:
 
     cfg = config.load(p)
     if cfg is None:
-        out.append(Check(ERROR, "setup", "build/build_config.toml missing or incomplete; run ./setup.sh"))
+        out.append(Check(ERROR, "setup", "build/config/build_config.toml missing or incomplete; run ./setup.sh"))
     else:
         out.append(Check(OK, "setup", f"completed {cfg.setup_completed} by tools {cfg.tools_version}"))
 
+    out.append(_toolchain(p, lock))
     cli = build.cli_path(p, cfg)
     data = cfg.arduino_data(p) if cfg else p.default_arduino_data
     env_vars = arduino.env(p, data)

@@ -72,7 +72,7 @@ def run_tests(
     worst = EXIT_OK
     for chip in chip_names:
         args = [str(r) for r in roots]
-        args += ["--rootdir", str(p.root), "--import-mode=importlib", "-o", f"cache_dir={p.cache / 'pytest'}"]
+        args += ["--rootdir", str(p.root), "--import-mode=importlib", "-o", f"cache_dir={p.tmp / 'pytest'}"]
         # xewe is imported before pytest starts, so pytest cannot assert-rewrite the plugin package
         args += ["-W", "ignore:Module already imported so cannot be rewritten:pytest.PytestAssertRewriteWarning"]
         args += ["--xewe-project", str(p.root), "--xewe-chip", chip]

@@ -98,16 +98,16 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--version", action="version", version=f"xewe-os-tools {__version__}")
     sub = ap.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
-    sp = sub.add_parser("setup", help="install the toolchain, core, libraries and modules into build/")
+    sp = sub.add_parser("setup", help="install the shared toolchain (~/.xewe-os/build-tools) and the core, libraries and modules into build/")
     sp.add_argument("--latest", action="store_true", help="install the newest tags (xewe.lock is not changed)")
     sp.add_argument("--modules", metavar="LIST|all|none", help="select modules (written to xewe.lock; \"\" or none = no modules)")
     sp.add_argument("--force", action="store_true", help="redo every step")
     sp.add_argument("--core-source", metavar="DIR", type=Path, help="local xewe-os-core checkout (also XEWE_CORE_SOURCE)")
     sp.add_argument("--modules-source", metavar="DIR", type=Path, help="local modules checkout (also XEWE_MODULES_SOURCE)")
     sp.add_argument("--arduino-data", metavar="DIR", type=Path,
-                    help="reuse this arduino-cli data dir (has packages/esp32) instead of build/arduino15; also XEWE_ARDUINO_DATA")
+                    help="reuse this arduino-cli data dir (has packages/esp32) instead of ~/.xewe-os/build-tools/arduino15; also XEWE_ARDUINO_DATA")
 
-    sp = sub.add_parser("build", help="compile into build/out/<chip>/")
+    sp = sub.add_parser("build", help="compile into build/builds/<chip>/out/")
     _chip_args(sp)
     sp.add_argument("--define", action="append", default=[], metavar="KEY=VALUE", help="extra #define in XeWeBuildInfo.h")
     sp.add_argument("--clean", action="store_true", help="drop the compile cache first")
@@ -128,7 +128,9 @@ def parser() -> argparse.ArgumentParser:
                     "without resetting the board; --reset or flashing resets it (then the boot log is shown). "
                     "With --send, the command is sent right away if no boot output appears within 2 s, or once "
                     "a booting board printed 'System Setup Complete' (up to --boot-timeout); an "
-                    "unprovisioned board ('Name your device') exits 1 without sending.")
+                    "unprovisioned board ('Name your device') exits 1 without sending. Without --send on a terminal "
+                    "the console is interactive: each line typed is sent to the board; Ctrl-C or Ctrl-D exits "
+                    "(--no-input, or stdin not a terminal: listen only).")
     sp.add_argument("--port", help="serial port")
     sp.add_argument("--baud", type=int, default=115200)
     sp.add_argument("--reset", action="store_true", help="pulse EN (RTS) before listening")
@@ -138,6 +140,8 @@ def parser() -> argparse.ArgumentParser:
     sp.add_argument("--boot-timeout", type=float, default=serialio.BOOT_TIMEOUT_SECONDS, metavar="S",
                     help="with --send: seconds to wait for the boot to finish before sending (default %(default)g)")
     sp.add_argument("--duration", type=float, help="listen for this many seconds")
+    sp.add_argument("--no-input", action="store_true",
+                    help="listen only; do not send lines typed on the terminal")
     sp.add_argument("--log", type=Path, metavar="FILE", help="append timestamped lines to FILE")
     _require_board(sp)
     _env_arg(sp)
@@ -174,12 +178,14 @@ def parser() -> argparse.ArgumentParser:
     sp.add_argument("--port", help="serial port")
     sp.add_argument("--define", action="append", default=[], metavar="KEY=VALUE")
     sp.add_argument("--no-serial", action="store_true", help="stop after flashing")
+    sp.add_argument("--no-input", action="store_true",
+                    help="listen only; do not send lines typed on the terminal")
     _env_arg(sp)
 
     sp = sub.add_parser("boards", help="list attached boards; set a port/chip override")
     sp.add_argument("--no-probe", action="store_true", help="do not reset boards to read their chip")
     sp.add_argument("--json", action="store_true")
-    sp.add_argument("--set-port", metavar="P", help="write [override] port to build/boards.toml")
+    sp.add_argument("--set-port", metavar="P", help="write [override] port to build/config/boards.toml")
     sp.add_argument("--set-chip", choices=chips.ALL_CHIPS, help="with --set-port: [override] chip")
     sp.add_argument("--clear", action="store_true", help="remove the [override]")
     _require_board(sp)
@@ -193,8 +199,8 @@ def parser() -> argparse.ArgumentParser:
     m.add_argument("selection", metavar="LIST|all|none")
     m.add_argument("--no-generate", action="store_true")
     m = msub.add_parser("validate", help="check every module.properties rule")
-    m.add_argument("path", nargs="?", type=Path, help="modules checkout (default build/xewe-os-modules)")
-    msub.add_parser("generate", help="rebuild src/modules/ from the lock selection")
+    m.add_argument("path", nargs="?", type=Path, help="modules checkout (default build/modules)")
+    msub.add_parser("generate", help="rebuild build/modules-lib/ and src/Modules.h from the lock selection")
 
     sp = sub.add_parser("lock", help="show or update xewe.lock refs")
     lsub = sp.add_subparsers(dest="lock_command", required=True, metavar="ACTION")
@@ -204,9 +210,9 @@ def parser() -> argparse.ArgumentParser:
     m.add_argument("names", nargs="*", metavar="core|modules|tools")
     m.add_argument("--to", metavar="REF")
 
-    sp = sub.add_parser("clean", help="delete build/cache, build/out, build/gen")
-    sp.add_argument("--all", action="store_true", help="delete all of build/ except .venv and xewe-os-tools")
-    sp.add_argument("--modules", action="store_true", help="also delete src/modules/")
+    sp = sub.add_parser("clean", help="delete build/builds and build/tmp")
+    sp.add_argument("--all", action="store_true", help="delete all of build/ except build/tools (never ~/.xewe-os/build-tools)")
+    sp.add_argument("--modules", action="store_true", help="also delete build/modules-lib/ and src/Modules.h")
 
     sub.add_parser("doctor", help="check the environment")
 
@@ -272,7 +278,7 @@ def _modules_command(args: argparse.Namespace, p: Paths) -> int:
     rec = cfg.installed.get("modules", {})
     order = modules.generate(p, registry, lock.selected, rec.get("source", lock.modules.repo),
                              rec.get("ref", lock.modules.ref), rec.get("commit", "-"))
-    result(f"src/modules: {', '.join(m.slug for m in order) or 'none'}")
+    result(f"modules: {', '.join(m.slug for m in order) or 'none'}  (build/modules-lib, src/Modules.h)")
     return EXIT_OK
 
 
@@ -338,7 +344,7 @@ def dispatch(args: argparse.Namespace, extra: list[str]) -> int:
             args.port,
             lambda port: boards.select(p, port=port, probe=False),
             args.baud, args.reset, args.send, args.expect, args.timeout, args.boot_timeout, args.duration, args.log,
-            _require_board_flag(args),
+            _require_board_flag(args), no_input=args.no_input,
         )
     if cmd == "provision":
         settings = provision.resolve(lock.name or p.root.name, args.name, args.modules, args.timezone)
@@ -348,7 +354,8 @@ def dispatch(args: argparse.Namespace, extra: list[str]) -> int:
         return run_tests(p, lock, _chips(args, p, lock), args.port, args.module, args.host_only,
                          _require_board_flag(args), extra)
     if cmd == "run":
-        return flash.run(p, lock, args.chip, args.port, build.parse_defines(args.define), args.no_serial)
+        return flash.run(p, lock, args.chip, args.port, build.parse_defines(args.define), args.no_serial,
+                         no_input=args.no_input)
     if cmd == "lock":
         if args.lock_command == "show":
             return lockcmd.show(p, lock, args.json)

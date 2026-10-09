@@ -67,8 +67,8 @@ def layout(tmp_path: Path) -> tuple[Path, Path, Path]:
     project = write_project(tmp_path / "harness").root
     tools = tmp_path / "xewe-os-tools"
     tools.mkdir()
-    (project / "build").mkdir()
-    (project / "build" / "build_config.toml").write_text(
+    (project / "build" / "config").mkdir(parents=True)
+    (project / "build" / "config" / "build_config.toml").write_text(
         f'[installed.tools]\nref = "v0.1.1"\ncommit = "-"\nsource = "local:{tools}"\n')
     other = tmp_path / "elsewhere.env"
     for d, tag in ((project, "project"), (tools, "tools")):

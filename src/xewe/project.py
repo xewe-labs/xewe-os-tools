@@ -1,7 +1,8 @@
-"""Project root discovery and the paths under ``build/``.
+"""Project root discovery, the paths under ``build/`` and the shared toolchain folder.
 
-Nothing absolute is stored: the root is found from the CWD (or ``--project``) on every run, so a
-project directory can be moved or renamed after setup.
+Nothing absolute is stored about the project: the root is found from the CWD (or ``--project``)
+on every run, so a project directory can be moved or renamed after setup. Only the shared
+toolchain (``$XEWE_HOME`` or ``~/.xewe-os``, ``build-tools/``) is recorded with absolute paths.
 """
 
 from __future__ import annotations
@@ -29,11 +30,56 @@ def find_root(explicit: str | os.PathLike[str] | None = None, start: Path | None
     raise XeweError(f"no {LOCK_NAME} in {here} or any parent; pass --project DIR", EXIT_USAGE)
 
 
+HOME_ENV = "XEWE_HOME"
+"""Overrides ``~/.xewe-os``, the per-machine folder that holds the shared toolchain."""
+
+
+def xewe_home() -> Path:
+    """``$XEWE_HOME`` or ``~/.xewe-os`` (resolved on every call, so tests can point it elsewhere)."""
+    value = os.environ.get(HOME_ENV)
+    return Path(value).expanduser().resolve() if value else Path.home() / ".xewe-os"
+
+
 @dataclass(frozen=True)
 class Paths:
-    """Every location xewe reads or writes inside a project."""
+    """Every location xewe reads or writes: the project (``build/``, ``src/Modules.h``) and the
+    per-machine toolchain under ``~/.xewe-os/build-tools`` (SPEC §6 layout)."""
 
     root: Path
+
+    # ------------------------------------------------------------- shared toolchain (per machine)
+
+    @property
+    def home(self) -> Path:
+        return xewe_home()
+
+    @property
+    def build_tools(self) -> Path:
+        return self.home / "build-tools"
+
+    @property
+    def default_arduino_data(self) -> Path:
+        return self.build_tools / "arduino15"
+
+    @property
+    def arduino_user(self) -> Path:
+        return self.build_tools / "arduino-user"
+
+    @property
+    def bin(self) -> Path:
+        return self.build_tools / "bin"
+
+    @property
+    def downloads(self) -> Path:
+        """``$XEWE_CACHE`` or ``build-tools/downloads`` (arduino-cli archives and core downloads)."""
+        value = os.environ.get("XEWE_CACHE")
+        return Path(value).expanduser() if value else self.build_tools / "downloads"
+
+    @property
+    def toolchain_lock(self) -> Path:
+        return self.build_tools / ".lock"
+
+    # ------------------------------------------------------------- project
 
     @property
     def lock(self) -> Path:
@@ -44,32 +90,28 @@ class Paths:
         return self.root / "build"
 
     @property
+    def config_dir(self) -> Path:
+        return self.build / "config"
+
+    @property
     def build_config(self) -> Path:
-        return self.build / "build_config.toml"
+        return self.config_dir / "build_config.toml"
 
     @property
     def boards_toml(self) -> Path:
-        return self.build / "boards.toml"
+        return self.config_dir / "boards.toml"
 
     @property
-    def venv(self) -> Path:
-        return self.build / ".venv"
+    def modules_lock(self) -> Path:
+        return self.config_dir / "modules.lock"
 
     @property
     def tools_checkout(self) -> Path:
-        return self.build / "xewe-os-tools"
+        return self.build / "tools"
 
     @property
-    def bin(self) -> Path:
-        return self.build / "bin"
-
-    @property
-    def default_arduino_data(self) -> Path:
-        return self.build / "arduino15"
-
-    @property
-    def arduino_user(self) -> Path:
-        return self.build / "arduino-user"
+    def venv(self) -> Path:
+        return self.tools_checkout / ".venv"
 
     @property
     def libraries(self) -> Path:
@@ -77,32 +119,42 @@ class Paths:
 
     @property
     def modules_checkout(self) -> Path:
-        return self.build / "xewe-os-modules"
+        return self.build / "modules"
 
     @property
-    def gen(self) -> Path:
-        return self.build / "gen"
+    def modules_lib(self) -> Path:
+        """The generated Arduino library ``XeWeModules`` (the selected modules' sources)."""
+        return self.build / "modules-lib"
 
     @property
-    def cache(self) -> Path:
-        return self.build / "cache"
+    def builds(self) -> Path:
+        return self.build / "builds"
 
     @property
-    def out(self) -> Path:
-        return self.build / "out"
+    def tmp(self) -> Path:
+        """Sketch mirror, modules staging, pytest cache."""
+        return self.build / "tmp"
 
     @property
-    def src_modules(self) -> Path:
+    def src_modules_h(self) -> Path:
+        return self.root / "src" / "Modules.h"
+
+    @property
+    def legacy_src_modules(self) -> Path:
+        """``src/modules/`` of the previous layout (removed by ``modules generate`` when generated)."""
         return self.root / "src" / "modules"
 
-    def cache_dir(self, chip: str) -> Path:
-        return self.cache / chip
-
     def gen_dir(self, chip: str) -> Path:
-        return self.gen / chip
+        return self.builds / chip / "gen"
+
+    def cache_dir(self, chip: str) -> Path:
+        return self.builds / chip / "cache"
 
     def out_dir(self, chip: str) -> Path:
-        return self.out / chip
+        return self.builds / chip / "out"
+
+    def sketch_mirror(self, stem: str) -> Path:
+        return self.tmp / "sketch" / stem
 
     def rel(self, path: Path) -> str:
         """``path`` relative to the project root when inside it, else absolute (for display/argv)."""

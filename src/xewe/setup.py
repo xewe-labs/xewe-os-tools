@@ -1,8 +1,11 @@
-"""``xewe setup``: install everything a project needs into ``build/`` (SPEC §6).
+"""``xewe setup``: install the shared toolchain and everything a project needs into ``build/`` (SPEC §6).
 
-Each step is skipped when what it would install is already there at the wanted version/ref
-(``--force`` redoes the source checkouts). ``build/build_config.toml`` is removed at the start
-and written last, so an interrupted setup is detected by every other command (exit 3).
+The toolchain (arduino-cli, esp32 core, esptool) goes to ``~/.xewe-os/build-tools/`` (``XEWE_HOME``
+overrides ``~/.xewe-os``) once per machine; the project's libraries, modules and state go to
+``build/``. Each step is skipped when what it would install is already there at the wanted
+version/ref (``--force`` redoes the source checkouts). ``build/config/build_config.toml`` is
+removed at the start and written last, so an interrupted setup is detected by every other
+command (exit 3).
 """
 
 from __future__ import annotations
@@ -51,12 +54,13 @@ def _free_bytes(path: Path) -> int:
 
 
 def _install_source(
-    label: str, src: Source, ref: str, dest: Path, local: Path | None, prev: dict[str, Any], force: bool
+    label: str, src: Source, ref: str, dest: Path, local: Path | None, prev: dict[str, Any], force: bool,
+    modules_checkout: bool = False,
 ) -> dict[str, str]:
     """Clone ``src.repo`` at ``ref`` into ``dest`` (or copy ``local``); return the install record."""
     if local is not None:
         only = None
-        if dest.name == "xewe-os-modules" and not (local / "modules").is_dir() and not (local / "module.properties").is_file():
+        if modules_checkout and not (local / "modules").is_dir() and not (local / "module.properties").is_file():
             only = sorted(d.name for d in local.glob(f"{modules.LEGACY_PREFIX}*") if d.is_dir())
             if (local / modules.CATALOGUE).is_file():
                 only.append(modules.CATALOGUE)
@@ -129,6 +133,11 @@ def _legacy_version_hint(p: Paths) -> None:
              "(the file is no longer used and was not deleted)", version)
 
 
+def _shared_default(data: Path) -> bool:
+    """True when ``data`` is a shared toolchain's ``build-tools/arduino15`` (not an explicit choice)."""
+    return data.name == "arduino15" and data.parent.name == "build-tools"
+
+
 def run_setup(p: Paths, opts: SetupOptions, sleep: Callable[[float], None] = time.sleep) -> int:
     """Run every setup step in order."""
     old = config.load(p)
@@ -136,6 +145,7 @@ def run_setup(p: Paths, opts: SetupOptions, sleep: Callable[[float], None] = tim
     p.build.mkdir(parents=True, exist_ok=True)
     p.build_config.unlink(missing_ok=True)
     (p.build / ".gitignore").write_text("*\n", encoding="utf-8")
+    p.config_dir.mkdir(parents=True, exist_ok=True)
     cfg = config.BuildConfig(tools_version=__version__)
 
     # 1 preflight
@@ -155,40 +165,46 @@ def run_setup(p: Paths, opts: SetupOptions, sleep: Callable[[float], None] = tim
         if refs[name] != src.ref:
             log.info("--latest: %s %s (lock says %s; xewe.lock is not changed)", name, refs[name], src.ref)
 
-    # arduino-cli data dir: --arduino-data, XEWE_ARDUINO_DATA, the previous choice, build/arduino15
+    # arduino-cli data dir: --arduino-data, XEWE_ARDUINO_DATA, the previous explicit choice, the shared
+    # build-tools/arduino15 (a previously recorded shared default follows the current XEWE_HOME)
+    previous = old.arduino_data(p) if old else None
     data = (
         opts.arduino_data
         or _env_path("XEWE_ARDUINO_DATA")
-        or (old.arduino_data(p) if old else None)
+        or (previous if previous is not None and not _shared_default(previous) else None)
         or p.default_arduino_data
     )
-    p.arduino_user.mkdir(parents=True, exist_ok=True)
+
+    # 3 shared toolchain: build-tools/{arduino15,bin,arduino-user,downloads}, once per machine
+    for d in (p.default_arduino_data, p.bin, p.arduino_user, p.downloads):
+        d.mkdir(parents=True, exist_ok=True)
+    log.info("shared toolchain %s", p.build_tools)
     env_vars = arduino.env(p, data)
-
-    # 3 arduino-cli
-    override = arduino.cli_override()
-    if override is not None:
-        cli = override
-        version = arduino.cli_version(cli, env_vars)
-        if version is None:
-            raise XeweError(f"XEWE_ARDUINO_CLI={cli} does not run", EXIT_NOT_SETUP)
-        cfg.paths["arduino_cli"] = str(cli)
-    else:
-        version = lock.arduino_cli_version
-        log.info("arduino-cli %s", version)
-        cli = arduino.install_cli(p, version, env_vars)
-        cfg.paths["arduino_cli"] = p.to_build(cli)
-    cfg.installed["arduino_cli"] = version
-
-    # 4 esp32 core
     want = lock.esp32_version
-    if arduino.core_version(cli, env_vars) == want:
-        log.info("esp32 core %s already installed in %s", want, data)
-    else:
-        if _free_bytes(data) < pins.MIN_FREE_DISK_BYTES:
-            raise XeweError(f"less than 6 GB free for the esp32 core in {data}", EXIT_NOT_SETUP)
-        data.mkdir(parents=True, exist_ok=True)
-        arduino.install_core(cli, env_vars, want, sleep)
+    with arduino.toolchain_lock(p):
+        # 3a arduino-cli
+        override = arduino.cli_override()
+        if override is not None:
+            cli = override
+            version = arduino.cli_version(cli, env_vars)
+            if version is None:
+                raise XeweError(f"XEWE_ARDUINO_CLI={cli} does not run", EXIT_NOT_SETUP)
+        else:
+            version = lock.arduino_cli_version
+            log.info("arduino-cli %s", version)
+            cli = arduino.install_cli(p, version, env_vars)
+
+        # 4 esp32 core (several versions coexist in the shared arduino15)
+        if arduino.core_version(cli, env_vars) == want:
+            log.info("esp32 core %s already installed in %s", want, data)
+        else:
+            if _free_bytes(data) < pins.MIN_FREE_DISK_BYTES:
+                raise XeweError(f"less than 6 GB free for the esp32 core in {data}", EXIT_NOT_SETUP)
+            data.mkdir(parents=True, exist_ok=True)
+            arduino.install_core(cli, env_vars, want, sleep)
+    # build_config.toml: absolute for the shared toolchain (and overrides), relative inside build/
+    cfg.paths["arduino_cli"] = p.to_build(cli)
+    cfg.installed["arduino_cli"] = version
     cfg.paths["arduino_data"] = p.to_build(data)
     cfg.paths["arduino_user"] = p.to_build(p.arduino_user)
     cfg.installed["esp32"] = want
@@ -214,7 +230,8 @@ def run_setup(p: Paths, opts: SetupOptions, sleep: Callable[[float], None] = tim
         "core", lock.core, refs["core"], p.libraries / CORE_LIBRARY, core_local, prev.get("core", {}), opts.force
     )
     cfg.installed["modules"] = _install_source(
-        "modules", lock.modules, refs["modules"], p.modules_checkout, modules_local, prev.get("modules", {}), opts.force
+        "modules", lock.modules, refs["modules"], p.modules_checkout, modules_local, prev.get("modules", {}), opts.force,
+        modules_checkout=True,
     )
 
     # 9 module selection (an empty selection is a valid project)
@@ -230,7 +247,7 @@ def run_setup(p: Paths, opts: SetupOptions, sleep: Callable[[float], None] = tim
         lock.selected = _menu(registry)
         lockfile.save(lock, p.lock)
     if not lock.selected:
-        log.info("no modules selected (src/modules/Modules.h declares nothing; add some with `xewe modules select`)")
+        log.info("no modules selected (src/Modules.h declares nothing; add some with `xewe modules select`)")
 
     # 10 generate
     mod = cfg.installed["modules"]

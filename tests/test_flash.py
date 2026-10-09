@@ -7,7 +7,7 @@ from xewe import boards, flash, serialio
 from xewe.cli import main
 from xewe.project import Paths
 
-BIN = "build/out/c3/2.0.15-c3-xewe-os.bin"
+BIN = "build/builds/c3/out/2.0.15-c3-xewe-os.bin"
 
 
 @pytest.fixture
@@ -96,13 +96,13 @@ def test_chip_mismatch_exit_2(project: Paths, one_board: str, fake_esptool, monk
 def test_board_chip_selects_build(project: Paths, one_board: str, fake_esptool, monkeypatch) -> None:
     monkeypatch.setenv("FAKE_ESPTOOL_CHIP", "ESP32-C6")
     assert main(["flash"]) == 0
-    assert (project.out / "c6/2.0.15-c6-xewe-os.bin").is_file()
+    assert (project.out_dir("c6") / "2.0.15-c6-xewe-os.bin").is_file()
 
 
 def test_run_no_board(project: Paths, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["run", "--define", "LED_PIN=8"]) == 0
     assert "compiled, not run: no board attached (c3," in capsys.readouterr().out
-    assert "LED_PIN 8" in (project.gen / "c3/XeWeBuildInfo/src/XeWeBuildInfo.h").read_text()
+    assert "LED_PIN 8" in (project.gen_dir("c3") / "XeWeBuildInfo/src/XeWeBuildInfo.h").read_text()
 
 
 def test_define_change_makes_build_stale(project: Paths, capsys: pytest.CaptureFixture[str], fake_cli) -> None:
@@ -113,7 +113,7 @@ def test_define_change_makes_build_stale(project: Paths, capsys: pytest.CaptureF
     out = capsys.readouterr().out
     assert "up to date" not in out
     assert len([c for c in fake_cli() if c["argv"][0] == "compile"]) == compiles + 1
-    assert "PROJECT_URL" not in (project.gen / "c3/XeWeBuildInfo/src/XeWeBuildInfo.h").read_text()
+    assert "PROJECT_URL" not in (project.gen_dir("c3") / "XeWeBuildInfo/src/XeWeBuildInfo.h").read_text()
     assert main(["flash"]) == 0
     assert "up to date" in capsys.readouterr().out
     assert main(["run", "--define", "PROJECT_URL=https://example.test"]) == 0

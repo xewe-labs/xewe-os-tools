@@ -65,12 +65,30 @@ def test_verbose_prints_commands(project: Paths, capsys: pytest.CaptureFixture[s
 def test_clean(project: Paths) -> None:
     assert main(["build", "--chip", "c3"]) == 0
     assert main(["clean"]) == 0
-    assert not project.out.exists() and not project.gen.exists() and not project.cache.exists()
-    assert project.build_config.exists()
-    project.venv.mkdir()
+    assert not project.builds.exists() and not project.tmp.exists()
+    assert project.build_config.exists() and project.modules_lib.is_dir() and project.src_modules_h.is_file()
+    assert main(["build", "--chip", "c3"]) == 0
+    assert main(["clean", "--modules"]) == 0
+    assert not project.modules_lib.exists() and not project.src_modules_h.exists() and not project.builds.exists()
+    assert project.build_config.exists() and project.libraries.is_dir()
+    assert main(["build"]) == 3
+
+
+def test_clean_all_keeps_tools_and_shared_toolchain(project: Paths) -> None:
+    assert main(["build", "--chip", "c3"]) == 0
+    project.venv.mkdir(parents=True)
+    (project.tools_checkout / "pyproject.toml").write_text("")
+    for d in (project.default_arduino_data, project.bin, project.arduino_user, project.downloads):
+        d.mkdir(parents=True, exist_ok=True)
+    (project.bin / "arduino-cli-1.5.1").write_text("")
+    before = sorted(str(f.relative_to(project.home)) for f in project.home.rglob("*"))
+    assert main(["clean", "--all"]) == 0
+    assert sorted(c.name for c in project.build.iterdir()) == ["tools"]
+    assert project.venv.is_dir() and (project.tools_checkout / "pyproject.toml").is_file()
+    assert project.src_modules_h.is_file()  # --all without --modules keeps src/Modules.h
+    assert sorted(str(f.relative_to(project.home)) for f in project.home.rglob("*")) == before
     assert main(["clean", "--all", "--modules"]) == 0
-    assert sorted(c.name for c in project.build.iterdir()) == [".venv"]
-    assert not project.src_modules.exists()
+    assert not project.src_modules_h.exists()
     assert main(["build"]) == 3
 
 

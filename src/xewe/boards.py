@@ -1,4 +1,4 @@
-"""Board detection, selection and ``build/boards.toml`` (SPEC §5)."""
+"""Board detection, selection and ``build/config/boards.toml`` (SPEC §5)."""
 
 from __future__ import annotations
 

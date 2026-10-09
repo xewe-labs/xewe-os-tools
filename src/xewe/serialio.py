@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import datetime as dt
+import queue
 import re
 import sys
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -28,6 +30,7 @@ BOOT_GRACE_SECONDS = 2.0
 """``--send``: no boot output this long after opening means no boot is in progress (the open does not reset)."""
 BOOT_TIMEOUT_SECONDS = 90.0
 """``--send``: default ``--boot-timeout`` (Wi-Fi + NTP can take ~30 s before the banner)."""
+INTERACTIVE_HINT = "interactive: type a command and press Enter; Ctrl-C to exit"
 
 
 class ExpectTimeout(AssertionError):
@@ -251,6 +254,59 @@ class Console:
         while end is None or time.monotonic() < end:
             self.poll()
 
+    def interact(self, duration: float | None = None, stdin: TextIO | None = None) -> None:
+        """``listen``, and send every line typed on ``stdin`` (default ``sys.stdin``); returns on EOF.
+
+        Plain line input (no raw mode): a daemon thread blocks in ``readline`` and queues the lines;
+        this loop polls the port (reconnecting like ``listen``) and sends what was queued. The
+        terminal already shows the typed text, so nothing is printed besides ``send``'s ``> cmd``.
+        """
+        typed: queue.Queue[str | None] = queue.Queue()
+        src = stdin or sys.stdin
+
+        def reader() -> None:
+            for line in iter(src.readline, ""):
+                typed.put(line.rstrip("\r\n"))
+            typed.put(None)  # EOF (Ctrl-D)
+
+        threading.Thread(target=reader, name="xewe-stdin", daemon=True).start()
+        end = None if duration is None else time.monotonic() + duration
+        while end is None or time.monotonic() < end:
+            self.poll()
+            while not typed.empty():
+                line = typed.get_nowait()
+                if line is None:
+                    return
+                try:
+                    self.send(line)
+                except (serial.SerialException, OSError):  # port dropped since the last poll
+                    self._reconnect()
+                    self.send(line)
+
+
+def interactive_input(no_input: bool = False, stdin: TextIO | None = None) -> TextIO | None:
+    """The stream to read commands from: ``stdin`` when it is a terminal and not ``no_input``, else None."""
+    src = stdin or sys.stdin
+    if no_input or src is None or not src.isatty():
+        return None
+    return src
+
+
+def console_session(console: Console, duration: float | None = None, no_input: bool = False) -> None:
+    """``xewe serial``/``xewe run`` without ``--send``: interactive on a terminal, else listen only.
+
+    Ctrl-C and EOF on stdin both end the session normally.
+    """
+    src = interactive_input(no_input)
+    try:
+        if src is None:
+            console.listen(duration)
+        else:
+            result(INTERACTIVE_HINT)
+            console.interact(duration, src)
+    except KeyboardInterrupt:
+        pass
+
 
 def wait_for_banner(console: Console, pattern: str, timeout: float, reset: bool = True) -> re.Match[str]:
     """Optionally reset the board, then wait for a line matching ``pattern`` across port drops.
@@ -346,8 +402,10 @@ def serial_main(
     log_path: Path | None = None,
     require_board: bool = False,
     factory: Callable[[], Any] = serial.Serial,
+    no_input: bool = False,
 ) -> int:
-    """``xewe serial``: listen, or send one command and wait for a regex.
+    """``xewe serial``: listen (interactive on a terminal, see ``console_session``), or send one
+    command and wait for a regex.
 
     The port is opened without resetting the board (see ``Console.open``); ``--reset`` or
     flashing resets it. ``send`` first waits out any boot in progress (``wait_until_ready``).
@@ -371,10 +429,7 @@ def serial_main(
         if reset:
             console.reset()
         if send is None:
-            try:
-                console.listen(duration)
-            except KeyboardInterrupt:
-                pass
+            console_session(console, duration, no_input)
             return EXIT_OK
         try:
             state = wait_until_ready(console, boot_timeout)

@@ -10,8 +10,14 @@ import subprocess
 import tarfile
 import time
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # Windows: no advisory lock
+    fcntl = None  # type: ignore[assignment]
 
 from xewe import fetch, pins
 from xewe.chips import Chip
@@ -24,9 +30,23 @@ MAX_RESCUES = 10
 _HEAD_RE = re.compile(r'Head "([^"]+)"')
 
 
-def cache_dir() -> Path:
-    """Shared download cache (``XEWE_CACHE`` or ``~/.cache/xewe-os``)."""
-    return Path(os.environ.get("XEWE_CACHE") or Path.home() / ".cache" / "xewe-os").expanduser()
+@contextmanager
+def toolchain_lock(p: Paths) -> Iterator[None]:
+    """Exclusive ``fcntl.flock`` on ``build-tools/.lock`` while installing into the shared toolchain,
+    so two projects running setup at once do not install the cli or the core over each other."""
+    p.toolchain_lock.parent.mkdir(parents=True, exist_ok=True)
+    with p.toolchain_lock.open("a") as handle:
+        if fcntl is not None:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                log.info("waiting for another setup to finish with %s", p.build_tools)
+                fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if fcntl is not None:
+                fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def env(p: Paths, arduino_data: Path) -> dict[str, str]:
@@ -36,7 +56,7 @@ def env(p: Paths, arduino_data: Path) -> dict[str, str]:
         {
             "ARDUINO_DIRECTORIES_DATA": str(arduino_data),
             "ARDUINO_DIRECTORIES_USER": str(p.arduino_user),
-            "ARDUINO_DIRECTORIES_DOWNLOADS": str(cache_dir() / "arduino-staging"),
+            "ARDUINO_DIRECTORIES_DOWNLOADS": str(p.downloads),
             "ARDUINO_BOARD_MANAGER_ADDITIONAL_URLS": pins.ESP32_INDEX_URL,
             "ARDUINO_NETWORK_CONNECTION_TIMEOUT": "300s",
             "ARDUINO_UPDATER_ENABLE_NOTIFICATION": "false",
@@ -46,14 +66,14 @@ def env(p: Paths, arduino_data: Path) -> dict[str, str]:
 
 
 def cli_override() -> Path | None:
-    """``XEWE_ARDUINO_CLI``: use this arduino-cli instead of build/bin/arduino-cli."""
+    """``XEWE_ARDUINO_CLI``: use this arduino-cli instead of the shared ``bin/arduino-cli-<version>``."""
     value = os.environ.get("XEWE_ARDUINO_CLI")
     return Path(value).expanduser().resolve() if value else None
 
 
-def default_cli(p: Paths) -> Path:
-    """build/bin/arduino-cli (``.exe`` on Windows)."""
-    return p.bin / ("arduino-cli.exe" if os.name == "nt" else "arduino-cli")
+def default_cli(p: Paths, version: str = pins.ARDUINO_CLI_VERSION) -> Path:
+    """``build-tools/bin/arduino-cli-<version>`` (``.exe`` on Windows): one binary per pinned version."""
+    return p.bin / (f"arduino-cli-{version}.exe" if os.name == "nt" else f"arduino-cli-{version}")
 
 
 def run(argv: list[str], env_vars: dict[str, str], cwd: Path | None = None, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
@@ -84,8 +104,11 @@ def cli_version(cli: Path, env_vars: dict[str, str]) -> str | None:
 
 
 def install_cli(p: Paths, version: str, env_vars: dict[str, str]) -> Path:
-    """Download arduino-cli ``version`` into build/bin (sha256-verified) and return its path."""
-    target = default_cli(p)
+    """Download arduino-cli ``version`` into the shared ``bin/`` (sha256-verified) and return its path.
+
+    Nothing is downloaded when ``bin/arduino-cli-<version>`` already reports that version.
+    """
+    target = default_cli(p, version)
     if target.is_file() and cli_version(target, env_vars) == version:
         return target
     plat, ext = fetch.arduino_cli_platform()
@@ -94,9 +117,9 @@ def install_cli(p: Paths, version: str, env_vars: dict[str, str]) -> Path:
     sums = fetch.parse_checksums(fetch.fetch_text(pins.ARDUINO_CLI_CHECKSUMS_URL.format(version=version)))
     if name not in sums:
         raise XeweError(f"{name} is not listed in the arduino-cli {version} checksums")
-    archive = fetch.download(url, cache_dir() / "arduino-cli" / name, sums[name])
+    archive = fetch.download(url, p.downloads / "arduino-cli" / name, sums[name])
     p.bin.mkdir(parents=True, exist_ok=True)
-    member = target.name
+    member = "arduino-cli.exe" if os.name == "nt" else "arduino-cli"
     tmp = target.with_name(target.name + ".tmp")
     if ext == "zip":
         with zipfile.ZipFile(archive) as zf, zf.open(member) as src, tmp.open("wb") as dst:
@@ -182,6 +205,8 @@ def compile_argv(cli: str, chip: Chip, p: Paths, sketch_dir: Path) -> list[str]:
         p.rel(p.cache_dir(chip.name)),
         "--libraries",
         p.rel(p.libraries),
+        "--library",
+        p.rel(p.modules_lib),
         "--library",
         p.rel(p.gen_dir(chip.name) / "XeWeBuildInfo"),
         "--warnings",

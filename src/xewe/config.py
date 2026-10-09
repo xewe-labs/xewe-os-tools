@@ -1,7 +1,9 @@
-"""``build/build_config.toml``: what setup installed and where (SPEC §6).
+"""``build/config/build_config.toml``: what setup installed and where (SPEC §6).
 
-Paths are stored relative to ``build/``. The only absolute entries are the ones that point
-outside the project on purpose: ``--arduino-data`` and an ``XEWE_ARDUINO_CLI`` override.
+Paths inside the project are stored relative to ``build/`` (``libraries``, ``modules``). Paths
+outside it are absolute: the shared toolchain under ``~/.xewe-os/build-tools`` (``arduino_cli``,
+``arduino_data``, ``arduino_user``, ``esptool``) and the overrides ``--arduino-data`` /
+``XEWE_ARDUINO_DATA`` and ``XEWE_ARDUINO_CLI``.
 """
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ class BuildConfig:
         return p.from_build(stored) if stored else None
 
     def arduino_data(self, p: Paths) -> Path:
-        """The arduino-cli data directory (default build/arduino15)."""
+        """The arduino-cli data directory (default: the shared ``build-tools/arduino15``)."""
         return self.path(p, "arduino_data") or p.default_arduino_data
 
 
@@ -60,7 +62,7 @@ def require(p: Paths) -> BuildConfig:
     """Like :func:`load`, but a missing file is exit 3."""
     cfg = load(p)
     if cfg is None:
-        raise XeweError("not set up (build/build_config.toml missing or incomplete); run ./setup.sh", EXIT_NOT_SETUP)
+        raise XeweError("not set up (build/config/build_config.toml missing or incomplete); run ./setup.sh", EXIT_NOT_SETUP)
     return cfg
 
 

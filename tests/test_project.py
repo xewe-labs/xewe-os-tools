@@ -34,11 +34,13 @@ def test_project_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: p
     assert "core" in capsys.readouterr().out
 
 
-def test_stored_paths_are_relative(project: Paths) -> None:
+def test_stored_paths_are_relative(project: Paths, tmp_path: Path) -> None:
     text = project.build_config.read_text()
-    assert str(project.root) not in text
+    assert str(project.root) not in text  # inside build/: relative
     cfg = config.load(project)
-    assert cfg is not None and cfg.path(project, "arduino_data") == project.build / "arduino15"
+    assert cfg is not None and cfg.paths["libraries"] == "libraries" and cfg.paths["modules"] == "modules"
+    # the shared toolchain is absolute, under XEWE_HOME
+    assert cfg.path(project, "arduino_data") == tmp_path / "xewe-home" / "build-tools" / "arduino15"
 
 
 def test_project_moved_after_setup_still_works(project: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
@@ -48,5 +50,5 @@ def test_project_moved_after_setup_still_works(project: Paths, tmp_path: Path, m
     shutil.move(str(project.root), str(moved))
     monkeypatch.chdir(moved)
     assert main(["build", "--chip", "c3"]) == 0
-    assert (moved / "build/out/c3/2.0.15-c3-xewe-os.bin").is_file()
-    assert str(project.root) not in (moved / "build/out/c3/meta.json").read_text()
+    assert (moved / "build/builds/c3/out/2.0.15-c3-xewe-os.bin").is_file()
+    assert str(project.root) not in (moved / "build/builds/c3/out/meta.json").read_text()

@@ -75,9 +75,10 @@ def write_project(root: Path, selected: str = '["wifi", "web-interface"]', ino: 
 def _isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
     for var in ("XEWE_PORT", "XEWE_CHIP", "XEWE_REQUIRE_BOARD", "XEWE_ARDUINO_CLI", "XEWE_ESPTOOL",
                 "XEWE_NO_BOARD", "XEWE_ARDUINO_DATA", "XEWE_CORE_SOURCE", "XEWE_MODULES_SOURCE", "XEWE_TOOLS_SOURCE",
-                *dotenv.KEYS, dotenv.ENV_VAR):
+                "XEWE_CACHE", *dotenv.KEYS, dotenv.ENV_VAR):
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.setenv("XEWE_CACHE", str(tmp_path / "xdg-cache"))
+    # Never touch the real ~/.xewe-os: the shared toolchain of every test lives in its tmp dir.
+    monkeypatch.setenv("XEWE_HOME", str(tmp_path / "xewe-home"))
     # Never read the dotenv file of this checkout (the developer's credentials): no tools checkout
     # is found unless a test sets one up.
     monkeypatch.setattr(dotenv, "package_checkout", lambda module_file=None: None)
@@ -131,8 +132,8 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_cli: Any, no_p
     p.libraries.mkdir(parents=True)
     cfg = config.BuildConfig(
         setup_completed="2026-10-08T12:00:00Z",
-        paths={"arduino_cli": "bin/arduino-cli", "arduino_data": "arduino15", "libraries": "libraries",
-               "modules": "xewe-os-modules"},
+        paths={"arduino_cli": str(p.bin / "arduino-cli-1.5.1"), "arduino_data": str(p.default_arduino_data),
+               "arduino_user": str(p.arduino_user), "libraries": "libraries", "modules": "modules"},
         installed={"arduino_cli": "1.5.1", "esp32": "3.3.12",
                    "core": {"ref": "1.0.0", "commit": "abc", "source": "https://github.com/xewe-labs/xewe-os-core"},
                    "modules": {"ref": "v1.0.0", "commit": "def", "source": "https://github.com/xewe-labs/xewe-os-modules"},

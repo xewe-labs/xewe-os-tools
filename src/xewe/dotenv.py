@@ -6,7 +6,7 @@ Which file, first found wins:
    a file named this way must exist (exit 2 otherwise);
 2. ``.env`` in the project directory (the harness: the nearest ancestor with ``xewe.lock``);
 3. ``.env`` in the xewe-os-tools source checkout: the ``local:<path>`` source that setup recorded
-   for tools in ``build/build_config.toml``, else the checkout this package runs from when it is
+   for tools in ``build/config/build_config.toml``, else the checkout this package runs from when it is
    installed from a path (``src/xewe/`` two levels below a ``pyproject.toml``).
 
 No file is not an error. Lines are ``KEY=VALUE``; ``#`` comments, blank lines, an ``export ``
@@ -24,6 +24,7 @@ import tomllib
 from collections.abc import Iterable, Mapping, MutableMapping
 from pathlib import Path
 
+from xewe.project import Paths
 from xewe.report import EXIT_USAGE, XeweError, log
 
 FILENAME = ".env"
@@ -97,7 +98,7 @@ def tools_checkout(project_root: Path | None) -> Path | None:
     """The tools source checkout: setup's ``local:<path>`` record, else ``package_checkout()``."""
     if project_root is not None:
         try:
-            data = tomllib.loads((project_root / "build" / "build_config.toml").read_text(encoding="utf-8"))
+            data = tomllib.loads(Paths(project_root).build_config.read_text(encoding="utf-8"))
         except (OSError, tomllib.TOMLDecodeError):
             data = {}
         source = str(data.get("installed", {}).get("tools", {}).get("source", ""))
