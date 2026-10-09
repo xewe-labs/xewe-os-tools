@@ -193,7 +193,10 @@ def copy_tree(src: Path, dest: Path, only: list[str] | None = None) -> None:
     else:
         tmp.mkdir(parents=True)
         for name in only:
-            shutil.copytree(src / name, tmp / name, ignore=ignore, symlinks=True)
+            if (src / name).is_dir():
+                shutil.copytree(src / name, tmp / name, ignore=ignore, symlinks=True)
+            else:
+                shutil.copy2(src / name, tmp / name)
     if dest.exists():
         shutil.rmtree(dest)
     os.replace(tmp, dest)

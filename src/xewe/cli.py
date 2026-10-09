@@ -36,6 +36,9 @@ from xewe.report import (
     EXIT_USAGE,
     NO_BOARD,
     XeweError,
+    board_disabled,
+    board_disabled_exit,
+    disable_board,
     log,
     result,
     setup_logging,
@@ -65,11 +68,33 @@ def _env_arg(sp: argparse.ArgumentParser, *aliases: str) -> None:
     sp.add_argument("--env", *aliases, dest="env_file", type=Path, metavar="FILE", help=ENV_HELP)
 
 
+NO_BOARD_COMMANDS = frozenset({"flash", "serial", "provision", "test", "run", "boards"})
+"""Commands that take ``--no-board`` (and honour XEWE_NO_BOARD)."""
+
+
+def _no_board_arg(sp: argparse.ArgumentParser) -> None:
+    sp.add_argument("--no-board", action="store_true",
+                    help="never look for or open a board (also XEWE_NO_BOARD=1); a command that needs one exits 4")
+
+
+VERBOSE_HELP = "print every subprocess command and its output"
+
+
+def _verbose_everywhere(ap: argparse.ArgumentParser) -> None:
+    """Accept ``-v/--verbose`` after any (sub)command too, not only before it (``xewe test -v``)."""
+    for action in ap._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            for sp in action.choices.values():
+                # SUPPRESS: when absent here, the global flag's value is kept
+                sp.add_argument("-v", "--verbose", action="store_true", default=argparse.SUPPRESS, help=VERBOSE_HELP)
+                _verbose_everywhere(sp)
+
+
 def parser() -> argparse.ArgumentParser:
     """The full argument parser."""
     ap = argparse.ArgumentParser(prog="xewe", description="XeWe OS firmware tools: setup, build, flash, serial, provision, test.")
     ap.add_argument("--project", metavar="DIR", help="project root (default: nearest ancestor with xewe.lock)")
-    ap.add_argument("-v", "--verbose", action="store_true", help="print every subprocess command and its output")
+    ap.add_argument("-v", "--verbose", action="store_true", help=VERBOSE_HELP + " (also accepted after the command)")
     ap.add_argument("--version", action="version", version=f"xewe-os-tools {__version__}")
     sub = ap.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
@@ -189,6 +214,11 @@ def parser() -> argparse.ArgumentParser:
     sp.add_argument("--version", required=True, dest="release_version", metavar="X.Y.Z")
     sp.add_argument("--matrix", type=Path, metavar="FILE")
     sp.add_argument("--notes", type=Path, metavar="FILE")
+
+    for name, choice in sub.choices.items():
+        if name in NO_BOARD_COMMANDS:
+            _no_board_arg(choice)
+    _verbose_everywhere(ap)
     return ap
 
 
@@ -269,8 +299,10 @@ def _boards_command(args: argparse.Namespace, p: Paths) -> int:
 
 def dispatch(args: argparse.Namespace, extra: list[str]) -> int:
     """Run the parsed command."""
-    p = Paths(find_root(args.project))
     cmd = args.command
+    if getattr(args, "no_board", False):
+        disable_board()
+    p = Paths(find_root(args.project))
     if cmd in ENV_COMMANDS:
         dotenv.load_settings(p.root, getattr(args, "env_file", None))
     if cmd == "setup":
@@ -286,6 +318,8 @@ def dispatch(args: argparse.Namespace, extra: list[str]) -> int:
     if cmd == "modules":
         return _modules_command(args, p)
     if cmd == "boards":
+        if board_disabled() and not (args.set_port or args.clear or args.set_chip):
+            return board_disabled_exit()
         return _boards_command(args, p)
     if cmd == "clean":
         return clean.clean(p, args.all, args.modules)
@@ -297,6 +331,8 @@ def dispatch(args: argparse.Namespace, extra: list[str]) -> int:
             p, lock, args.chip, args.port, args.baud, args.erase, args.no_build, _require_board_flag(args)
         )
         return code
+    if cmd in ("serial", "provision") and board_disabled():
+        return board_disabled_exit()
     if cmd == "serial":
         return serialio.serial_main(
             args.port,

@@ -74,7 +74,7 @@ def write_project(root: Path, selected: str = '["wifi", "web-interface"]', ino: 
 @pytest.fixture(autouse=True)
 def _isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
     for var in ("XEWE_PORT", "XEWE_CHIP", "XEWE_REQUIRE_BOARD", "XEWE_ARDUINO_CLI", "XEWE_ESPTOOL",
-                "XEWE_ARDUINO_DATA", "XEWE_CORE_SOURCE", "XEWE_MODULES_SOURCE", "XEWE_TOOLS_SOURCE",
+                "XEWE_NO_BOARD", "XEWE_ARDUINO_DATA", "XEWE_CORE_SOURCE", "XEWE_MODULES_SOURCE", "XEWE_TOOLS_SOURCE",
                 *dotenv.KEYS, dotenv.ENV_VAR):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("XEWE_CACHE", str(tmp_path / "xdg-cache"))

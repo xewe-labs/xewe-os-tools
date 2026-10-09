@@ -4,7 +4,9 @@ Module test folders need no conftest.py: the fixtures below build the firmware o
 session, find the board, flash it once, wait for the firmware to finish booting, and hand each
 test the session's one serial console. Without a board, hardware tests are skipped with a reason
 starting ``compiled, not run`` and the run exits 0; ``--xewe-require-board`` turns those skips
-into failures (``xewe test`` then exits 4, see ``board_missing``).
+into failures (``xewe test`` then exits 4, see ``board_missing``). ``--xewe-no-board`` (or
+``XEWE_NO_BOARD=1``, which ``xewe test --no-board`` sets) is the hard switch: no port is looked at
+and hardware tests are "compiled, not run" as if no board were attached.
 
 At configure time the project's dotenv file is applied (:mod:`xewe.dotenv`; the real environment
 wins), so ``XEWE_TEST_*`` pins, ``XEWE_PORT`` and ``XEWE_CHIP`` reach the tests without exports.
@@ -24,7 +26,7 @@ from xewe import boards, build, dotenv, flash, lockfile
 from xewe.boards import Board
 from xewe.lockfile import Lock
 from xewe.project import Paths, find_root
-from xewe.report import EXIT_NO_BOARD, NO_BOARD, XeweError
+from xewe.report import BOARD_DISABLED, EXIT_NO_BOARD, NO_BOARD, XeweError, board_disabled, disable_board
 from xewe.serialio import BOOT_READY, BOOT_UNPROVISIONED, Console, ExpectTimeout, wait_for_banner
 
 NOT_RUN = "compiled, not run"
@@ -59,6 +61,8 @@ class XeweContext:
         self.require_board: bool = bool(config.getoption("xewe_require_board")) or os.environ.get(
             "XEWE_REQUIRE_BOARD"
         ) == "1"
+        if config.getoption("xewe_no_board"):
+            disable_board()
         explicit = config.getoption("xewe_project")
         try:
             self.paths: Paths | None = Paths(find_root(explicit, start=config.rootpath))
@@ -107,6 +111,8 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     group.addoption("--xewe-chip", default=None, help="chip to build and test (c3, c6, s3)")
     group.addoption("--xewe-port", default=None, help="serial port of the board")
     group.addoption("--xewe-require-board", action="store_true", help="fail hardware tests when no board is attached")
+    group.addoption("--xewe-no-board", action="store_true",
+                    help="never look for or open a board (also XEWE_NO_BOARD=1); hardware tests are compiled, not run")
     group.addoption("--xewe-project", default=None, help="project root (default: nearest xewe.lock)")
 
 
@@ -155,6 +161,10 @@ def compiled(xewe: XeweContext) -> Path:
 def board(xewe: XeweContext, compiled: Path) -> Board:
     """The attached board; skipped ("compiled, not run") when there is none."""
     p = xewe.project()
+    if board_disabled():
+        if xewe.require_board:
+            xewe.fail(XeweError(f"{NOT_RUN}: {BOARD_DISABLED} (--require-board)", EXIT_NO_BOARD))
+        pytest.skip(f"{NOT_RUN}: {NO_BOARD} ({BOARD_DISABLED})")
     try:
         found = boards.select(p, chip=xewe.chip, port=xewe.port, esptool_cmd=lambda: flash.esptool_cmd(p))
     except XeweError as exc:
@@ -242,7 +252,8 @@ def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter, config: p
     if not (ctx.explicit or not_run):
         return
     if not_run:
-        terminalreporter.write_sep("=", f"{NOT_RUN} ({NO_BOARD}, chip {ctx.chip})")
+        why = BOARD_DISABLED if board_disabled() else NO_BOARD
+        terminalreporter.write_sep("=", f"{NOT_RUN} ({why}, chip {ctx.chip})")
         for rep in not_run:
             terminalreporter.write_line(rep.nodeid)
     passed = [r for r in stats.get("passed", []) if r.when == "call"]

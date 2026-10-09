@@ -58,6 +58,8 @@ def _install_source(
         only = None
         if dest.name == "xewe-os-modules" and not (local / "modules").is_dir() and not (local / "module.properties").is_file():
             only = sorted(d.name for d in local.glob(f"{modules.LEGACY_PREFIX}*") if d.is_dir())
+            if (local / modules.CATALOGUE).is_file():
+                only.append(modules.CATALOGUE)
         log.info("%s: copying local source %s", label, local)
         fetch.copy_tree(local, dest, only)
         return {"ref": ref, "commit": fetch.head_commit(local), "source": f"local:{local}"}
@@ -96,6 +98,25 @@ def _menu(registry: modules.Registry) -> list[str]:
             registry.get(word)
             out.append(word)
     return out
+
+
+def install_libraries(
+    p: Paths, lock: lockfile.Lock, order: list[modules.Module], prev_libs: dict[str, Any], force: bool
+) -> dict[str, dict[str, str]]:
+    """Install the library plan (see :func:`modules.library_plan`; the lock wins) into ``build/libraries``."""
+    plan, warnings = modules.library_plan(
+        {k: (s.repo, s.ref) for k, s in lock.libraries.items()}, order, modules.load_catalogue(p.modules_checkout)
+    )
+    for warning in warnings:
+        log.warning("%s", warning)
+    libs: dict[str, dict[str, str]] = {}
+    for lib in plan:
+        if lib.needed_by:
+            log.info("library %s: from %s (%s)", lib.name, lib.origin, lib.ref)
+        prev_rec = {k: v for k, v in prev_libs.get(lib.name, {}).items() if k != "origin"}
+        rec = _install_source(lib.name, Source(lib.repo, lib.ref), lib.ref, p.libraries / lib.name, None, prev_rec, force)
+        libs[lib.name] = {**rec, "origin": lib.origin}
+    return libs
 
 
 def _legacy_version_hint(p: Paths) -> None:
@@ -192,11 +213,6 @@ def run_setup(p: Paths, opts: SetupOptions, sleep: Callable[[float], None] = tim
     cfg.installed["core"] = _install_source(
         "core", lock.core, refs["core"], p.libraries / CORE_LIBRARY, core_local, prev.get("core", {}), opts.force
     )
-    libs: dict[str, dict[str, str]] = {}
-    prev_libs = prev.get("libraries", {})
-    for name, src in lock.libraries.items():
-        libs[name] = _install_source(name, src, src.ref, p.libraries / name, None, prev_libs.get(name, {}), opts.force)
-    cfg.installed["libraries"] = libs
     cfg.installed["modules"] = _install_source(
         "modules", lock.modules, refs["modules"], p.modules_checkout, modules_local, prev.get("modules", {}), opts.force
     )
@@ -219,6 +235,9 @@ def run_setup(p: Paths, opts: SetupOptions, sleep: Callable[[float], None] = tim
     # 10 generate
     mod = cfg.installed["modules"]
     order = modules.generate(p, registry, lock.selected, mod["source"], mod["ref"], mod["commit"])
+
+    # 10b libraries: xewe.lock [libraries] plus the selected modules' depends_libraries from the catalogue
+    cfg.installed["libraries"] = install_libraries(p, lock, order, prev.get("libraries", {}), opts.force)
 
     # 11 project files
     p.sketch_ino()

@@ -27,12 +27,12 @@ Runtime dependencies: `pyserial`, `pytest`. esptool comes from the pinned esp32 
 
 | Command | What it does |
 |---|---|
-| `xewe setup [--modules LIST\|all\|none] [--latest] [--force] [--core-source DIR] [--modules-source DIR] [--arduino-data DIR]` | arduino-cli, esp32 core, core library, libraries and modules into `build/`; generates `src/modules/` (zero modules is valid: `--modules none`, or no selection) |
+| `xewe setup [--modules LIST\|all\|none] [--latest] [--force] [--core-source DIR] [--modules-source DIR] [--arduino-data DIR]` | arduino-cli, esp32 core, core library, libraries and modules into `build/`; generates `src/modules/` (zero modules is valid: `--modules none`, or no selection); installs the selected modules' `depends_libraries` from the modules repo's `libraries.toml` unless `xewe.lock` `[libraries]` pins that name (the lock wins) |
 | `xewe build [--chip C \| --all-chips] [--define K=V]... [--clean] [--dry-run]` | compile into `build/out/<chip>/`; prints `Sketch uses N bytes (NN%)` (`--dry-run` prints the arduino-cli command only) |
 | `xewe flash [--chip C] [--port P] [--erase] [--no-build] [--require-board]` | build if stale (sources, version or `--define` values changed), then write the merged image at 0x0 |
 | `xewe serial [--port P] [--send CMD [--expect RE] [--boot-timeout S]] [--duration S] [--log FILE]` | timestamped console; the tools open the port without resetting the board (`--reset` or flashing resets it); `--send` waits out a boot in progress (see below) |
 | `xewe provision [--port P] [--name NAME] [--modules all\|none\|LIST] [--timezone GMT+HH:MM] [--env FILE] [--no-reset] [--log FILE]` | answer the first-boot prompts of a flashed board (settings from `.env`) |
-| `xewe test [--chip C \| --all-chips] [--module SLUG]... [--host-only] [-- PYTEST_ARGS]` | pytest over `tests/` and the selected modules' `tests/` |
+| `xewe test [--chip C \| --all-chips] [--module SLUG]... [--host-only] [--no-board] [-- PYTEST_ARGS]` | pytest over `tests/` and the selected modules' `tests/` |
 | `xewe run [--chip C] [--define K=V]... [--no-serial]` | build, flash, listen |
 | `xewe boards [--no-probe] [--json] [--set-port P [--set-chip C]] [--clear]` | list boards, set an override |
 | `xewe modules list\|select\|validate\|generate` | the modules checkout and `src/modules/` |
@@ -41,7 +41,9 @@ Runtime dependencies: `pyserial`, `pytest`. esptool comes from the pinned esp32 
 | `xewe doctor` | check the environment |
 | `xewe release --version X.Y.Z [--matrix FILE] [--notes FILE]` | release matrix into `static/firmware/releases/<version>/`; prints the git/gh commands |
 
-Global flags (before the command): `--project DIR`, `--verbose`, `--version`.
+Global flags (before the command): `--project DIR`, `--verbose`/`-v`, `--version`. `-v`/`--verbose` is also
+accepted after the command (`xewe test --host-only -v`); pytest's own flags go after `--`
+(`xewe test -- -vv -k wifi`).
 Exit codes: 0 ok, 1 failure, 2 usage, 3 not set up / tool missing, 4 board required but missing.
 
 ## Serial and resets
@@ -116,6 +118,12 @@ compiled, not run: no board attached (c3, build/out/c3/2.0.15-c3-xewe-os.bin)
 
 and exits 0. `xewe test` runs host tests and reports hardware tests as "compiled, not run".
 `--require-board` (or `XEWE_REQUIRE_BOARD=1`) turns this into exit 4 (`xewe test` too).
+
+`--no-board` (or `XEWE_NO_BOARD=1`) is the hard switch for machines that must never touch a
+board: no port is listed, probed or opened. `flash`/`run` build and then exit 4, `serial`,
+`provision` and `boards` exit 4, all with `board access disabled (--no-board / XEWE_NO_BOARD)`;
+`xewe test` reports hardware tests as "compiled, not run" and exits 0. Agents in compile-only mode
+must set `XEWE_NO_BOARD=1`.
 
 ## License
 

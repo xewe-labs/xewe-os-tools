@@ -8,6 +8,7 @@ output are shown.
 from __future__ import annotations
 
 import logging
+import os
 import sys
 
 EXIT_OK = 0
@@ -17,6 +18,8 @@ EXIT_NOT_SETUP = 3
 EXIT_NO_BOARD = 4
 
 NO_BOARD = "no board attached"
+BOARD_DISABLED = "board access disabled (--no-board / XEWE_NO_BOARD)"
+NO_BOARD_ENV = "XEWE_NO_BOARD"
 
 log = logging.getLogger("xewe")
 
@@ -71,3 +74,23 @@ def no_board(chip: str, binary: str, require_board: bool) -> int:
         log.error("--require-board: %s", NO_BOARD)
         return EXIT_NO_BOARD
     return EXIT_OK
+
+
+def board_disabled() -> bool:
+    """True when board access is switched off (``--no-board`` or ``XEWE_NO_BOARD=1``): no port is
+    discovered or opened, and commands that need a board exit 4."""
+    return os.environ.get(NO_BOARD_ENV, "").strip().lower() in ("1", "true", "yes")
+
+
+def disable_board() -> None:
+    """``--no-board``: switch board access off for this process (and the in-process pytest run)."""
+    os.environ[NO_BOARD_ENV] = "1"
+
+
+def board_disabled_exit(chip: str | None = None, binary: str | None = None) -> int:
+    """Report that board access is disabled; exit 4. With ``chip``/``binary`` (flash, run) the
+    image was built first and the status line names it."""
+    if chip is not None and binary is not None:
+        result(f"compiled, not run: {BOARD_DISABLED} ({chip}, {binary})")
+    log.error("%s", BOARD_DISABLED)
+    return EXIT_NO_BOARD

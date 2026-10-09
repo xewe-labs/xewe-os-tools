@@ -10,7 +10,7 @@ from xewe import boards, build, chips, config, esptool
 from xewe.boards import Board
 from xewe.lockfile import Lock
 from xewe.project import Paths
-from xewe.report import EXIT_FAIL, EXIT_OK, EXIT_USAGE, XeweError, log, no_board, result
+from xewe.report import EXIT_FAIL, EXIT_OK, EXIT_USAGE, XeweError, board_disabled, board_disabled_exit, log, no_board, result
 from xewe.serialio import Console, wait_for_port
 
 DEFAULT_BAUD = 921600
@@ -141,6 +141,8 @@ def flash_with_board(
     chip = boards.resolve_chip(chip_flag, board, lock.chip)
     chips.get(chip)
     binary = ensure_built(p, lock, chip, no_build, defines)
+    if board_disabled():
+        return board_disabled_exit(chip, p.rel(binary)), None
     if board is None:
         return no_board(chip, p.rel(binary), require_board), None
     if board.chip and board.chip != chip:

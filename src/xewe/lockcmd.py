@@ -6,7 +6,7 @@ import difflib
 import json
 from dataclasses import asdict, dataclass
 
-from xewe import config, fetch, lockfile
+from xewe import config, fetch, lockfile, modules
 from xewe.lockfile import Lock
 from xewe.project import Paths
 from xewe.report import EXIT_OK, EXIT_USAGE, XeweError, log, result
@@ -24,6 +24,20 @@ class Row:
     commit: str
     source: str
     drift: bool
+    origin: str = ""
+    """Libraries only: where the wanted ref comes from (``xewe.lock`` or ``modules catalogue``)."""
+
+
+def libraries(p: Paths, lock: Lock, cfg: config.BuildConfig | None) -> list[modules.Library]:
+    """The library plan setup would install now (lock ``[libraries]`` win over the modules catalogue)."""
+    checkout = (cfg.path(p, "modules") if cfg else None) or p.modules_checkout
+    try:
+        order = modules.Registry.load(checkout).resolve(lock.selected, quiet=True)
+        catalogue = modules.load_catalogue(checkout)
+    except XeweError:
+        order, catalogue = [], {}
+    plan, _ = modules.library_plan({k: (s.repo, s.ref) for k, s in lock.libraries.items()}, order, catalogue)
+    return plan
 
 
 def rows(p: Paths, lock: Lock) -> list[Row]:
@@ -32,17 +46,17 @@ def rows(p: Paths, lock: Lock) -> list[Row]:
     inst = cfg.installed if cfg else {}
     out: list[Row] = []
 
-    def add(name: str, want: str, rec: dict[str, str] | str | None) -> None:
+    def add(name: str, want: str, rec: dict[str, str] | str | None, origin: str = "") -> None:
         if isinstance(rec, dict):
             have, commit, source = rec.get("ref", ""), rec.get("commit", ""), rec.get("source", "")
         else:
             have, commit, source = rec or "", "", ""
-        out.append(Row(name, want, have, commit, source, have != want or source.startswith("local:")))
+        out.append(Row(name, want, have, commit, source, have != want or source.startswith("local:"), origin))
 
     for name in SOURCES:
         add(name, lock.source(name).ref, inst.get(name))
-    for lib, src in lock.libraries.items():
-        add(f"libraries.{lib}", src.ref, inst.get("libraries", {}).get(lib))
+    for lib in libraries(p, lock, cfg):
+        add(f"libraries.{lib.name}", lib.ref, inst.get("libraries", {}).get(lib.name), lib.origin)
     add("arduino_cli", lock.arduino_cli_version, inst.get("arduino_cli"))
     add("esp32", lock.esp32_version, inst.get("esp32"))
     return out
@@ -57,7 +71,10 @@ def show(p: Paths, lock: Lock, as_json: bool = False) -> int:
     result(f"  {'entry':<22} {'lock':<12} {'installed':<12} commit")
     for r in table:
         mark = "!" if r.drift else " "
-        extra = f"  ({r.source})" if r.source.startswith("local:") else ""
+        notes = [r.origin] if r.origin else []
+        if r.source.startswith("local:"):
+            notes.append(r.source)
+        extra = f"  ({', '.join(notes)})" if notes else ""
         result(f"{mark} {r.name:<22} {r.lock:<12} {r.installed or '-':<12} {r.commit[:12] or '-'}{extra}")
     return EXIT_OK
 

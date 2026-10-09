@@ -2,8 +2,9 @@
 
 Run everything from inside a project (a directory with `xewe.lock`) or pass `--project DIR`.
 Call it as `build/.venv/bin/python -m xewe ...`; this keeps working after the project is moved.
-Results go to stdout, progress and errors to stderr. Add `--verbose` (before the command) to see
-every subprocess command line and its output.
+Results go to stdout, progress and errors to stderr. Add `-v`/`--verbose` (before or after the
+command: `xewe -v test` = `xewe test -v`) to see every subprocess command line and its output;
+pytest's own flags go after `--` (`xewe test -- -vv`).
 
 ## Exit codes
 
@@ -13,7 +14,7 @@ every subprocess command line and its output.
 | 1 | operation failed: compile, flash, test failure, expect timeout, validation |
 | 2 | usage error: bad flag, unknown chip/module, bad xewe.lock |
 | 3 | not set up / tool missing: run `./setup.sh` |
-| 4 | board required but none found, `--port` missing, or several boards |
+| 4 | board required but none found, `--port` missing, several boards, or board access disabled (`XEWE_NO_BOARD=1`) |
 
 ## No board is normal
 
@@ -28,13 +29,20 @@ Grep for `compiled, not run` instead of treating it as an error. Pass `--require
 a board must be present (CI with hardware); then no board means exit 4 (`xewe test` too).
 `xewe serial` without a board prints `no board attached; nothing to listen to` and exits 0.
 
+**Agents in compile-only mode must set `XEWE_NO_BOARD=1`** (or pass `--no-board`): then no port is
+ever listed, probed or opened, even if a board is plugged in. `xewe test` still compiles and
+reports hardware tests as `compiled, not run` (exit 0); `flash`/`run` build and exit 4; `serial`,
+`provision` and `boards` exit 4; all print `board access disabled (--no-board / XEWE_NO_BOARD)`.
+
 ## Inspect before running
 
 - `xewe build --chip c3 --dry-run` prints the exact arduino-cli command and runs nothing
   (works before the toolchain is installed once `build/.venv` exists; in a fresh project run
   `./setup.sh` first). `--all-chips --dry-run` prints one line per chip.
 - `xewe doctor` lists what is installed and what is missing; it never changes anything.
-- `xewe lock show` marks with `!` every entry where the installed ref differs from `xewe.lock`.
+- `xewe lock show` marks with `!` every entry where the installed ref differs from `xewe.lock`;
+  library rows end with their origin: `(xewe.lock)` or `(modules catalogue)` (a module's
+  `depends_libraries` from the modules repo's `libraries.toml`; a `[libraries]` pin in the lock wins).
 
 ## Typical loop
 

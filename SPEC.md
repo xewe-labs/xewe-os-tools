@@ -3,7 +3,7 @@
 Status: spec for agent A5 (phase 1, step 2.1). Written 2026-10-07 by A4.
 Replaces `xewe-os-build-toolchain` (scripts/{mac,linux,windows}, `install_arduino_esp32.sh`), the
 module installer half of `xewe-os/setup.sh`, and the per-module `scripts/validate.sh`.
-Locked decisions D1–D23 are in `wip/xewe-labs/priorities.md`; this spec cites them by number.
+Locked decisions are published in `xewe-os/ARCHITECTURE.md` (the template repo); the working copy is the tracker `wip/xewe-labs/priorities.md`. This spec cites them by number.
 
 Sources read: toolchain `README.md`, `CLAUDE.md`, `scripts/common/paths.sh`, all of `scripts/linux/*`
 and `scripts/mac/*` (linux `build/compile/upload/listen_serial/release/format` are one-line forwarders
@@ -137,10 +137,12 @@ message if missing).
 
 Global flags (any position before the subcommand): `--project DIR` (default: nearest ancestor of
 CWD containing `xewe.lock`), `--verbose` / `-v` (print every subprocess command line and its full
-output), `--version`.
+output; also accepted after the subcommand, so `xewe -v test` and `xewe test -v` are the same),
+`--version`. Arguments for pytest itself go after `--` (`xewe test -- -vv -k wifi`).
 
 Common flags: `--chip c3|c6|s3`, `--all-chips`, `--port PATH`, `--require-board`
-(also `XEWE_REQUIRE_BOARD=1`), `--latest` (setup only).
+(also `XEWE_REQUIRE_BOARD=1`), `--no-board` (also `XEWE_NO_BOARD=1`; flash, serial, provision,
+test, run, boards), `--latest` (setup only).
 
 **Exit codes (all commands)**
 
@@ -150,23 +152,33 @@ Common flags: `--chip c3|c6|s3`, `--all-chips`, `--port PATH`, `--require-board`
 | 1 | failure of the operation: compile error, flash error, test failure, expect timeout, validation error |
 | 2 | usage error (argparse, conflicting flags, unknown chip/module) |
 | 3 | not set up / tool missing (`build/build_config.toml` absent or stale, arduino-cli/esptool missing) |
-| 4 | board required but none found (`--require-board`; for `xewe test` too), explicit `--port` not present, several boards and none chosen, or the port did not come back after esptool reset the board |
+| 4 | board access disabled (`--no-board` / `XEWE_NO_BOARD=1`) for a command that needs a board, board required but none found (`--require-board`; for `xewe test` too), explicit `--port` not present, several boards and none chosen, or the port did not come back after esptool reset the board |
 
 **Chip selection rule (build/flash/test/run):** `--chip` → chip of the single attached board
 (§5) → `[project] chip` in `xewe.lock` → `c3`. `--all-chips` = c3, c6, s3 in that order (D15).
 
 **No-board status line** (exact text, grep-able): `compiled, not run: no board attached (<chip>, build/out/<chip>/<bin>)`.
 
+**Hard no-board switch:** `--no-board` or `XEWE_NO_BOARD=1` (also `true`/`yes`) disables board
+access for the process: port discovery returns nothing (`boards.scan` lists nothing and writes
+nothing, `boards.select` returns None even for `--port`/`XEWE_PORT`/`[override]`, `port_exists` is
+false) and `Console.open` refuses to open a port (exit 4). `flash` and `run` still build, print
+`compiled, not run: board access disabled (--no-board / XEWE_NO_BOARD) (<chip>, <bin>)` and exit 4;
+`serial`, `provision` and `boards` (listing; `--set-port`/`--clear` still work) exit 4 with
+`error: board access disabled (--no-board / XEWE_NO_BOARD)`. `xewe test` treats it as "no board
+attached": hardware tests compile and report compiled-not-run, exit 0 (4 with `--require-board`).
+Agents in compile-only mode must set `XEWE_NO_BOARD=1`.
+
 | Command | Synopsis | What it does | No board |
 |---|---|---|---|
 | `xewe setup` | `[--latest] [--modules LIST\|all\|none] [--force] [--core-source DIR] [--modules-source DIR]` | §6. Installs everything into `build/`, then runs `modules generate` | n/a (never needs a board) |
 | `xewe build` | `[--chip C \| --all-chips] [--define KEY=VALUE]... [--clean]` | §7. Compiles; writes `build/out/<chip>/` | n/a; exit 0 on success |
-| `xewe flash` | `[--chip C] [--port P] [--baud 921600] [--erase] [--no-build] [--require-board]` | Builds if `out/<chip>` is missing, older than any source, or was built with other `--define` values/version/chip/FQBN options (`build.stamp`, §7), then §8 write-flash | prints status line, exit 0 (4 with `--require-board`) |
-| `xewe serial` | `[--port P] [--baud 115200] [--reset] [--send CMD [--expect RE] [--timeout 10] [--boot-timeout 90]] [--duration S] [--log FILE] [--require-board]` | Listen with timestamps until Ctrl-C/`--duration` (opening the port resets the board on native USB; the boot log is shown), or wait for the boot to finish, send one command and wait for a regex (§8) | `no board attached; nothing to listen to`, exit 0 (4 with `--require-board`) |
-| `xewe provision` | `[--port P] [--name NAME] [--modules all\|none\|LIST] [--timezone GMT+HH:MM] [--env\|--from FILE] [--timeout 60] [--no-reset] [--log FILE]` | §8, §15. Resets the board and answers its first-boot prompts (name, modules, Wi-Fi, timezone); exit 0 also when already provisioned, 2 bad/missing settings (checked before the port is opened), 1 prompt timeout or unexpected sequence | `no board attached; nothing to provision`, exit 4 |
-| `xewe test` | `[--chip C \| --all-chips] [--port P] [--module SLUG]... [--host-only] [--require-board] [-- PYTEST_ARGS]` | §9. Runs pytest over project and selected-module tests | hardware tests compile and report compiled-not-run, exit 0 |
+| `xewe flash` | `[--chip C] [--port P] [--baud 921600] [--erase] [--no-build] [--require-board] [--no-board]` | Builds if `out/<chip>` is missing, older than any source, or was built with other `--define` values/version/chip/FQBN options (`build.stamp`, §7), then §8 write-flash | prints status line, exit 0 (4 with `--require-board`) |
+| `xewe serial` | `[--port P] [--baud 115200] [--reset] [--send CMD [--expect RE] [--timeout 10] [--boot-timeout 90]] [--duration S] [--log FILE] [--require-board] [--no-board]` | Listen with timestamps until Ctrl-C/`--duration` (opening the port resets the board on native USB; the boot log is shown), or wait for the boot to finish, send one command and wait for a regex (§8) | `no board attached; nothing to listen to`, exit 0 (4 with `--require-board`) |
+| `xewe provision` | `[--port P] [--name NAME] [--modules all\|none\|LIST] [--timezone GMT+HH:MM] [--env\|--from FILE] [--timeout 60] [--no-reset] [--log FILE] [--no-board]` | §8, §15. Resets the board and answers its first-boot prompts (name, modules, Wi-Fi, timezone); exit 0 also when already provisioned, 2 bad/missing settings (checked before the port is opened), 1 prompt timeout or unexpected sequence | `no board attached; nothing to provision`, exit 4 |
+| `xewe test` | `[--chip C \| --all-chips] [--port P] [--module SLUG]... [--host-only] [--require-board] [--no-board] [-v] [-- PYTEST_ARGS]` | §9. Runs pytest over project and selected-module tests | hardware tests compile and report compiled-not-run, exit 0 |
 | `xewe run` | `[--chip C] [--port P] [--define K=V]... [--no-serial]` | build → flash → serial (what `run.sh` calls) | builds, prints status line, exit 0 |
-| `xewe boards` | `[--no-probe] [--json] [--set-port P [--set-chip C]] [--clear]` | §5. Lists candidate ports and chips; writes `build/boards.toml` | `no board attached`, exit 0 (4 with `--require-board`) |
+| `xewe boards` | `[--no-probe] [--json] [--set-port P [--set-chip C]] [--clear] [--no-board]` | §5. Lists candidate ports and chips; writes `build/boards.toml` | `no board attached`, exit 0 (4 with `--require-board`) |
 | `xewe modules list` | `[--json]` | Modules in the modules checkout: slug, id, version, deps, `*` if selected | — |
 | `xewe modules select` | `LIST\|all\|none [--no-generate]` | Writes `[modules] selected` in `xewe.lock`, then generates | — |
 | `xewe modules validate` | `[PATH]` | §10 rules over a modules checkout (default `build/xewe-os-modules`) | — |
@@ -351,7 +363,7 @@ version/ref and its artefact exists; `--force` redoes all):
 | 4 | esp32 core | `ensure_esp32_core`, `install_arduino_esp32.sh` | `arduino-cli core update-index`, then `arduino-cli core install esp32:esp32@<esp32 version>`. Retry up to 5 times with 10/20/40/80 s backoff. If output contains `Head "<url>"` (connection-reset case from `install_arduino_esp32.sh`), download that URL with urllib into `$ARDUINO_DIRECTORIES_DOWNLOADS/packages/` and retry (max 10 such rescues). Verify with `arduino-cli core list --format json` (esp32:esp32 at the pinned version). |
 | 5 | esptool | `ensure_venv`, `ensure_esptool` | Locate core-bundled esptool (§2); run `esptool version` to confirm it executes on this host. |
 | 6 | Core library | `ensure_libraries` (clone, `rm -rf .git`) | `git clone --quiet --depth 1 --branch <ref> <repo> build/libraries/XeWeCore` (a SHA ref: clone + `git fetch --depth 1 origin <sha>` + checkout). Clone into `build/libraries/.tmp-XeWeCore` then rename (atomic). Keep `.git` (needed for commit record and `--latest`; arduino-cli ignores it). Local source: copy tree without `.git`. Wrong ref present → delete and re-clone. |
-| 7 | Libraries | `required_libraries.txt` loop | Same as 6 for every `[libraries]` entry into `build/libraries/<name>`. |
+| 7 | Libraries | `required_libraries.txt` loop | Runs after step 10 (it needs the module selection). Same as 6 for every `[libraries]` entry of the lock, plus every `depends_libraries` name of the resolved selected modules, looked up in the modules checkout's `libraries.toml` catalogue (`[Name] repo = "...", ref = "..."`), into `build/libraries/<name>`. **The lock wins:** a name pinned in `[libraries]` is installed from the lock and the catalogue entry is ignored. Each module library is logged as `library FastLED: from modules catalogue (3.10.3)` or `library FastLED: from xewe.lock (<ref>)`; a name in neither is a warning and not installed; `XeWeCore`/`XeWeOS` (the core) and a `(>=x.y.z)` suffix are ignored. The catalogue never edits `xewe.lock`. Recorded in `[installed] libraries.<name>` with `origin = "xewe.lock"` or `"modules catalogue"`; `xewe lock show` lists these rows with their origin. |
 | 8 | Modules repo | template `setup.sh` registry + `git clone` per module | Same as 6 into `build/xewe-os-modules`. |
 | 9 | Module selection | whiptail checklist / `--modules` | `--modules LIST\|all\|none` writes `[modules] selected` (this is a lock edit the user asked for; `--modules ""` = `none`). Zero modules is a valid project and `selected = []` is the default. If `selected` is empty and stdin is a TTY: numbered menu like today's `--text` menu (no whiptail dependency), where an empty answer means none; no TTY and empty → no prompt. Either way an empty selection prints one "no modules selected" line and continues. If the modules checkout holds no module at all (neither `modules/<slug>/module.properties` nor `xewe-os-module-<slug>/module.properties`), setup warns naming the source path and both layouts; explicitly requested modules that are not found are still exit 2. |
 | 10 | Generate | template `setup.sh` staging + swap | `xewe modules generate` (§10). |
@@ -380,7 +392,7 @@ esp32 = "3.3.12"
 core = { ref = "1.0.0", commit = "0123abc…", source = "https://github.com/xewe-labs/xewe-os-core" }
 modules = { ref = "v1.0.0", commit = "…", source = "…" }
 tools = { ref = "v0.1.1", commit = "…", source = "local:../xewe-os-tools" }
-libraries = { ArduinoJson = { ref = "v7.4.2", commit = "…" } }
+libraries = { ArduinoJson = { ref = "v7.4.2", commit = "…", source = "…", origin = "xewe.lock" } }
 ```
 
 Fix for today's relocation bug: today `write_build_config` stores `project_root`, `venv_python_bin`,
@@ -629,7 +641,8 @@ flashed (or erased) board so nobody has to type them.
   `<modules checkout>/modules/<slug>/tests/` (checkout = `build/xewe-os-modules` or
   `--modules-source`). `--module SLUG` restricts to those modules (must be selected; else exit 2).
 - Options passed to the plugin: `--xewe-chip`, `--xewe-port`, `--xewe-require-board`,
-  `--xewe-project`. Extra args after `--` go to pytest verbatim.
+  `--xewe-project` (and `--xewe-no-board` for plain pytest; `xewe test --no-board` sets
+  `XEWE_NO_BOARD=1`, which the plugin honours). Extra args after `--` go to pytest verbatim.
 - `--host-only` → `-m host`. `--all-chips` runs the session once per chip (three `pytest.main`
   calls), aggregating exit codes.
 
@@ -643,7 +656,7 @@ folders need no `conftest.py`):
 | Fixture | Scope | Behaviour |
 |---|---|---|
 | `compiled` | session | Builds the selected chip once (same code path as `xewe build`); a build failure fails every hardware test. |
-| `board` | session | Depends on `compiled`; detects the board (§5). None → `pytest.skip("compiled, not run: no board attached")`; with `--require-board` → `pytest.fail(...)`. Returns `Board(port, chip, serial_number)`. |
+| `board` | session | Depends on `compiled`; detects the board (§5). None, or board access disabled (`XEWE_NO_BOARD`/`--xewe-no-board`; no port is looked at) → `pytest.skip("compiled, not run: no board attached")`; with `--require-board` → `pytest.fail(...)`. Returns `Board(port, chip, serial_number)`. |
 | `firmware` | session | Depends on `board`; flashes `build/out/<chip>/` once per session, opens the session's one `Console`, pulses reset and waits up to 90 s for `System Setup Complete` (through a first-boot `Initial Setup Complete`/`Rebooting` and port drops), then 0.5 s of silence. `Name your device` (unprovisioned board) fails with a pointer to `xewe provision` and the runbook's first-boot provisioning. The wait is `serialio.wait_for_banner` (§8), shared with `xewe provision`. The console is closed at session end. Returns `Firmware(bin_path, version, chip, console)`. |
 | `serial` | function | Depends on `firmware`; the session `Console` (never opened/closed per test), drained and with `lines` emptied at test start: `send(cmd)`, `expect(regex, timeout=10) -> re.Match`, `command(cmd, expect, timeout) -> re.Match`, `lines` (captured since the test started), `drain()`, `reset()`. Expect failures raise `AssertionError` with the last 20 lines. |
 
@@ -800,7 +813,7 @@ in an `xewe-os` checkout, then `xewe modules validate build/xewe-os-modules` (or
 | `test_lockfile.py` | parse/validate/write round-trip, unknown keys rejected, defaults |
 | `test_tomlw.py` | writer output parses back with `tomllib` for all value types used |
 | `test_fetch.py` | asset name per (os, arch), checksum mismatch rejected, `.part` resume via a local HTTP server |
-| `test_setup.py` | step order, skip-when-recorded idempotency, `--force`, interrupted run leaves no `build_config.toml`, local sources, `--latest` tag selection from fake `ls-remote` output, `Head "<url>"` rescue path |
+| `test_setup.py` | step order, skip-when-recorded idempotency, `--force`, interrupted run leaves no `build_config.toml`, local sources, `--latest` tag selection from fake `ls-remote` output, `Head "<url>"` rescue path, module libraries from the modules `libraries.toml` catalogue vs a `[libraries]` pin in the lock (lock wins), missing/bad catalogue, `lock show` origin |
 | `test_arduino.py` | env vars (no `~/.arduino15`), exact compile argv per chip, FQBN strings (golden), no `JTAGAdapter` |
 | `test_build.py` | `out/<chip>/` contents, bin name, `manifest.json` byte-equal to golden built from 2.0.0 release files, `meta.json` keys, `XeWeBuildInfo.h` content, `--define`, sketch staging when folder ≠ stem, `--all-chips` continues after failure |
 | `test_boards.py` | VID:PID filter, chip-id output parsing (sample esptool 5 output), cache by serial number, override precedence, no-board / one / several decision, `boards.toml` `[override]` preserved |
@@ -812,6 +825,7 @@ in an `xewe-os` checkout, then `xewe modules validate build/xewe-os-modules` (or
 | `test_modules.py` | dependency order and cycle error against fixtures copied from the six real `module.properties`; generated `Modules.h`/`modules.lock` golden; every validator rule has a failing fixture |
 | `test_release.py` | matrix parsing and typing, folder layout, `firmware_map.csv`, version ≥ check, printed commands, never calls git |
 | `test_cli.py` | every subcommand's `--help`, exit-code table, `--verbose` |
+| `test_no_board.py` | `--no-board` / `XEWE_NO_BOARD=1`: discovery returns nothing (ports never listed), console never opens, flash/run build then exit 4, serial/provision/boards exit 4, `boards --set-port` still works, `xewe test --no-board` compiled-not-run exit 0 (4 with `--require-board`), plugin `--xewe-no-board`; `-v` after the subcommand |
 | `test_doctor.py` | checks report missing pieces without raising |
 
 ---

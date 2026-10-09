@@ -12,7 +12,7 @@ from typing import Any, TextIO
 
 import serial
 
-from xewe.report import EXIT_FAIL, EXIT_NO_BOARD, EXIT_OK, NO_BOARD, XeweError, log, result
+from xewe.report import BOARD_DISABLED, EXIT_FAIL, EXIT_NO_BOARD, EXIT_OK, NO_BOARD, XeweError, board_disabled, log, result
 
 RECONNECT_SECONDS = 5.0
 SILENCE_SECONDS = 0.5
@@ -87,7 +87,11 @@ class Console:
         configuring ``dtr=False, rts=False`` would go 1/1 -> 0/1 (reset) -> 0/0. Instead configure
         DTR high and RTS low (open goes 1/1 -> 1/1 -> 1/0, which the chip ignores), then drop DTR
         after open (1/0 -> 0/0). ``reset()`` produces 0/1 on purpose.
+
+        With board access disabled (``XEWE_NO_BOARD``) nothing is opened: exit 4.
         """
+        if board_disabled():
+            raise XeweError(BOARD_DISABLED, EXIT_NO_BOARD)
         ser = (self.factory or serial.Serial)()
         ser.port = self.port
         ser.baudrate = self.baud

@@ -220,3 +220,91 @@ def test_latest_installs_newest_tag_without_editing_lock(fresh: Paths, git_sourc
     assert cfg is not None and cfg.installed["core"]["ref"] == "v1.10.0"
     assert lockfile.load(fresh.lock).core.ref == "1.0.0"
     assert fresh.lock.read_text() == before.replace("selected = []", 'selected = ["wifi"]')
+
+
+# --- library dependencies of modules (depends_libraries + the modules catalogue libraries.toml)
+
+FASTLED = "https://github.com/FastLED/FastLED"
+
+
+@pytest.fixture
+def led_source(fresh: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
+    """The fake modules source gains a led-strip module (depends_libraries=FastLED) and a catalogue;
+    library clones are faked and recorded."""
+    src = tmp_path / "modules-src"
+    d = src / "xewe-os-module-led-strip"
+    (d / "src" / "Led").mkdir(parents=True)
+    (d / "src" / "Led" / "Led.h").write_text("#pragma once\nclass Led {};\n")
+    props = (src / "xewe-os-module-pins" / "module.properties").read_text()
+    props = (props.replace("slug=pins", "slug=led-strip").replace("id=pins", "id=led").replace("Pins", "Led")
+             .replace("depends_libraries=XeWeOS (>=0.1.0)", "depends_libraries=FastLED, XeWeOS (>=0.1.0)"))
+    (d / "module.properties").write_text(props)
+    (src / "libraries.toml").write_text(f'[FastLED]\nrepo = "{FASTLED}"\nref = "3.10.3"\n')
+    clones: list[tuple[str, str]] = []
+
+    def clone(repo: str, ref: str, dest: Path) -> str:
+        clones.append((repo, ref))
+        dest.mkdir(parents=True, exist_ok=True)
+        return "f00d"
+
+    monkeypatch.setattr(fetch, "clone", clone)
+    monkeypatch.setattr(fetch, "head_commit", lambda path: "f00d")
+    return clones
+
+
+def test_module_library_from_catalogue(fresh: Paths, led_source: list[tuple[str, str]],
+                                       caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["setup", "--modules", "led-strip"]) == 0
+    assert led_source == [(FASTLED, "3.10.3")]
+    assert "library FastLED: from modules catalogue (3.10.3)" in caplog.text
+    assert "XeWeOS" not in caplog.text  # the core library is never looked up
+    assert (fresh.modules_checkout / "libraries.toml").is_file()  # copied with the legacy layout too
+    assert (fresh.libraries / "FastLED").is_dir()
+    rec = config.load(fresh).installed["libraries"]["FastLED"]
+    assert rec["ref"] == "3.10.3" and rec["source"] == FASTLED and rec["origin"] == "modules catalogue"
+    assert lockfile.load(fresh.lock).libraries == {}  # the catalogue never edits the lock
+    capsys.readouterr()
+    assert main(["lock", "show"]) == 0
+    line = next(x for x in capsys.readouterr().out.splitlines() if "libraries.FastLED" in x)
+    assert line.startswith(" ") and "3.10.3" in line and line.endswith("(modules catalogue)")
+    # a re-run does not clone again
+    led_source.clear()
+    assert main(["setup"]) == 0
+    assert led_source == []
+
+
+def test_lock_pin_wins_over_catalogue(fresh: Paths, led_source: list[tuple[str, str]],
+                                      caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]) -> None:
+    fork = "https://github.com/example/FastLED"
+    fresh.lock.write_text(fresh.lock.read_text() + f'FastLED = {{ repo = "{fork}", ref = "3.9.0" }}\n')
+    assert main(["setup", "--modules", "led-strip"]) == 0
+    assert led_source == [(fork, "3.9.0")]
+    assert "library FastLED: from xewe.lock (3.9.0)" in caplog.text
+    assert "from modules catalogue" not in caplog.text
+    assert config.load(fresh).installed["libraries"]["FastLED"]["origin"] == "xewe.lock"
+    capsys.readouterr()
+    assert main(["lock", "show", "--json"]) == 0
+    import json
+
+    row = next(r for r in json.loads(capsys.readouterr().out) if r["name"] == "libraries.FastLED")
+    assert row["lock"] == "3.9.0" and row["origin"] == "xewe.lock" and not row["drift"]
+
+
+def test_unselected_module_libraries_are_not_installed(fresh: Paths, led_source: list[tuple[str, str]]) -> None:
+    assert main(["setup", "--modules", "wifi"]) == 0
+    assert led_source == []
+    assert config.load(fresh).installed["libraries"] == {}
+
+
+def test_library_missing_from_catalogue_warns(fresh: Paths, led_source: list[tuple[str, str]], tmp_path: Path,
+                                             caplog: pytest.LogCaptureFixture) -> None:
+    (tmp_path / "modules-src" / "libraries.toml").unlink()
+    assert main(["setup", "--modules", "led-strip"]) == 0
+    assert led_source == []
+    assert "library FastLED (needed by module led-strip) is neither in xewe.lock [libraries] nor in the " \
+           "modules libraries.toml; not installed" in caplog.text
+
+
+def test_bad_catalogue_fails(fresh: Paths, led_source: list[tuple[str, str]], tmp_path: Path) -> None:
+    (tmp_path / "modules-src" / "libraries.toml").write_text('[FastLED]\nrepo = "x"\n')
+    assert main(["setup", "--modules", "led-strip"]) == 1
