@@ -93,18 +93,18 @@ def test_missing_modules_h_is_exit_3(project: Paths, capsys: pytest.CaptureFixtu
     assert "src/Modules.h missing" in capsys.readouterr().err
 
 
-def test_missing_modules_lib_is_exit_3(project: Paths, capsys: pytest.CaptureFixture[str]) -> None:
-    shutil.rmtree(project.modules_lib)
+def test_missing_modules_is_exit_3(project: Paths, capsys: pytest.CaptureFixture[str]) -> None:
+    shutil.rmtree(project.modules)
     assert main(["build"]) == 3
-    assert "build/modules-lib/library.properties missing" in capsys.readouterr().err
+    assert "build/modules/library.properties missing" in capsys.readouterr().err
 
 
-def test_modules_lib_change_makes_build_stale(project: Paths, fake_cli) -> None:
+def test_modules_change_makes_build_stale(project: Paths, fake_cli) -> None:
     assert main(["build", "--chip", "c3"]) == 0
     binary = project.out_dir("c3") / "2.0.15-c3-xewe-os.bin"
     key = build.build_key("c3", "2.0.15", {})
     assert build.is_up_to_date(project, binary, key)
-    header = project.modules_lib / "src" / "Wifi" / "Wifi.h"
+    header = project.modules / "src" / "Wifi" / "Wifi.h"
     os.utime(header, (binary.stat().st_mtime + 5, binary.stat().st_mtime + 5))
     assert not build.is_up_to_date(project, binary, key)
 

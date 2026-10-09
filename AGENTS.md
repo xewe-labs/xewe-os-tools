@@ -1,9 +1,12 @@
 # Using xewe as an agent
 
-Run everything from inside a project (a directory with `xewe.lock`) or pass `--project DIR`.
+Run everything from inside a project (a directory with `xewe.toml`, its committed manifest) or
+pass `--project DIR`.
 Call it as `build/tools/.venv/bin/python -m xewe ...`; this keeps working after the project is moved.
-Layout (SPEC.md §6): the toolchain is shared per machine in `~/.xewe-os/build-tools` (`XEWE_HOME`
-overrides `~/.xewe-os`); the project's generated files are `build/` and `src/Modules.h`.
+Layout (SPEC.md §6): the toolchain and the modules repo checkout
+(`sources/xewe-os-modules/<ref>/`) are shared per machine in `~/.xewe-os/build-tools` (`XEWE_HOME`
+overrides `~/.xewe-os`); the project's generated files are `build/` and `src/Modules.h`, the
+selected modules (library, tests, `modules.lock`) in `build/modules/`.
 Results go to stdout, progress and errors to stderr. Add `-v`/`--verbose` (before or after the
 command: `xewe -v test` = `xewe test -v`) to see every subprocess command line and its output;
 pytest's own flags go after `--` (`xewe test -- -vv`).
@@ -14,7 +17,7 @@ pytest's own flags go after `--` (`xewe test -- -vv`).
 |---|---|
 | 0 | success, including "compiled, not run" (no board) |
 | 1 | operation failed: compile, flash, test failure, expect timeout, validation |
-| 2 | usage error: bad flag, unknown chip/module, bad xewe.lock |
+| 2 | usage error: bad flag, unknown chip/module, bad xewe.toml |
 | 3 | not set up / tool missing: run `./setup.sh` |
 | 4 | board required but none found, `--port` missing, several boards, or board access disabled (`XEWE_NO_BOARD=1`) |
 
@@ -33,7 +36,7 @@ a board must be present (CI with hardware); then no board means exit 4 (`xewe te
 
 **Agents in compile-only mode must set `XEWE_NO_BOARD=1`** (or pass `--no-board`): then no port is
 ever listed, probed or opened, even if a board is plugged in. `xewe test` still compiles and
-reports hardware tests as `compiled, not run` (exit 0); `flash`/`run` build and exit 4; `serial`,
+reports board tests as `compiled, not run` (exit 0); `flash`/`run` build and exit 4; `serial`,
 `provision` and `boards` exit 4; all print `board access disabled (--no-board / XEWE_NO_BOARD)`.
 
 ## Inspect before running
@@ -41,18 +44,22 @@ reports hardware tests as `compiled, not run` (exit 0); `flash`/`run` build and 
 - `xewe build --chip c3 --dry-run` prints the exact arduino-cli command and runs nothing
   (works before the toolchain is installed once `build/tools/.venv` exists; in a fresh project run
   `./setup.sh` first). `--all-chips --dry-run` prints one line per chip.
-- `xewe doctor` lists what is installed and what is missing; it never changes anything.
-- `xewe lock show` marks with `!` every entry where the installed ref differs from `xewe.lock`;
-  library rows end with their origin: `(xewe.lock)` or `(modules catalogue)` (a module's
-  `depends_libraries` from the modules repo's `libraries.toml`; a `[libraries]` pin in the lock wins).
+- `xewe doctor` lists what is installed and what is missing; it never changes anything. On
+  Apple silicon it also warns when Rosetta 2 is missing (the esp32 core's x86_64 `ctags` fails
+  with "bad CPU type" without it).
+- The interactive console (`serial`/`run` on a terminal) prints board lines raw; scripted
+  output (`--send`, `--no-input`, piped stdin) and `--log` stay timestamped, so parse those.
+- `xewe manifest show` marks with `!` every entry where the installed ref differs from `xewe.toml`;
+  library rows end with their origin: `(xewe.toml)` or `(modules catalogue)` (a module's
+  `depends_libraries` from the modules repo's `libraries.toml`; a `[libraries]` pin in the manifest wins).
 
 ## Typical loop
 
 ```sh
 XEWE_TOOLS_SOURCE=/path/to/xewe-os-tools ./setup.sh --modules wifi,web-interface
 build/tools/.venv/bin/python -m xewe build --all-chips
-build/tools/.venv/bin/python -m xewe test --host-only
-build/tools/.venv/bin/python -m xewe modules validate build/modules
+build/tools/.venv/bin/python -m xewe test --unit-only
+build/tools/.venv/bin/python -m xewe modules validate
 ```
 
 Setup without a TTY never prompts: with no `--modules` and an empty `[modules] selected` it
@@ -88,7 +95,7 @@ as `********` in all output, including `--log` files and failure tails.
 ## Rules
 
 - `xewe` never runs git writes; `xewe release` prints the git/gh commands for a human.
-- Only `xewe lock update`, `xewe modules select`, `xewe setup --modules` and `xewe release`
-  edit `xewe.lock`. `xewe setup --latest` installs newer tags without editing the lock.
+- Only `xewe manifest update`, `xewe modules select`, `xewe setup --modules` and `xewe release`
+  edit `xewe.toml`. `xewe setup --latest` installs newer tags without editing the manifest.
 - Never edit files under `build/` or `src/Modules.h` by hand; they are regenerated. `xewe clean`
   never touches `~/.xewe-os/build-tools`.

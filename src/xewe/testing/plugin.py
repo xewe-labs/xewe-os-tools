@@ -2,11 +2,11 @@
 
 Module test folders need no conftest.py: the fixtures below build the firmware once per
 session, find the board, flash it once, wait for the firmware to finish booting, and hand each
-test the session's one serial console. Without a board, hardware tests are skipped with a reason
+test the session's one serial console. Without a board, board tests are skipped with a reason
 starting ``compiled, not run`` and the run exits 0; ``--xewe-require-board`` turns those skips
 into failures (``xewe test`` then exits 4, see ``board_missing``). ``--xewe-no-board`` (or
 ``XEWE_NO_BOARD=1``, which ``xewe test --no-board`` sets) is the hard switch: no port is looked at
-and hardware tests are "compiled, not run" as if no board were attached.
+and board tests are "compiled, not run" as if no board were attached.
 
 At configure time the project's dotenv file is applied (:mod:`xewe.dotenv`; the real environment
 wins), so ``XEWE_TEST_*`` pins, ``XEWE_PORT`` and ``XEWE_CHIP`` reach the tests without exports.
@@ -30,7 +30,7 @@ from xewe.report import BOARD_DISABLED, EXIT_NO_BOARD, NO_BOARD, XeweError, boar
 from xewe.serialio import BOOT_READY, BOOT_UNPROVISIONED, Console, ExpectTimeout, wait_for_banner
 
 NOT_RUN = "compiled, not run"
-HARDWARE_FIXTURES = frozenset({"compiled", "board", "firmware", "serial"})
+BOARD_FIXTURES = frozenset({"compiled", "board", "firmware", "serial"})
 BOOT_TIMEOUT_SECONDS = 90.0
 """Longest wait for the end-of-boot banner (Wi-Fi + NTP, plus the one reboot after first boot)."""
 BOOT_WAIT_SECONDS = 0.5
@@ -71,8 +71,10 @@ class XeweContext:
         self.explicit = explicit is not None
         self._chip: str | None = config.getoption("xewe_chip")
         self._lock: Lock | None = None
+        self.board_tests: set[str] = set()
+        """Node ids marked ``board`` at collection (the summary counts their passes)."""
         self.no_board = False
-        """Set when a hardware fixture failed because the board was required but missing (exit 4)."""
+        """Set when a board fixture failed because the board was required but missing (exit 4)."""
 
     @property
     def active(self) -> bool:
@@ -87,7 +89,7 @@ class XeweContext:
 
     def project(self) -> Paths:
         if self.paths is None:
-            pytest.fail("not inside a xewe project (no xewe.lock); pass --xewe-project DIR", pytrace=False)
+            pytest.fail("not inside a xewe project (no xewe.toml); pass --xewe-project DIR", pytrace=False)
         return self.paths
 
     @property
@@ -110,15 +112,15 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     group = parser.getgroup("xewe")
     group.addoption("--xewe-chip", default=None, help="chip to build and test (c3, c6, s3)")
     group.addoption("--xewe-port", default=None, help="serial port of the board")
-    group.addoption("--xewe-require-board", action="store_true", help="fail hardware tests when no board is attached")
+    group.addoption("--xewe-require-board", action="store_true", help="fail board tests when no board is attached")
     group.addoption("--xewe-no-board", action="store_true",
-                    help="never look for or open a board (also XEWE_NO_BOARD=1); hardware tests are compiled, not run")
-    group.addoption("--xewe-project", default=None, help="project root (default: nearest xewe.lock)")
+                    help="never look for or open a board (also XEWE_NO_BOARD=1); board tests are compiled, not run")
+    group.addoption("--xewe-project", default=None, help="project root (default: nearest xewe.toml)")
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    config.addinivalue_line("markers", "host: pure logic; never needs a board or a build")
-    config.addinivalue_line("markers", "hardware: needs firmware on a board")
+    config.addinivalue_line("markers", "unit: pure logic; runs on the developer machine, never needs a board or a build")
+    config.addinivalue_line("markers", "board: needs firmware on a board")
     ctx = XeweContext(config)
     config.stash[_KEY] = ctx
     # XEWE_TEST_* pins, XEWE_PORT, XEWE_CHIP from the dotenv file (real environment wins), before
@@ -131,11 +133,14 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 @pytest.hookimpl(tryfirst=True)
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Mark tests that use a board fixture as ``hardware`` (before ``-m`` deselection runs)."""
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Mark tests that use a board fixture as ``board`` (before ``-m`` deselection runs)."""
+    ctx = config.stash.get(_KEY, None)
     for item in items:
-        if HARDWARE_FIXTURES & set(getattr(item, "fixturenames", ())):
-            item.add_marker(pytest.mark.hardware)
+        if BOARD_FIXTURES & set(getattr(item, "fixturenames", ())):
+            item.add_marker(pytest.mark.board)
+        if ctx is not None and item.get_closest_marker("board") is not None:
+            ctx.board_tests.add(item.nodeid)
 
 
 @pytest.fixture(scope="session")
@@ -146,7 +151,7 @@ def xewe(pytestconfig: pytest.Config) -> XeweContext:
 
 @pytest.fixture(scope="session")
 def compiled(xewe: XeweContext) -> Path:
-    """Build the selected chip once; a failure fails every hardware test."""
+    """Build the selected chip once; a failure fails every board test."""
     p = xewe.project()
     try:
         res = build.build_chip(p, xewe.lock, xewe.chip)
@@ -257,16 +262,17 @@ def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter, config: p
         for rep in not_run:
             terminalreporter.write_line(rep.nodeid)
     passed = [r for r in stats.get("passed", []) if r.when == "call"]
-    hw_passed = sum(1 for r in passed if "hardware" in r.keywords)
+    # by marker, not keyword: a test file under tests/board/ carries "board" as a keyword too
+    board_passed = sum(1 for r in passed if r.nodeid in ctx.board_tests)
     failed = len(stats.get("failed", [])) + len(stats.get("error", []))
-    line = f"xewe test: {len(passed) - hw_passed} host passed, {len(not_run)} {NOT_RUN}, {failed} failed"
-    if hw_passed:
-        line += f", {hw_passed} hardware passed"
+    line = f"xewe test: {len(passed) - board_passed} unit passed, {len(not_run)} {NOT_RUN}, {failed} failed"
+    if board_passed:
+        line += f", {board_passed} board passed"
     terminalreporter.write_line(line)
 
 
 def board_missing(config: pytest.Config) -> bool:
-    """True when a hardware fixture failed because the required board was missing (or its port
+    """True when a board fixture failed because the required board was missing (or its port
     did not come back); ``xewe test`` maps such a run to exit 4 like ``flash``/``serial``."""
     ctx = config.stash.get(_KEY, None)
     return ctx is not None and ctx.no_board

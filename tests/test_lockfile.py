@@ -20,7 +20,7 @@ def test_round_trip_keeps_header_and_values() -> None:
     assert lock.selected == ["wifi"]
     assert lock.libraries["ArduinoJson"].ref == "v7.4.2"
     out = lockfile.dumps(lock)
-    assert out.startswith("# xewe.lock: pinned inputs")
+    assert out.startswith("# xewe.toml: this firmware's manifest")
     again = lockfile.parse(out)
     assert again == lock
 
@@ -48,7 +48,7 @@ def test_invalid_lock_is_usage_error(text: str) -> None:
 
 
 def test_save_is_atomic(tmp_path: Path) -> None:
-    path = tmp_path / "xewe.lock"
+    path = tmp_path / "xewe.toml"
     lockfile.save(lockfile.Lock(), path)
     assert lockfile.load(path).version == "0.0.0"
-    assert not (tmp_path / "xewe.lock.tmp").exists()
+    assert not (tmp_path / "xewe.toml.tmp").exists()

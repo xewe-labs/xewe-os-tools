@@ -7,30 +7,35 @@ from pathlib import Path
 
 import pytest
 
-from xewe import config, modules
 from xewe.lockfile import Lock
 from xewe.project import Paths
 from xewe.report import EXIT_FAIL, EXIT_NO_BOARD, EXIT_OK, EXIT_USAGE, XeweError, log, result
 from xewe.testing import plugin
 
 
+def installed_modules(p: Paths) -> list[str]:
+    """Slugs in ``build/modules/modules.lock`` (the resolved selection, dependencies first)."""
+    if not p.modules_lock.is_file():
+        return []
+    lines = p.modules_lock.read_text(encoding="utf-8").splitlines()
+    return [line.split("|", 1)[0] for line in lines if line and not line.startswith("#")]
+
+
 def test_roots(p: Paths, lock: Lock, only: list[str]) -> list[Path]:
-    """``tests/`` of the project plus ``tests/`` of every resolved module (or of ``only``)."""
+    """``tests/`` of the project plus ``build/modules/tests/<slug>/`` of every installed module (or of
+    ``only``); setup copies them there from the modules checkout."""
     roots = [p.root / "tests"] if (p.root / "tests").is_dir() else []
-    cfg = config.load(p)
-    checkout = (cfg.path(p, "modules") if cfg else None) or p.modules_checkout
-    if not checkout.is_dir() or not lock.selected:
+    slugs = installed_modules(p)
+    if not slugs:
         if only:
             raise XeweError("--module given but no modules are installed; run ./setup.sh", EXIT_USAGE)
         return roots
-    resolved = modules.Registry.load(checkout).resolve(lock.selected)
-    slugs = [m.slug for m in resolved]
     for slug in only:
         if slug not in slugs:
             raise XeweError(f"module '{slug}' is not selected (selected: {', '.join(slugs)})", EXIT_USAGE)
-    for module in resolved:
-        if (not only or module.slug in only) and module.tests_dir.is_dir():
-            roots.append(module.tests_dir)
+    for slug in slugs:
+        if (not only or slug in only) and p.module_tests(slug).is_dir():
+            roots.append(p.module_tests(slug))
     return roots
 
 
@@ -60,7 +65,7 @@ def run_tests(
     chip_names: list[str],
     port: str | None = None,
     only: list[str] | None = None,
-    host_only: bool = False,
+    unit_only: bool = False,
     require_board: bool = False,
     extra: list[str] | None = None,
 ) -> int:
@@ -82,8 +87,8 @@ def run_tests(
             args += ["--xewe-port", port]
         if require_board:
             args.append("--xewe-require-board")
-        if host_only:
-            args += ["-m", "host"]
+        if unit_only:
+            args += ["-m", "unit"]
         args += extra or []
         log.debug("pytest %s", " ".join(args))
         outcome = _Outcome()

@@ -14,6 +14,11 @@ from typing import Any, TextIO
 
 import serial
 
+try:
+    import termios
+except ImportError:  # Windows
+    termios = None  # type: ignore[assignment]
+
 from xewe.report import BOARD_DISABLED, EXIT_FAIL, EXIT_NO_BOARD, EXIT_OK, NO_BOARD, XeweError, board_disabled, log, result
 
 RECONNECT_SECONDS = 5.0
@@ -47,7 +52,9 @@ class Console:
     """Line-oriented serial console.
 
     ``factory`` builds an unopened ``serial.Serial``-like object (default ``serial.Serial``,
-    looked up at open time so tests can substitute a fake). With ``echo`` every line is printed to ``out`` prefixed by a timestamp and appended to ``log_path``.
+    looked up at open time so tests can substitute a fake). With ``echo`` every line is printed to ``out``,
+    prefixed by a timestamp unless ``timestamps`` is False (the interactive console prints raw lines);
+    every line is appended to ``log_path`` with its timestamp either way.
     Any line (read or sent) containing one of ``secrets`` is replaced by ``MASK`` everywhere:
     in ``lines``, on ``out``, in the log and in ``ExpectTimeout`` messages.
     """
@@ -61,8 +68,10 @@ class Console:
         out: TextIO | None = None,
         log_path: Path | None = None,
         secrets: list[str] | None = None,
+        timestamps: bool = True,
     ) -> None:
         self.port = port
+        self.timestamps = timestamps
         self.baud = baud
         self.factory = factory
         self.echo = echo
@@ -175,11 +184,11 @@ class Console:
         if self.echo:
             print(text, file=self.out, flush=True)
 
-    def _emit(self, line: str) -> None:
+    def _emit(self, line: str, show: bool = True) -> None:
         if self.echo or self.log_file:
             stamped = f"{stamp()}  {line}"
-            if self.echo:
-                print(stamped, file=self.out, flush=True)
+            if self.echo and show:
+                print(stamped if self.timestamps else line, file=self.out, flush=True)
             if self.log_file:
                 self.log_file.write(stamped + "\n")
                 self.log_file.flush()
@@ -203,12 +212,16 @@ class Console:
             new.append(line)
         return new
 
-    def send(self, cmd: str) -> None:
-        """Write ``cmd`` + newline; later ``expect`` calls only look at lines after this point."""
+    def send(self, cmd: str, show: bool = True) -> None:
+        """Write ``cmd`` + newline; later ``expect`` calls only look at lines after this point.
+
+        The ``> cmd`` line goes to the log always and to ``out`` only with ``show`` (the interactive
+        console passes False: the terminal shows the typed text and the firmware echoes it).
+        """
         self._ser.write((cmd + "\n").encode("utf-8"))
         self._ser.flush()
         self._cursor = len(self.lines)
-        self._emit(f"> {self.mask(cmd)}")
+        self._emit(f"> {self.mask(cmd)}", show)
 
     def expect(self, pattern: str, timeout: float = 10) -> re.Match[str]:
         """Wait for a line matching ``pattern`` (searched) after the last send/expect."""
@@ -259,7 +272,8 @@ class Console:
 
         Plain line input (no raw mode): a daemon thread blocks in ``readline`` and queues the lines;
         this loop polls the port (reconnecting like ``listen``) and sends what was queued. The
-        terminal already shows the typed text, so nothing is printed besides ``send``'s ``> cmd``.
+        terminal already shows the typed text and the firmware echoes the command, so no ``> cmd``
+        line is printed (it still goes to the log).
         """
         typed: queue.Queue[str | None] = queue.Queue()
         src = stdin or sys.stdin
@@ -278,10 +292,10 @@ class Console:
                 if line is None:
                     return
                 try:
-                    self.send(line)
+                    self.send(line, show=False)
                 except (serial.SerialException, OSError):  # port dropped since the last poll
                     self._reconnect()
-                    self.send(line)
+                    self.send(line, show=False)
 
 
 def interactive_input(no_input: bool = False, stdin: TextIO | None = None) -> TextIO | None:
@@ -292,16 +306,36 @@ def interactive_input(no_input: bool = False, stdin: TextIO | None = None) -> Te
     return src
 
 
-def console_session(console: Console, duration: float | None = None, no_input: bool = False) -> None:
+def flush_input(src: TextIO) -> bool:
+    """Discard keystrokes typed before now (during flash/boot) on terminal ``src``; True when flushed.
+
+    Without this they would be glued to the first command (``n$system``). POSIX only.
+    """
+    if termios is None or not src.isatty():
+        return False
+    try:
+        termios.tcflush(src.fileno(), termios.TCIFLUSH)
+    except (AttributeError, OSError, ValueError, termios.error):
+        return False
+    return True
+
+
+def console_session(
+    console: Console, duration: float | None = None, no_input: bool = False, timestamps: bool = False,
+) -> None:
     """``xewe serial``/``xewe run`` without ``--send``: interactive on a terminal, else listen only.
 
-    Ctrl-C and EOF on stdin both end the session normally.
+    Interactive mode flushes pending terminal input, then prints the board's lines raw (no
+    timestamp unless ``timestamps``) and no ``> cmd`` echo; the ``--log`` file keeps timestamps.
+    Listen-only output is timestamped as before. Ctrl-C and EOF on stdin both end the session normally.
     """
     src = interactive_input(no_input)
     try:
         if src is None:
             console.listen(duration)
         else:
+            flush_input(src)
+            console.timestamps = timestamps
             result(INTERACTIVE_HINT)
             console.interact(duration, src)
     except KeyboardInterrupt:
@@ -403,6 +437,7 @@ def serial_main(
     require_board: bool = False,
     factory: Callable[[], Any] = serial.Serial,
     no_input: bool = False,
+    timestamps: bool = False,
 ) -> int:
     """``xewe serial``: listen (interactive on a terminal, see ``console_session``), or send one
     command and wait for a regex.
@@ -429,7 +464,7 @@ def serial_main(
         if reset:
             console.reset()
         if send is None:
-            console_session(console, duration, no_input)
+            console_session(console, duration, no_input, timestamps)
             return EXIT_OK
         try:
             state = wait_until_ready(console, boot_timeout)

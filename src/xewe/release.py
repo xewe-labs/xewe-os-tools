@@ -100,7 +100,7 @@ def publish_commands(version: str) -> list[str]:
     """The commands that publish the release (printed for a human to run)."""
     rel = f"static/firmware/releases/{version}"
     return [
-        f"git add xewe.lock {rel}",
+        f"git add xewe.toml {rel}",
         f'git commit -m "release {version}"',
         f'git tag -a v{version} -m "Release {version}"',
         f"git push origin v{version}",
@@ -110,11 +110,11 @@ def publish_commands(version: str) -> list[str]:
 
 
 def _check_tree(p: Paths) -> None:
-    """Warn about uncommitted changes other than xewe.lock (read-only ``git status``)."""
+    """Warn about uncommitted changes other than xewe.toml (read-only ``git status``)."""
     if shutil.which("git") is None or not (p.root / ".git").exists():
         return
     proc = subprocess.run(["git", "status", "--porcelain"], cwd=p.root, capture_output=True, text=True)
-    dirty = [ln for ln in proc.stdout.splitlines() if ln[3:].strip() != "xewe.lock"]
+    dirty = [ln for ln in proc.stdout.splitlines() if ln[3:].strip() != "xewe.toml"]
     if dirty:
         log.warning("uncommitted changes in the working tree:\n%s", "\n".join(dirty))
 

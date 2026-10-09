@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import platform
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 
@@ -15,12 +16,14 @@ except ImportError:  # Windows
 
 from serial.tools import list_ports
 
-from xewe import arduino, boards, build, config, esptool, lockcmd, pins
+from xewe import arduino, boards, build, config, esptool, manifest, pins
 from xewe.lockfile import Lock
 from xewe.project import Paths
 from xewe.report import EXIT_NOT_SETUP, EXIT_OK, NO_BOARD, XeweError, log, result, verbose
 
 OK, WARN, ERROR = "ok", "warn", "error"
+ROSETTA_MISSING = ("Rosetta 2 is not installed; the esp32 core's ctags binary needs it: "
+                   "softwareupdate --install-rosetta --agree-to-license")
 
 
 @dataclass
@@ -52,6 +55,26 @@ def _group_exists(name: str) -> bool:
     return True
 
 
+def _rosetta_installed() -> bool:
+    """True when Rosetta 2 runs on this Mac: its daemon ``oahd`` is up, or an x86_64 binary runs."""
+    for cmd in (["/usr/bin/pgrep", "-q", "oahd"], ["arch", "-x86_64", "/usr/bin/true"]):
+        try:
+            if subprocess.run(cmd, capture_output=True, timeout=10).returncode == 0:
+                return True
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+    return False
+
+
+def _rosetta() -> Check | None:
+    """Apple silicon only: the esp32 core ships an x86_64 ``ctags`` ("bad CPU type" without Rosetta 2)."""
+    if platform.system() != "Darwin" or platform.machine() != "arm64":
+        return None
+    if _rosetta_installed():
+        return Check(OK, "rosetta", "Rosetta 2 installed")
+    return Check(WARN, "rosetta", ROSETTA_MISSING)
+
+
 def _toolchain(p: Paths, lock: Lock) -> Check:
     """The shared toolchain folder (``XEWE_HOME`` resolved) and whether the pinned cli and core are in it."""
     cli = arduino.default_cli(p, lock.arduino_cli_version)
@@ -80,6 +103,9 @@ def checks(p: Paths, lock: Lock) -> list[Check]:
         out.append(Check(OK, "setup", f"completed {cfg.setup_completed} by tools {cfg.tools_version}"))
 
     out.append(_toolchain(p, lock))
+    rosetta = _rosetta()
+    if rosetta is not None:
+        out.append(rosetta)
     cli = build.cli_path(p, cfg)
     data = cfg.arduino_data(p) if cfg else p.default_arduino_data
     env_vars = arduino.env(p, data)
@@ -104,9 +130,9 @@ def checks(p: Paths, lock: Lock) -> list[Check]:
     except XeweError as exc:
         out.append(Check(WARN, "esptool", str(exc)))
 
-    drift = [r.name for r in lockcmd.rows(p, lock) if r.drift]
-    out.append(Check(WARN, "lock", f"installed differs from xewe.lock: {', '.join(drift)}") if drift
-               else Check(OK, "lock", "installed matches xewe.lock"))
+    drift = [r.name for r in manifest.rows(p, lock) if r.drift]
+    out.append(Check(WARN, "lock", f"installed differs from xewe.toml: {', '.join(drift)}") if drift
+               else Check(OK, "lock", "installed matches xewe.toml"))
 
     probe = p.build if p.build.exists() else p.root
     free = shutil.disk_usage(probe).free

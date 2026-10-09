@@ -160,6 +160,28 @@ def head_commit(path: Path) -> str:
     return out or "-"
 
 
+def current_branch(path: Path) -> str | None:
+    """The branch checked out in ``path`` (None when HEAD is detached: a tag or a commit)."""
+    out = git("symbolic-ref", "--quiet", "--short", "HEAD", cwd=path, check=False).strip()
+    return out or None
+
+
+def remote_url(path: Path) -> str:
+    """``origin`` of the checkout in ``path`` ("" when unknown)."""
+    return git("remote", "get-url", "origin", cwd=path, check=False).strip()
+
+
+def follow_branch(path: Path, branch: str) -> str:
+    """Fetch ``branch`` and reset the checkout to the remote head (a failed fetch keeps the current
+    checkout, with a warning); return the commit."""
+    try:
+        git("fetch", "--quiet", "--depth", "1", "origin", branch, cwd=path)
+        git("reset", "--quiet", "--hard", "FETCH_HEAD", cwd=path)
+    except XeweError as exc:
+        log.warning("cannot update %s to the head of %s; keeping the current checkout (%s)", path, branch, exc)
+    return head_commit(path)
+
+
 def clone(repo: str, ref: str, dest: Path) -> str:
     """Shallow-clone ``repo`` at ``ref`` into ``dest`` (via a temp dir + rename); return the commit."""
     tmp = dest.with_name(f".tmp-{dest.name}")

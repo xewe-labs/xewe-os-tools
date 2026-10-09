@@ -154,12 +154,12 @@ def flash_with_board(
 
 def run(
     p: Paths, lock: Lock, chip_flag: str | None, port: str | None, defines: dict[str, str], no_serial: bool, baud: int = 115200,
-    no_input: bool = False,
+    no_input: bool = False, timestamps: bool = False,
 ) -> int:
     """build (when stale for these ``defines``) -> flash -> serial console, interactive on a terminal (what run.sh calls)."""
     code, board = flash_with_board(p, lock, chip_flag, port, defines=defines)
     if code != EXIT_OK or board is None or no_serial:
         return code
     with Console(board.port, baud, echo=True) as console:
-        console_session(console, no_input=no_input)
+        console_session(console, no_input=no_input, timestamps=timestamps)
     return EXIT_OK

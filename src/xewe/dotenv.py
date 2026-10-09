@@ -4,7 +4,7 @@ Which file, first found wins:
 
 1. ``--env FILE`` (``xewe provision --from FILE`` is an alias), else the ``XEWE_ENV`` variable;
    a file named this way must exist (exit 2 otherwise);
-2. ``.env`` in the project directory (the harness: the nearest ancestor with ``xewe.lock``);
+2. ``.env`` in the project directory (the harness: the nearest ancestor with ``xewe.toml``);
 3. ``.env`` in the xewe-os-tools source checkout: the ``local:<path>`` source that setup recorded
    for tools in ``build/config/build_config.toml``, else the checkout this package runs from when it is
    installed from a path (``src/xewe/`` two levels below a ``pyproject.toml``).

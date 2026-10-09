@@ -22,8 +22,9 @@ FIXTURES = HERE / "fixtures"
 PROPERTIES = FIXTURES / "module_properties"
 
 
-def make_modules_checkout(dest: Path, layout: str = "modules") -> Path:
-    """A modules checkout built from the six real module.properties (+ stub headers)."""
+def make_modules_checkout(dest: Path, layout: str = "modules", board_tests: bool = False) -> Path:
+    """A modules checkout built from the six real module.properties (+ stub headers; with
+    ``board_tests`` also an empty ``tests/board/test_<slug>.py`` each)."""
     for props in sorted(PROPERTIES.glob("*.properties")):
         slug = props.stem
         d = dest / ("modules" if layout == "modules" else "") / (slug if layout == "modules" else f"xewe-os-module-{slug}")
@@ -33,11 +34,36 @@ def make_modules_checkout(dest: Path, layout: str = "modules") -> Path:
         folder = next(line.split("=", 1)[1] for line in text.splitlines() if line.startswith("folder="))
         (d / "src" / folder).mkdir(parents=True)
         (d / "src" / folder / f"{folder}.h").write_text(f"#pragma once\nclass {folder} {{}};\n")
+        if board_tests:
+            (d / "tests" / "board").mkdir(parents=True)
+            (d / "tests" / "board" / f"test_{slug}.py").write_text("")
     return dest
 
 
+UNIT_TESTS = '''
+import pytest
+
+
+@pytest.mark.unit
+def test_logic():
+    assert 1 + 1 == 2
+'''
+BOARD_TESTS = '''
+def test_status(serial):
+    serial.command("$system status", expect="Uptime", timeout=1)
+'''
+
+
+def write_tests(root: Path) -> None:
+    """``tests/unit/test_logic.py`` (one unit test) and ``tests/board/test_fw.py`` (one board test)."""
+    (root / "tests" / "unit").mkdir(parents=True)
+    (root / "tests" / "unit" / "test_logic.py").write_text(UNIT_TESTS)
+    (root / "tests" / "board").mkdir()
+    (root / "tests" / "board" / "test_fw.py").write_text(BOARD_TESTS)
+
+
 LOCK = """\
-# xewe.lock: pinned inputs of this firmware. Edit by hand or with `xewe lock update`.
+# xewe.toml: this firmware's manifest (pinned inputs). Edit by hand or with `xewe manifest update`.
 # ./setup.sh installs exactly these refs into build/.
 schema = 1
 
@@ -65,7 +91,7 @@ ref = "v0.1.1"
 def write_project(root: Path, selected: str = '["wifi", "web-interface"]', ino: str | None = None) -> Paths:
     """Project files only (no build/)."""
     root.mkdir(parents=True, exist_ok=True)
-    (root / "xewe.lock").write_text(LOCK.format(selected=selected))
+    (root / "xewe.toml").write_text(LOCK.format(selected=selected))
     (root / f"{ino or root.name}.ino").write_text('#include "Config.h"\nvoid setup() {}\nvoid loop() {}\n')
     (root / "Config.h").write_text("#pragma once\n#include <XeWeBuildInfo.h>\n")
     return Paths(root)
@@ -126,14 +152,14 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_cli: Any, no_p
     from xewe import modules
 
     p = write_project(tmp_path / "xewe-os")
-    make_modules_checkout(p.modules_checkout)
-    registry = Registry.load(p.modules_checkout)
+    checkout = make_modules_checkout(tmp_path / "modules-src")  # as XEWE_MODULES_SOURCE
+    registry = Registry.load(checkout)
     modules.generate(p, registry, ["wifi", "web-interface"], "https://github.com/xewe-labs/xewe-os-modules", "v1.0.0", "-")
     p.libraries.mkdir(parents=True)
     cfg = config.BuildConfig(
         setup_completed="2026-10-08T12:00:00Z",
         paths={"arduino_cli": str(p.bin / "arduino-cli-1.5.1"), "arduino_data": str(p.default_arduino_data),
-               "arduino_user": str(p.arduino_user), "libraries": "libraries", "modules": "modules"},
+               "arduino_user": str(p.arduino_user), "libraries": "libraries", "modules": str(checkout)},
         installed={"arduino_cli": "1.5.1", "esp32": "3.3.12",
                    "core": {"ref": "1.0.0", "commit": "abc", "source": "https://github.com/xewe-labs/xewe-os-core"},
                    "modules": {"ref": "v1.0.0", "commit": "def", "source": "https://github.com/xewe-labs/xewe-os-modules"},

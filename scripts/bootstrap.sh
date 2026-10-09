@@ -2,11 +2,11 @@
 # bootstrap.sh: reference ./setup.sh for XeWe OS projects (copy it to the project root as setup.sh).
 #
 # Installs xewe-os-tools into build/tools/.venv, then runs `xewe setup "$@"`. Everything else
-# (arduino-cli, esp32 core and esptool once per machine in ~/.xewe-os/build-tools; libraries and
-# modules in build/) is done by `xewe setup`.
+# (arduino-cli, esp32 core, esptool and the modules repo once per machine in ~/.xewe-os/build-tools;
+# libraries and the generated modules library in build/) is done by `xewe setup`.
 #
 # Tools source: $XEWE_TOOLS_SOURCE (a local xewe-os-tools directory) or the [tools] repo/ref of
-# xewe.lock, cloned into build/tools. The ref may be a tag (cloned once), a branch (fetched and
+# xewe.toml, cloned into build/tools. The ref may be a tag (cloned once), a branch (fetched and
 # reset to the remote head on every run) or a commit SHA (checked out once).
 set -euo pipefail
 
@@ -17,7 +17,7 @@ VPY="${VENV}/bin/python"
 
 die() { echo "error: $*" >&2; exit 3; }
 
-[[ -f "${ROOT}/xewe.lock" ]] || die "no xewe.lock in ${ROOT}"
+[[ -f "${ROOT}/xewe.toml" ]] || die "no xewe.toml in ${ROOT}"
 
 PY=""
 for cand in python3 python3.14 python3.13 python3.12 python3.11; do
@@ -32,7 +32,7 @@ read -r TOOLS_REPO TOOLS_REF < <("${PY}" -c '
 import sys, tomllib
 t = tomllib.load(open(sys.argv[1], "rb")).get("tools", {})
 print(t.get("repo", "https://github.com/xewe-labs/xewe-os-tools"), t.get("ref", "v0.1.1"))
-' "${ROOT}/xewe.lock")
+' "${ROOT}/xewe.toml")
 
 mkdir -p "${BUILD}"
 if [[ -n "${XEWE_TOOLS_SOURCE:-}" ]]; then
@@ -64,7 +64,7 @@ else
   else
     # first run or another ref: fresh clone (a tag or a branch)
     rm -rf "${SRC}"
-    git clone --quiet --depth 1 --branch "${TOOLS_REF}" "${TOOLS_REPO}" "${SRC}" \
+    git -c advice.detachedHead=false clone --quiet --depth 1 --branch "${TOOLS_REF}" "${TOOLS_REPO}" "${SRC}" \
       || die "cannot clone ${TOOLS_REPO} at ${TOOLS_REF}"
   fi
   # the venv lives inside the checkout: keep it out of that checkout's `git status`

@@ -1,4 +1,4 @@
-"""``xewe lock show`` and ``xewe lock update`` (SPEC §3, §4)."""
+"""``xewe manifest show`` and ``xewe manifest update``: the refs of ``xewe.toml`` (SPEC §3, §4)."""
 
 from __future__ import annotations
 
@@ -16,21 +16,21 @@ SOURCES = ("core", "modules", "tools")
 
 @dataclass
 class Row:
-    """One lock entry compared with what setup installed."""
+    """One manifest entry compared with what setup installed."""
 
     name: str
-    lock: str
+    manifest: str
     installed: str
     commit: str
     source: str
     drift: bool
     origin: str = ""
-    """Libraries only: where the wanted ref comes from (``xewe.lock`` or ``modules catalogue``)."""
+    """Libraries only: where the wanted ref comes from (``xewe.toml`` or ``modules catalogue``)."""
 
 
 def libraries(p: Paths, lock: Lock, cfg: config.BuildConfig | None) -> list[modules.Library]:
-    """The library plan setup would install now (lock ``[libraries]`` win over the modules catalogue)."""
-    checkout = (cfg.path(p, "modules") if cfg else None) or p.modules_checkout
+    """The library plan setup would install now (manifest ``[libraries]`` win over the modules catalogue)."""
+    checkout = modules.checkout(p, lock.modules.ref, cfg.path(p, "modules") if cfg else None)
     try:
         order = modules.Registry.load(checkout).resolve(lock.selected, quiet=True)
         catalogue = modules.load_catalogue(checkout)
@@ -41,7 +41,7 @@ def libraries(p: Paths, lock: Lock, cfg: config.BuildConfig | None) -> list[modu
 
 
 def rows(p: Paths, lock: Lock) -> list[Row]:
-    """Lock refs vs build_config.toml records; drift when they differ or the source is local."""
+    """Manifest refs vs build_config.toml records; drift when they differ or the source is local."""
     cfg = config.load(p)
     inst = cfg.installed if cfg else {}
     out: list[Row] = []
@@ -68,23 +68,23 @@ def show(p: Paths, lock: Lock, as_json: bool = False) -> int:
     if as_json:
         result(json.dumps([asdict(r) for r in table], indent=2))
         return EXIT_OK
-    result(f"  {'entry':<22} {'lock':<12} {'installed':<12} commit")
+    result(f"  {'entry':<22} {'manifest':<12} {'installed':<12} commit")
     for r in table:
         mark = "!" if r.drift else " "
         notes = [r.origin] if r.origin else []
         if r.source.startswith("local:"):
             notes.append(r.source)
         extra = f"  ({', '.join(notes)})" if notes else ""
-        result(f"{mark} {r.name:<22} {r.lock:<12} {r.installed or '-':<12} {r.commit[:12] or '-'}{extra}")
+        result(f"{mark} {r.name:<22} {r.manifest:<12} {r.installed or '-':<12} {r.commit[:12] or '-'}{extra}")
     return EXIT_OK
 
 
 def update(p: Paths, lock: Lock, names: list[str], to: str | None = None) -> int:
-    """Resolve the newest tag (or ``--to``) for each named source and rewrite xewe.lock."""
+    """Resolve the newest tag (or ``--to``) for each named source and rewrite xewe.toml."""
     names = names or list(SOURCES)
     for name in names:
         if name not in SOURCES:
-            raise XeweError(f"unknown lock entry '{name}' (expected core, modules or tools)", EXIT_USAGE)
+            raise XeweError(f"unknown manifest entry '{name}' (expected core, modules or tools)", EXIT_USAGE)
     if to is not None and len(names) != 1:
         raise XeweError("--to needs exactly one of core, modules, tools", EXIT_USAGE)
     before = lockfile.dumps(lock)
@@ -93,10 +93,10 @@ def update(p: Paths, lock: Lock, names: list[str], to: str | None = None) -> int
         src.ref = to or fetch.resolve_latest(src.repo)
     after = lockfile.dumps(lock)
     if before == after:
-        log.info("xewe.lock is already up to date")
+        log.info("xewe.toml is already up to date")
         return EXIT_OK
     lockfile.save(lock, p.lock)
-    for line in difflib.unified_diff(before.splitlines(), after.splitlines(), "xewe.lock", "xewe.lock", lineterm=""):
+    for line in difflib.unified_diff(before.splitlines(), after.splitlines(), "xewe.toml", "xewe.toml", lineterm=""):
         result(line)
     log.info("run ./setup.sh to install the new refs")
     return EXIT_OK

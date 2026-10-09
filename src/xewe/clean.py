@@ -10,13 +10,14 @@ from xewe.report import EXIT_OK, result
 
 def clean(p: Paths, everything: bool = False, modules: bool = False) -> int:
     """Default: build/builds and build/tmp. ``everything``: all of build/ except build/tools (the
-    tools checkout and its venv). ``modules``: also build/modules-lib and src/Modules.h.
-    ``build-tools`` under ``~/.xewe-os`` is never touched."""
+    tools checkout and its venv). ``modules``: also build/modules and src/Modules.h.
+    ``build-tools`` under ``~/.xewe-os`` (the toolchain and the shared modules checkouts) is never
+    touched."""
     targets = [p.builds, p.tmp]
     if everything and p.build.is_dir():
         targets = [c for c in sorted(p.build.iterdir()) if c != p.tools_checkout]
     if modules:
-        targets += [t for t in (p.modules_lib, p.src_modules_h) if t not in targets]
+        targets += [t for t in (p.modules, p.src_modules_h) if t not in targets]
     for target in targets:
         if target.is_dir() and not target.is_symlink():
             shutil.rmtree(target)

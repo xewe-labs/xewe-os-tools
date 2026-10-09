@@ -19,8 +19,8 @@ from xewe import (
     doctor,
     dotenv,
     flash,
-    lockcmd,
     lockfile,
+    manifest,
     modules,
     provision,
     release,
@@ -93,14 +93,14 @@ def _verbose_everywhere(ap: argparse.ArgumentParser) -> None:
 def parser() -> argparse.ArgumentParser:
     """The full argument parser."""
     ap = argparse.ArgumentParser(prog="xewe", description="XeWe OS firmware tools: setup, build, flash, serial, provision, test.")
-    ap.add_argument("--project", metavar="DIR", help="project root (default: nearest ancestor with xewe.lock)")
+    ap.add_argument("--project", metavar="DIR", help="project root (default: nearest ancestor with xewe.toml)")
     ap.add_argument("-v", "--verbose", action="store_true", help=VERBOSE_HELP + " (also accepted after the command)")
     ap.add_argument("--version", action="version", version=f"xewe-os-tools {__version__}")
     sub = ap.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
     sp = sub.add_parser("setup", help="install the shared toolchain (~/.xewe-os/build-tools) and the core, libraries and modules into build/")
-    sp.add_argument("--latest", action="store_true", help="install the newest tags (xewe.lock is not changed)")
-    sp.add_argument("--modules", metavar="LIST|all|none", help="select modules (written to xewe.lock; \"\" or none = no modules)")
+    sp.add_argument("--latest", action="store_true", help="install the newest tags (xewe.toml is not changed)")
+    sp.add_argument("--modules", metavar="LIST|all|none", help="select modules (written to xewe.toml; \"\" or none = no modules)")
     sp.add_argument("--force", action="store_true", help="redo every step")
     sp.add_argument("--core-source", metavar="DIR", type=Path, help="local xewe-os-core checkout (also XEWE_CORE_SOURCE)")
     sp.add_argument("--modules-source", metavar="DIR", type=Path, help="local modules checkout (also XEWE_MODULES_SOURCE)")
@@ -130,7 +130,9 @@ def parser() -> argparse.ArgumentParser:
                     "a booting board printed 'System Setup Complete' (up to --boot-timeout); an "
                     "unprovisioned board ('Name your device') exits 1 without sending. Without --send on a terminal "
                     "the console is interactive: each line typed is sent to the board; Ctrl-C or Ctrl-D exits "
-                    "(--no-input, or stdin not a terminal: listen only).")
+                    "(--no-input, or stdin not a terminal: listen only). The interactive console prints the "
+                    "board's lines as they are (no timestamp, no '> cmd' echo; --timestamps adds the time); "
+                    "--log and listen-only output are always timestamped.")
     sp.add_argument("--port", help="serial port")
     sp.add_argument("--baud", type=int, default=115200)
     sp.add_argument("--reset", action="store_true", help="pulse EN (RTS) before listening")
@@ -142,6 +144,8 @@ def parser() -> argparse.ArgumentParser:
     sp.add_argument("--duration", type=float, help="listen for this many seconds")
     sp.add_argument("--no-input", action="store_true",
                     help="listen only; do not send lines typed on the terminal")
+    sp.add_argument("--timestamps", action="store_true",
+                    help="interactive console: prefix each line with HH:MM:SS.mmm (default: raw lines)")
     sp.add_argument("--log", type=Path, metavar="FILE", help="append timestamped lines to FILE")
     _require_board(sp)
     _env_arg(sp)
@@ -155,7 +159,7 @@ def parser() -> argparse.ArgumentParser:
                     "(see .env.example). With the file in place no flags are needed. The Wi-Fi password has no "
                     "flag and is masked in the output and log.")
     sp.add_argument("--port", help="serial port")
-    sp.add_argument("--name", help="device name (default: [project] name in xewe.lock, else the folder name)")
+    sp.add_argument("--name", help="device name (default: [project] name in xewe.toml, else the folder name)")
     sp.add_argument("--modules", metavar="all|none|LIST", help="modules to enable at their prompt (default: all)")
     sp.add_argument("--timezone", metavar="GMT+HH:MM", help="answer n to the detected time and set this offset "
                     "(default: accept the detected timezone)")
@@ -169,7 +173,7 @@ def parser() -> argparse.ArgumentParser:
     _chip_args(sp)
     sp.add_argument("--port", help="serial port")
     sp.add_argument("--module", action="append", default=[], metavar="SLUG", help="only this module's tests")
-    sp.add_argument("--host-only", action="store_true", help="only tests marked host")
+    sp.add_argument("--unit-only", action="store_true", help="only tests marked unit (developer machine, no board)")
     _require_board(sp)
     _env_arg(sp)
 
@@ -180,6 +184,8 @@ def parser() -> argparse.ArgumentParser:
     sp.add_argument("--no-serial", action="store_true", help="stop after flashing")
     sp.add_argument("--no-input", action="store_true",
                     help="listen only; do not send lines typed on the terminal")
+    sp.add_argument("--timestamps", action="store_true",
+                    help="interactive console: prefix each line with HH:MM:SS.mmm (default: raw lines)")
     _env_arg(sp)
 
     sp = sub.add_parser("boards", help="list attached boards; set a port/chip override")
@@ -193,18 +199,20 @@ def parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("modules", help="list, select, validate and generate modules")
     msub = sp.add_subparsers(dest="modules_command", required=True, metavar="ACTION")
-    m = msub.add_parser("list", help="modules in the checkout (* = selected)")
+    m = msub.add_parser("list", help="modules in the modules repo checkout (* = selected)")
     m.add_argument("--json", action="store_true")
     m = msub.add_parser("select", help="write [modules] selected, then generate")
     m.add_argument("selection", metavar="LIST|all|none")
     m.add_argument("--no-generate", action="store_true")
-    m = msub.add_parser("validate", help="check every module.properties rule")
-    m.add_argument("path", nargs="?", type=Path, help="modules checkout (default build/modules)")
-    msub.add_parser("generate", help="rebuild build/modules-lib/ and src/Modules.h from the lock selection")
+    m = msub.add_parser("validate", help="check every module.properties rule and the tests/ layout")
+    m.add_argument("path", nargs="?", type=Path,
+                   help="modules repo checkout (default: the one setup uses, XEWE_MODULES_SOURCE or "
+                        "~/.xewe-os/build-tools/sources/xewe-os-modules/<ref>)")
+    msub.add_parser("generate", help="rebuild build/modules/ and src/Modules.h from the manifest selection")
 
-    sp = sub.add_parser("lock", help="show or update xewe.lock refs")
-    lsub = sp.add_subparsers(dest="lock_command", required=True, metavar="ACTION")
-    m = lsub.add_parser("show", help="lock refs vs installed refs (! = drift)")
+    sp = sub.add_parser("manifest", help="show or update the refs in xewe.toml")
+    lsub = sp.add_subparsers(dest="manifest_command", required=True, metavar="ACTION")
+    m = lsub.add_parser("show", help="manifest refs vs installed refs (! = drift)")
     m.add_argument("--json", action="store_true")
     m = lsub.add_parser("update", help="move refs to the newest tag (or --to REF)")
     m.add_argument("names", nargs="*", metavar="core|modules|tools")
@@ -212,7 +220,7 @@ def parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("clean", help="delete build/builds and build/tmp")
     sp.add_argument("--all", action="store_true", help="delete all of build/ except build/tools (never ~/.xewe-os/build-tools)")
-    sp.add_argument("--modules", action="store_true", help="also delete build/modules-lib/ and src/Modules.h")
+    sp.add_argument("--modules", action="store_true", help="also delete build/modules/ and src/Modules.h")
 
     sub.add_parser("doctor", help="check the environment")
 
@@ -245,14 +253,15 @@ def _chips(args: argparse.Namespace, p: Paths, lock: Lock) -> list[str]:
 def _modules_command(args: argparse.Namespace, p: Paths) -> int:
     lock = lockfile.load(p.lock)
     cfg = config.load(p)
-    checkout = (cfg.path(p, "modules") if cfg else None) or p.modules_checkout
+    checkout = modules.checkout(p, lock.modules.ref, cfg.path(p, "modules") if cfg else None)
     if args.modules_command == "validate":
         root = args.path or checkout
-        problems = modules.validate(modules.Registry.load(root), lock.core.ref)
+        registry = modules.Registry.load(root)
+        problems = modules.validate(registry, lock.core.ref) + modules.check_tests_layout(registry)
         for problem in problems:
             result(str(problem))
         errors = sum(1 for x in problems if x.error)
-        result(f"{len(modules.Registry.load(root).all)} modules, {errors} errors, {len(problems) - errors} warnings")
+        result(f"{len(registry.all)} modules, {errors} errors, {len(problems) - errors} warnings")
         return EXIT_FAIL if errors else EXIT_OK
     registry = modules.Registry.load(checkout)
     if args.modules_command == "list":
@@ -278,7 +287,7 @@ def _modules_command(args: argparse.Namespace, p: Paths) -> int:
     rec = cfg.installed.get("modules", {})
     order = modules.generate(p, registry, lock.selected, rec.get("source", lock.modules.repo),
                              rec.get("ref", lock.modules.ref), rec.get("commit", "-"))
-    result(f"modules: {', '.join(m.slug for m in order) or 'none'}  (build/modules-lib, src/Modules.h)")
+    result(f"modules: {', '.join(m.slug for m in order) or 'none'}  (build/modules, src/Modules.h)")
     return EXIT_OK
 
 
@@ -344,22 +353,22 @@ def dispatch(args: argparse.Namespace, extra: list[str]) -> int:
             args.port,
             lambda port: boards.select(p, port=port, probe=False),
             args.baud, args.reset, args.send, args.expect, args.timeout, args.boot_timeout, args.duration, args.log,
-            _require_board_flag(args), no_input=args.no_input,
+            _require_board_flag(args), no_input=args.no_input, timestamps=args.timestamps,
         )
     if cmd == "provision":
         settings = provision.resolve(lock.name or p.root.name, args.name, args.modules, args.timezone)
         return provision.provision_main(args.port, lambda port: boards.select(p, port=port, probe=False),
                                         settings, args.timeout, not args.no_reset, args.log)
     if cmd == "test":
-        return run_tests(p, lock, _chips(args, p, lock), args.port, args.module, args.host_only,
+        return run_tests(p, lock, _chips(args, p, lock), args.port, args.module, args.unit_only,
                          _require_board_flag(args), extra)
     if cmd == "run":
         return flash.run(p, lock, args.chip, args.port, build.parse_defines(args.define), args.no_serial,
-                         no_input=args.no_input)
-    if cmd == "lock":
-        if args.lock_command == "show":
-            return lockcmd.show(p, lock, args.json)
-        return lockcmd.update(p, lock, args.names, args.to)
+                         no_input=args.no_input, timestamps=args.timestamps)
+    if cmd == "manifest":
+        if args.manifest_command == "show":
+            return manifest.show(p, lock, args.json)
+        return manifest.update(p, lock, args.names, args.to)
     if cmd == "doctor":
         return doctor.doctor(p, lock)
     if cmd == "release":

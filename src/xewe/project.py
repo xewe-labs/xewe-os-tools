@@ -2,22 +2,25 @@
 
 Nothing absolute is stored about the project: the root is found from the CWD (or ``--project``)
 on every run, so a project directory can be moved or renamed after setup. Only the shared
-toolchain (``$XEWE_HOME`` or ``~/.xewe-os``, ``build-tools/``) is recorded with absolute paths.
+toolchain and source checkouts (``$XEWE_HOME`` or ``~/.xewe-os``, ``build-tools/``) are recorded
+with absolute paths.
 """
 
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from xewe.report import EXIT_FAIL, EXIT_USAGE, XeweError
 
-LOCK_NAME = "xewe.lock"
+LOCK_NAME = "xewe.toml"
+"""The project manifest (name, version, chip, core/modules/tools refs, module selection, libraries)."""
 
 
 def find_root(explicit: str | os.PathLike[str] | None = None, start: Path | None = None) -> Path:
-    """Return the project root: ``explicit`` if given, else the nearest ancestor with xewe.lock."""
+    """Return the project root: ``explicit`` if given, else the nearest ancestor with xewe.toml."""
     if explicit is not None:
         root = Path(explicit).expanduser().resolve()
         if not (root / LOCK_NAME).is_file():
@@ -79,6 +82,15 @@ class Paths:
     def toolchain_lock(self) -> Path:
         return self.build_tools / ".lock"
 
+    @property
+    def sources(self) -> Path:
+        """Shared source checkouts: ``build-tools/sources/<repo>/<ref>/``."""
+        return self.build_tools / "sources"
+
+    def modules_checkout(self, ref: str) -> Path:
+        """The shared xewe-os-modules checkout at ``ref`` (one folder per ref, per machine)."""
+        return self.sources / "xewe-os-modules" / ref_dir(ref)
+
     # ------------------------------------------------------------- project
 
     @property
@@ -101,9 +113,6 @@ class Paths:
     def boards_toml(self) -> Path:
         return self.config_dir / "boards.toml"
 
-    @property
-    def modules_lock(self) -> Path:
-        return self.config_dir / "modules.lock"
 
     @property
     def tools_checkout(self) -> Path:
@@ -118,13 +127,18 @@ class Paths:
         return self.build / "libraries"
 
     @property
-    def modules_checkout(self) -> Path:
+    def modules(self) -> Path:
+        """``build/modules/``: the generated Arduino library ``XeWeModules`` (``library.properties``,
+        ``src/``), the selected modules' tests (``tests/<slug>/{board,unit}/``) and ``modules.lock``."""
         return self.build / "modules"
 
     @property
-    def modules_lib(self) -> Path:
-        """The generated Arduino library ``XeWeModules`` (the selected modules' sources)."""
-        return self.build / "modules-lib"
+    def modules_lock(self) -> Path:
+        return self.modules / "modules.lock"
+
+    def module_tests(self, slug: str) -> Path:
+        """``build/modules/tests/<slug>/`` (the module's ``board/`` and ``unit/`` tests)."""
+        return self.modules / "tests" / slug
 
     @property
     def builds(self) -> Path:
@@ -132,8 +146,16 @@ class Paths:
 
     @property
     def tmp(self) -> Path:
-        """Sketch mirror, modules staging, pytest cache."""
+        """Sketch mirror, modules staging, pytest cache: created on demand by those code paths
+        (never by setup); ``xewe clean`` removes it."""
         return self.build / "tmp"
+
+    def drop_tmp_if_empty(self) -> None:
+        """Remove ``build/tmp`` when nothing is left in it."""
+        try:
+            self.tmp.rmdir()
+        except OSError:
+            pass
 
     @property
     def src_modules_h(self) -> Path:
@@ -182,6 +204,14 @@ class Paths:
             found = ", ".join(p.name for p in inos) or "none"
             raise XeweError(f"expected exactly one .ino in {self.root} (found: {found})", EXIT_FAIL)
         return inos[0]
+
+
+_REF_UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def ref_dir(ref: str) -> str:
+    """``ref`` as a single folder name (``feature/x`` -> ``feature_x``; a commit SHA is its own folder)."""
+    return _REF_UNSAFE.sub("_", ref).strip("._") or "_"
 
 
 def write_atomic(path: Path, text: str) -> None:

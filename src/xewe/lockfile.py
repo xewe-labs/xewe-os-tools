@@ -1,4 +1,4 @@
-"""Read, validate and write ``xewe.lock`` (SPEC §4)."""
+"""Read, validate and write ``xewe.toml``, the project manifest (SPEC §4)."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from xewe.report import EXIT_USAGE, XeweError
 
 SCHEMA = 1
 DEFAULT_HEADER = (
-    "# xewe.lock: pinned inputs of this firmware. Edit by hand or with `xewe lock update`.\n"
+    "# xewe.toml: this firmware's manifest (pinned inputs). Edit by hand or with `xewe manifest update`.\n"
     "# ./setup.sh installs exactly these refs into build/."
 )
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
@@ -40,7 +40,7 @@ class Source:
 
 @dataclass
 class Lock:
-    """Parsed contents of xewe.lock."""
+    """Parsed contents of xewe.toml."""
 
     name: str | None = None
     version: str = "0.0.0"
@@ -69,7 +69,7 @@ class Lock:
     def source(self, name: str) -> Source:
         """The core/modules/tools source by name."""
         if name not in ("core", "modules", "tools"):
-            raise XeweError(f"unknown lock entry '{name}' (expected core, modules or tools)", EXIT_USAGE)
+            raise XeweError(f"unknown manifest entry '{name}' (expected core, modules or tools)", EXIT_USAGE)
         return getattr(self, name)
 
 
@@ -83,8 +83,8 @@ def _str(path: Path, table: str, key: str, v: Any) -> str:
     return v
 
 
-def parse(text: str, path: Path = Path("xewe.lock")) -> Lock:
-    """Parse and validate lock text; unknown keys are an error."""
+def parse(text: str, path: Path = Path("xewe.toml")) -> Lock:
+    """Parse and validate manifest text; unknown keys are an error."""
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:

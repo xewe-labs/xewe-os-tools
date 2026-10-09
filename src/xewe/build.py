@@ -154,8 +154,8 @@ def _resolved_modules(p: Paths) -> list[str]:
 
 def _sources(p: Paths) -> list[Path]:
     files = [f for f in p.root.iterdir() if f.is_file() and f.suffix in SKETCH_SUFFIXES]
-    files.append(p.lock)
-    for d in (p.root / "src", p.libraries, p.modules_lib):
+    files += [f for f in (p.lock, p.modules / "library.properties") if f.is_file()]
+    for d in (p.root / "src", p.libraries, p.modules / "src"):
         if d.is_dir():
             files += [f for f in d.rglob("*") if f.is_file() and ".git" not in f.parts]
     return files
@@ -230,7 +230,7 @@ def build_chip(
     version = version or lock.version
     cfg = config.load(p) if dry_run else config.require(p)
     if not dry_run:
-        for needed in (p.src_modules_h, p.modules_lib / "library.properties"):
+        for needed in (p.src_modules_h, p.modules / "library.properties"):
             if not needed.is_file():
                 raise XeweError(f"{p.rel(needed)} missing; run `xewe modules generate`", EXIT_NOT_SETUP)
     cli = cli_path(p, cfg)

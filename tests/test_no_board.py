@@ -5,24 +5,13 @@ from pathlib import Path
 import pytest
 from serial.tools import list_ports
 
+from conftest import write_tests
 from xewe import boards, serialio
 from xewe.cli import main
 from xewe.project import Paths
 from xewe.report import BOARD_DISABLED, XeweError
 
 BIN = "build/builds/c3/out/2.0.15-c3-xewe-os.bin"
-TESTS = '''
-import pytest
-
-
-@pytest.mark.host
-def test_logic():
-    assert 1 + 1 == 2
-
-
-def test_status(serial):
-    serial.command("$system status", expect="Uptime", timeout=1)
-'''
 
 
 @pytest.fixture
@@ -91,8 +80,7 @@ def test_build_is_unaffected(project: Paths, attached: str, disabled: None) -> N
 
 @pytest.fixture
 def proj(project: Paths) -> Paths:
-    (project.root / "tests").mkdir()
-    (project.root / "tests" / "test_fw.py").write_text(TESTS)
+    write_tests(project.root)
     return project
 
 
@@ -102,7 +90,7 @@ def test_xewe_test_no_board_is_compiled_not_run(proj: Paths, attached: str, caps
     assert main(["test", "--no-board"]) == 0
     out = capsys.readouterr().out
     assert f"compiled, not run ({BOARD_DISABLED}, chip c3)" in out
-    assert "xewe test: 1 host passed, 1 compiled, not run, 0 failed" in out
+    assert "xewe test: 1 unit passed, 1 compiled, not run, 0 failed" in out
     assert main(["test", "--no-board", "--require-board"]) == 4
 
 
@@ -125,7 +113,7 @@ def test_verbose_after_command(project: Paths, capsys: pytest.CaptureFixture[str
 
 
 def test_verbose_after_test_and_nested_commands(proj: Paths) -> None:
-    assert main(["test", "--host-only", "-v"]) == 0
-    assert main(["test", "-v", "--host-only", "--", "-q"]) == 0
-    assert main(["lock", "show", "--verbose"]) == 0
+    assert main(["test", "--unit-only", "-v"]) == 0
+    assert main(["test", "-v", "--unit-only", "--", "-q"]) == 0
+    assert main(["manifest", "show", "--verbose"]) == 0
     assert main(["modules", "list", "-v"]) == 0

@@ -1,16 +1,18 @@
 # xewe-os-tools
 
 One Python package, one command (`xewe`), for XeWe OS firmware projects: setup, build, flash,
-serial, test, boards, modules, lock and release. Linux and macOS, x86_64 and arm64. No sudo and
-no system package manager: the toolchain (arduino-cli, esp32 core, esptool) is installed once per
-machine into `~/.xewe-os/build-tools/` (`$XEWE_HOME` overrides `~/.xewe-os`), everything else into
-the project's `build/`. The full layout is in SPEC.md §6.
+serial, test, boards, modules, manifest and release. Linux and macOS, x86_64 and arm64. No sudo and
+no system package manager: the toolchain (arduino-cli, esp32 core, esptool) and the modules repo
+checkout (`sources/xewe-os-modules/<ref>/`) are installed once per machine into
+`~/.xewe-os/build-tools/` (`$XEWE_HOME` overrides `~/.xewe-os`), everything else into the project's
+`build/`. A project is a directory with `xewe.toml`, its committed manifest (name, version, chip,
+core/modules/tools refs, module selection, libraries). The full layout is in SPEC.md §6.
 
 ## Install
 
 A project's `./setup.sh` (reference copy: `scripts/bootstrap.sh`) does this for you: it creates
 `build/tools/.venv`, installs this package into it from `$XEWE_TOOLS_SOURCE` (a local checkout) or
-from the `[tools]` ref in `xewe.lock` cloned into `build/tools` (a tag, a branch that is followed on
+from the `[tools]` ref in `xewe.toml` cloned into `build/tools` (a tag, a branch that is followed on
 every run, or a commit SHA), then runs `xewe setup "$@"`. `scripts/run.sh` is the reference
 `./run.sh`.
 
@@ -29,22 +31,22 @@ Runtime dependencies: `pyserial`, `pytest`. esptool comes from the pinned esp32 
 
 | Command | What it does |
 |---|---|
-| `xewe setup [--modules LIST\|all\|none] [--latest] [--force] [--core-source DIR] [--modules-source DIR] [--arduino-data DIR]` | arduino-cli and esp32 core into the shared `~/.xewe-os/build-tools` (once per machine), core library, libraries and modules into `build/`; generates `build/modules-lib/` and `src/Modules.h` (zero modules is valid: `--modules none`, or no selection); installs the selected modules' `depends_libraries` from the modules repo's `libraries.toml` unless `xewe.lock` `[libraries]` pins that name (the lock wins) |
+| `xewe setup [--modules LIST\|all\|none] [--latest] [--force] [--core-source DIR] [--modules-source DIR] [--arduino-data DIR]` | arduino-cli, esp32 core and the modules repo (`sources/xewe-os-modules/<ref>/`, or `XEWE_MODULES_SOURCE` as is) into the shared `~/.xewe-os/build-tools` (once per machine and ref; a branch ref is followed), core library and libraries into `build/`; generates `build/modules/` (the `XeWeModules` library, the selected modules' tests, `modules.lock`) and `src/Modules.h` (zero modules is valid: `--modules none`, or no selection); installs the selected modules' `depends_libraries` from the modules repo's `libraries.toml` unless `xewe.toml` `[libraries]` pins that name (the manifest wins) |
 | `xewe build [--chip C \| --all-chips] [--define K=V]... [--clean] [--dry-run]` | compile into `build/builds/<chip>/out/`; prints `Sketch uses N bytes (NN%)` (`--dry-run` prints the arduino-cli command only) |
 | `xewe flash [--chip C] [--port P] [--erase] [--no-build] [--require-board]` | build if stale (sources, version or `--define` values changed), then write the merged image at 0x0 |
-| `xewe serial [--port P] [--send CMD [--expect RE] [--boot-timeout S]] [--duration S] [--no-input] [--log FILE]` | timestamped console; the tools open the port without resetting the board (`--reset` or flashing resets it); `--send` waits out a boot in progress (see below); without `--send` on a terminal it is interactive: each typed line is sent on Enter, Ctrl-C or Ctrl-D exits (`--no-input` or non-terminal stdin: listen only) |
+| `xewe serial [--port P] [--send CMD [--expect RE] [--boot-timeout S]] [--duration S] [--no-input] [--timestamps] [--log FILE]` | timestamped console; the tools open the port without resetting the board (`--reset` or flashing resets it); `--send` waits out a boot in progress (see below); without `--send` on a terminal it is interactive: keys typed during flash/boot are discarded, board lines are shown raw (`--timestamps` adds the time; `--log` always has it), each typed line is sent on Enter, Ctrl-C or Ctrl-D exits (`--no-input` or non-terminal stdin: listen only) |
 | `xewe provision [--port P] [--name NAME] [--modules all\|none\|LIST] [--timezone GMT+HH:MM] [--env FILE] [--no-reset] [--log FILE]` | answer the first-boot prompts of a flashed board (settings from `.env`) |
-| `xewe test [--chip C \| --all-chips] [--module SLUG]... [--host-only] [--no-board] [-- PYTEST_ARGS]` | pytest over `tests/` and the selected modules' `tests/` |
-| `xewe run [--chip C] [--define K=V]... [--no-serial] [--no-input]` | build, flash, then the console (interactive on a terminal, like `xewe serial`) |
+| `xewe test [--chip C \| --all-chips] [--module SLUG]... [--unit-only] [--no-board] [-- PYTEST_ARGS]` | pytest over `tests/` (`tests/unit/`, `tests/board/`) and the selected modules' tests in `build/modules/tests/<slug>/` |
+| `xewe run [--chip C] [--define K=V]... [--no-serial] [--no-input] [--timestamps]` | build, flash, then the console (interactive on a terminal, like `xewe serial`) |
 | `xewe boards [--no-probe] [--json] [--set-port P [--set-chip C]] [--clear]` | list boards, set an override |
-| `xewe modules list\|select\|validate\|generate` | the modules checkout, `build/modules-lib/` and `src/Modules.h` |
-| `xewe lock show\|update` | lock refs vs installed refs; move refs to new tags |
-| `xewe clean [--all] [--modules]` | delete generated output (`build/builds`, `build/tmp`; `--all`: all of `build/` but `tools/`; `--modules`: also `build/modules-lib` and `src/Modules.h`; never the shared toolchain) |
-| `xewe doctor` | check the environment |
+| `xewe modules list\|select\|validate\|generate` | the modules repo checkout, `build/modules/` and `src/Modules.h` |
+| `xewe manifest show\|update` | `xewe.toml` refs vs installed refs; move refs to new tags |
+| `xewe clean [--all] [--modules]` | delete generated output (`build/builds`, `build/tmp`; `--all`: all of `build/` but `tools/`; `--modules`: also `build/modules` and `src/Modules.h`; never `~/.xewe-os/build-tools`) |
+| `xewe doctor` | check the environment (on Apple silicon also Rosetta 2, which the esp32 core's `ctags` needs) |
 | `xewe release --version X.Y.Z [--matrix FILE] [--notes FILE]` | release matrix into `static/firmware/releases/<version>/`; prints the git/gh commands |
 
 Global flags (before the command): `--project DIR`, `--verbose`/`-v`, `--version`. `-v`/`--verbose` is also
-accepted after the command (`xewe test --host-only -v`); pytest's own flags go after `--`
+accepted after the command (`xewe test --unit-only -v`); pytest's own flags go after `--`
 (`xewe test -- -vv -k wifi`).
 Exit codes: 0 ok, 1 failure, 2 usage, 3 not set up / tool missing, 4 board required but missing.
 
@@ -75,7 +77,7 @@ build/tools/.venv/bin/python -m xewe provision --port /dev/ttyACM0
 
 Values come from flags, then the environment (`XEWE_DEVICE_NAME`, `XEWE_WIFI_SSID`,
 `XEWE_WIFI_PASSWORD`, `XEWE_TIMEZONE`, `XEWE_PROVISION_MODULES`), then the `.env` file (next
-section), then defaults (name from `xewe.lock`, all modules, accept the detected timezone). The
+section), then defaults (name from `xewe.toml`, all modules, accept the detected timezone). The
 password has no flag and is printed as `********`.
 
 A board whose earlier provisioning stopped part-way (for example at Wi-Fi) keeps what it stored and
@@ -95,7 +97,7 @@ template). Copy `.env.example` to `.env` and fill it in. Which file is used, fir
 
 1. `--env FILE` (`xewe provision --from FILE` is an alias), else the `XEWE_ENV` variable (must exist;
    exit 2 otherwise);
-2. `.env` in the project directory (the harness, where `xewe.lock` is);
+2. `.env` in the project directory (the harness, where `xewe.toml` is);
 3. `.env` in the xewe-os-tools source checkout: the `local:<path>` source that `./setup.sh` recorded
    for tools in `build/config/build_config.toml` (`XEWE_TOOLS_SOURCE`), else the checkout this package is
    installed from (an install from a path).
@@ -118,13 +120,13 @@ Every hardware command still compiles, then prints
 compiled, not run: no board attached (c3, build/builds/c3/out/2.0.15-c3-xewe-os.bin)
 ```
 
-and exits 0. `xewe test` runs host tests and reports hardware tests as "compiled, not run".
+and exits 0. `xewe test` runs unit tests and reports board tests as "compiled, not run".
 `--require-board` (or `XEWE_REQUIRE_BOARD=1`) turns this into exit 4 (`xewe test` too).
 
 `--no-board` (or `XEWE_NO_BOARD=1`) is the hard switch for machines that must never touch a
 board: no port is listed, probed or opened. `flash`/`run` build and then exit 4, `serial`,
 `provision` and `boards` exit 4, all with `board access disabled (--no-board / XEWE_NO_BOARD)`;
-`xewe test` reports hardware tests as "compiled, not run" and exits 0. Agents in compile-only mode
+`xewe test` reports board tests as "compiled, not run" and exits 0. Agents in compile-only mode
 must set `XEWE_NO_BOARD=1`.
 
 ## License

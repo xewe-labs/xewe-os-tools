@@ -1,5 +1,10 @@
-"""Modules checkout: registry, dependency resolution, ``build/modules-lib/`` + ``src/Modules.h``
+"""Modules checkout: registry, dependency resolution, ``build/modules/`` + ``src/Modules.h``
 generation, validation (SPEC §10).
+
+The checkout is ``XEWE_MODULES_SOURCE`` or the shared ``build-tools/sources/xewe-os-modules/<ref>/``
+(see :func:`checkout`); ``build/modules/`` is generated from it: the Arduino library
+``XeWeModules`` (``library.properties``, ``src/``), the selected modules' tests
+(``tests/<slug>/{board,unit}/``) and ``modules.lock``.
 
 Two layouts are read: ``modules/<slug>/module.properties`` (the modules repo, D4) and, until the
 modules are ported (O9), the old one-repo-per-module layout ``xewe-os-module-<slug>/`` (or a
@@ -53,7 +58,7 @@ CATALOGUE = "libraries.toml"
 """Library catalogue at the root of the modules checkout: ``[Name] repo = "...", ref = "..."``."""
 CORE_LIBRARIES = frozenset({"XeWeCore", "XeWeOS"})
 """The core library (current and legacy name): installed by setup itself, never from the catalogue."""
-FROM_LOCK = "xewe.lock"
+FROM_LOCK = "xewe.toml"
 FROM_CATALOGUE = "modules catalogue"
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
@@ -113,6 +118,7 @@ class Module:
 
     @property
     def tests_dir(self) -> Path:
+        """``tests/`` (pytest collects ``board/`` and ``unit/`` below it recursively)."""
         return self.dir / "tests"
 
     def declared(self) -> tuple[str, str, list[str]] | None:
@@ -222,7 +228,7 @@ class Library:
     repo: str
     ref: str
     origin: str
-    """FROM_LOCK (``[libraries]`` of xewe.lock) or FROM_CATALOGUE (the modules checkout's libraries.toml)."""
+    """FROM_LOCK (``[libraries]`` of xewe.toml) or FROM_CATALOGUE (the modules checkout's libraries.toml)."""
     needed_by: list[str] = field(default_factory=list)
 
 
@@ -241,7 +247,7 @@ def library_plan(
         for name in module.libraries:
             if name not in plan:
                 if name not in catalogue:
-                    warnings.append(f"library {name} (needed by module {module.slug}) is neither in xewe.lock "
+                    warnings.append(f"library {name} (needed by module {module.slug}) is neither in xewe.toml "
                                     f"[libraries] nor in the modules {CATALOGUE}; not installed")
                     continue
                 repo, ref = catalogue[name]
@@ -266,7 +272,7 @@ def expand_selection(registry: Registry, value: str) -> list[str]:
 
 
 def render_library_h(order: list[Module]) -> str:
-    """Contents of ``build/modules-lib/src/XeWeModules.h``: the modules' headers in dependency order."""
+    """Contents of ``build/modules/src/XeWeModules.h``: the modules' headers in dependency order."""
     if not order:
         return f"{LIBRARY_H_HEADER}\n// no modules selected\n"
     includes = "".join(f'#include "{m.props["include"].removeprefix("src/")}"\n' for m in order)
@@ -292,7 +298,7 @@ def render_modules_h(order: list[Module]) -> str:
 
 
 def render_modules_lock(order: list[Module], source: str, ref: str, commit: str) -> str:
-    """Contents of ``build/config/modules.lock``."""
+    """Contents of ``build/modules/modules.lock``."""
     lines = [LOCK_HEADER] + [f"{m.slug}|{m.folder}|{source}|{ref}|{commit}" for m in order]
     return "\n".join(lines) + "\n"
 
@@ -315,18 +321,34 @@ def remove_legacy_src_modules(p: Paths) -> bool:
     return True
 
 
-def generate(p: Paths, registry: Registry, selected: list[str], source: str, ref: str, commit: str) -> list[Module]:
-    """Write ``build/modules-lib/`` (the Arduino library ``XeWeModules``), ``src/Modules.h`` and
-    ``build/config/modules.lock`` from ``selected``.
+def remove_legacy_build(p: Paths) -> None:
+    """Remove ``build/modules-lib/`` and ``build/config/modules.lock`` of the previous layout."""
+    for old in (p.build / "modules-lib", p.config_dir / "modules.lock"):
+        if old.is_dir() and not old.is_symlink():
+            shutil.rmtree(old)
+        elif old.exists() or old.is_symlink():
+            old.unlink()
+        else:
+            continue
+        result(f"removed legacy {p.rel(old)}")
 
-    The library is staged in ``build/tmp/modules-lib`` and swapped into place. An empty
-    ``selected`` is valid: the library is still written (``XeWeModules.h`` includes nothing),
-    ``Modules.h`` declares nothing and ``modules.lock`` holds only its header line.
+
+def generate(p: Paths, registry: Registry, selected: list[str], source: str, ref: str, commit: str) -> list[Module]:
+    """Write ``build/modules/`` (the Arduino library ``XeWeModules``, each selected module's
+    ``tests/{board,unit}/`` as ``tests/<slug>/{board,unit}/`` and ``modules.lock``) and
+    ``src/Modules.h`` from ``selected``.
+
+    ``build/modules/`` is staged in ``build/tmp/modules`` and swapped into place (``build/tmp``
+    is removed again when that leaves it empty). An empty ``selected`` is valid: the library is
+    still written (``XeWeModules.h`` includes nothing), ``Modules.h`` declares nothing and
+    ``modules.lock`` holds only its header line. Arduino reads only ``library.properties`` and
+    ``src/`` of the library, so the tests beside it are not compiled.
     """
     order = registry.resolve(selected)
-    stage = p.tmp / "modules-lib"
+    stage = p.tmp / "modules"
     shutil.rmtree(stage, ignore_errors=True)
     (stage / "src").mkdir(parents=True)
+    ignore = shutil.ignore_patterns(".git", "__pycache__")
     for module in order:
         folder = module.folder
         src = module.dir / "src" / folder
@@ -336,20 +358,35 @@ def generate(p: Paths, registry: Registry, selected: list[str], source: str, ref
             raise XeweError(f"module '{module.slug}': folder '{folder}' is used by another module", EXIT_FAIL)
         if not module.props.get("include") or not module.props.get("declare"):
             raise XeweError(f"module '{module.slug}': module.properties needs include= and declare=", EXIT_FAIL)
-        shutil.copytree(src, stage / "src" / folder, ignore=shutil.ignore_patterns(".git"))
-        log.info("installed build/modules-lib/src/%s  (%s %s)", folder, module.slug, module.props.get("version", "?"))
+        shutil.copytree(src, stage / "src" / folder, ignore=ignore)
+        for sub in TEST_FOLDERS:
+            if (module.tests_dir / sub).is_dir():
+                shutil.copytree(module.tests_dir / sub, stage / "tests" / module.slug / sub, ignore=ignore)
+        log.info("installed build/modules/src/%s  (%s %s)", folder, module.slug, module.props.get("version", "?"))
     (stage / "library.properties").write_text(render_library_properties(order, ref, commit), encoding="utf-8")
     (stage / "src" / LIBRARY_HEADER).write_text(render_library_h(order), encoding="utf-8")
-    old = p.tmp / "modules-lib.old"
+    (stage / "modules.lock").write_text(render_modules_lock(order, source, ref, commit), encoding="utf-8")
+    old = p.tmp / "modules.old"
     shutil.rmtree(old, ignore_errors=True)
-    if p.modules_lib.exists():
-        os.replace(p.modules_lib, old)
-    os.replace(stage, p.modules_lib)
+    if p.modules.is_symlink():
+        p.modules.unlink()
+    elif p.modules.exists():
+        os.replace(p.modules, old)
+    os.replace(stage, p.modules)
     shutil.rmtree(old, ignore_errors=True)
-    write_atomic(p.modules_lock, render_modules_lock(order, source, ref, commit))
+    p.drop_tmp_if_empty()
     write_atomic(p.src_modules_h, render_modules_h(order))
+    remove_legacy_build(p)
     remove_legacy_src_modules(p)
     return order
+
+
+def checkout(p: Paths, ref: str, recorded: Path | None = None) -> Path:
+    """The modules repo checkout to read: the one setup recorded (``[paths] modules`` of
+    build_config.toml: ``XEWE_MODULES_SOURCE`` or the shared checkout), else the shared checkout of ``ref``."""
+    if recorded is not None and recorded != p.modules:  # ``modules`` meant build/modules in the previous layout
+        return recorded
+    return p.modules_checkout(ref)
 
 
 # ---------------------------------------------------------------------------- validation
@@ -510,4 +547,31 @@ def validate(registry: Registry, core_ref: str | None = None) -> list[Problem]:
                 err("description is empty")
             elif len(desc) > 100:
                 err(f"description is {len(desc)} chars (max 100)")
+    return problems
+
+
+TEST_FOLDERS = ("board", "unit")
+"""The only entries under a module's ``tests/``: ``board/`` (required) and ``unit/`` (optional)."""
+
+
+def check_tests_layout(registry: Registry) -> list[Problem]:
+    """The test-tree rule of the modules repo's validator (CONTRACT §tests): ``tests/board/test_<slug>.py``
+    exists, ``tests/`` holds only ``board/`` and ``unit/``, and neither holds ``conftest.py`` or
+    ``__init__.py`` (the plugin provides the fixtures)."""
+    problems: list[Problem] = []
+    for module in registry.all:
+        where = module.slug or module.dir.name
+        tests = module.tests_dir
+        board_test = tests / "board" / f"test_{module.slug}.py"
+        if not board_test.is_file():
+            problems.append(Problem(where, f"{board_test.relative_to(module.dir)} missing"))
+        if not tests.is_dir():
+            continue
+        for entry in sorted(tests.iterdir()):
+            if entry.name != "__pycache__" and (entry.name not in TEST_FOLDERS or not entry.is_dir()):
+                problems.append(Problem(where, f"tests/{entry.name} not allowed (tests/ holds only board/ and unit/)"))
+        for sub in TEST_FOLDERS:
+            for name in ("conftest.py", "__init__.py"):
+                if (tests / sub / name).exists():
+                    problems.append(Problem(where, f"tests/{sub}/{name} not allowed (the plugin provides the fixtures)"))
     return problems

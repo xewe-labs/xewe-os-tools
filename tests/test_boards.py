@@ -38,7 +38,7 @@ def ports(monkeypatch: pytest.MonkeyPatch) -> list[Port]:
 
 @pytest.fixture
 def p(tmp_path: Path) -> Paths:
-    (tmp_path / "xewe.lock").write_text("schema = 1\n")
+    (tmp_path / "xewe.toml").write_text("schema = 1\n")
     return Paths(tmp_path)
 
 

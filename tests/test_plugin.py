@@ -5,32 +5,25 @@ from typing import Any
 import pytest
 import serial as pyserial
 
-from conftest import FakeSerial
+from conftest import FakeSerial, write_tests
 from xewe import boards, flash, serialio
 from xewe.boards import Board
 from xewe.cli import main
 from xewe.project import Paths
 from xewe.testing import plugin
 
-TESTS = '''
-import pytest
-
-
-@pytest.mark.host
-def test_logic():
-    assert 1 + 1 == 2
-
-
-def test_status(serial):
-    serial.command("$system status", expect="Uptime", timeout=1)
-'''
-
 
 @pytest.fixture
 def proj(project: Paths) -> Paths:
-    (project.root / "tests").mkdir()
-    (project.root / "tests" / "test_fw.py").write_text(TESTS)
+    write_tests(project.root)
     return project
+
+
+def _wifi_tests(p: Paths) -> None:
+    """Tests in the wifi module of the modules checkout, copied to build/modules/tests/wifi/ by generate."""
+    write_tests(p.root.parent / "modules-src" / "modules" / "wifi")
+    assert main(["modules", "generate"]) == 0
+    assert (p.module_tests("wifi") / "unit" / "test_logic.py").is_file()
 
 
 def _run(pytester: pytest.Pytester, p: Paths, *args: str) -> pytest.RunResult:
@@ -45,9 +38,9 @@ def test_no_board_reports_compiled_not_run(pytester: pytest.Pytester, proj: Path
     res.stdout.fnmatch_lines([
         "*= compiled, not run (no board attached, chip c3) =*",
         "*test_fw.py::test_status",
-        "xewe test: 1 host passed, 1 compiled, not run, 0 failed",
+        "xewe test: 1 unit passed, 1 compiled, not run, 0 failed",
     ])
-    assert (proj.out_dir("c3") / "2.0.15-c3-xewe-os.bin").is_file()  # hardware tests still compile
+    assert (proj.out_dir("c3") / "2.0.15-c3-xewe-os.bin").is_file()  # board tests still compile
 
 
 def test_require_board_fails(pytester: pytest.Pytester, proj: Paths) -> None:
@@ -61,16 +54,16 @@ def test_xewe_test_require_board_exits_4(proj: Paths, monkeypatch: pytest.Monkey
     assert main(["test", "--require-board"]) == 4
     monkeypatch.setenv("XEWE_REQUIRE_BOARD", "1")
     assert main(["test"]) == 4
-    assert main(["test", "--host-only"]) == 0  # no hardware test selected: nothing needs the board
+    assert main(["test", "--unit-only"]) == 0  # no board test selected: nothing needs the board
 
 
-def test_host_only_deselects_hardware(pytester: pytest.Pytester, proj: Paths) -> None:
-    res = _run(pytester, proj, "-m", "host")
+def test_unit_marker_deselects_board(pytester: pytest.Pytester, proj: Paths) -> None:
+    res = _run(pytester, proj, "-m", "unit")
     res.assert_outcomes(passed=1, deselected=1)
     assert not proj.out_dir("c3").exists()
 
 
-def test_compile_failure_fails_hardware_tests(pytester: pytest.Pytester, proj: Paths,
+def test_compile_failure_fails_board_tests(pytester: pytest.Pytester, proj: Paths,
                                               monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FAKE_ARDUINO_COMPILE_FAIL", "all")
     res = _run(pytester, proj)
@@ -86,15 +79,32 @@ def test_no_tests_collected_is_success(pytester: pytest.Pytester, project: Paths
 
 
 def test_xewe_test_cli_runs_project_and_module_tests(proj: Paths, capsys: pytest.CaptureFixture[str]) -> None:
-    mod_tests = proj.modules_checkout / "modules" / "wifi" / "tests"
-    mod_tests.mkdir()
-    (mod_tests / "test_fw.py").write_text(TESTS)  # same basename as the project test: importlib mode
+    _wifi_tests(proj)  # same basenames as the project tests: importlib mode
     assert main(["test"]) == 0
     out = capsys.readouterr().out
-    assert "xewe test: 2 host passed, 2 compiled, not run, 0 failed" in out
+    assert "xewe test: 2 unit passed, 2 compiled, not run, 0 failed" in out
     assert main(["test", "--require-board"]) == 4  # like flash/serial: board required, none found
     assert main(["test", "--module", "pins"]) == 2
-    assert main(["test", "--module", "wifi", "--host-only"]) == 0
+    assert main(["test", "--module", "wifi", "--unit-only"]) == 0
+
+
+def test_unit_only_selects_unit_tests(proj: Paths, capsys: pytest.CaptureFixture[str]) -> None:
+    _wifi_tests(proj)
+    assert main(["test", "--unit-only", "--", "-v"]) == 0
+    out = capsys.readouterr().out
+    assert "tests/unit/test_logic.py::test_logic PASSED" in out
+    assert "build/modules/tests/wifi/unit/test_logic.py::test_logic PASSED" in out
+    assert "test_fw.py" not in out  # board tests deselected
+    assert "xewe test: 2 unit passed, 0 compiled, not run, 0 failed" in out
+    assert not proj.out_dir("c3").exists()  # nothing was built
+
+
+def test_module_board_tests_are_collected(proj: Paths, capsys: pytest.CaptureFixture[str]) -> None:
+    _wifi_tests(proj)
+    assert main(["test", "--module", "wifi", "--", "--collect-only", "-q", "-m", "board"]) == 0
+    out = capsys.readouterr().out
+    assert "build/modules/tests/wifi/board/test_fw.py::test_status" in out
+    assert "test_logic" not in out
 
 
 def test_xewe_test_all_chips(proj: Paths, capsys: pytest.CaptureFixture[str]) -> None:
@@ -110,8 +120,8 @@ def test_xewe_test_without_tests(project: Paths, capsys: pytest.CaptureFixture[s
     assert "no tests found" in capsys.readouterr().out
 
 
-def test_hardware_marker_is_automatic(pytester: pytest.Pytester, proj: Paths) -> None:
-    res = _run(pytester, proj, "-m", "hardware", "--collect-only", "-q")
+def test_board_marker_is_automatic(pytester: pytest.Pytester, proj: Paths) -> None:
+    res = _run(pytester, proj, "-m", "board", "--collect-only", "-q")
     res.stdout.fnmatch_lines(["*test_fw.py::test_status"])
     assert "test_logic" not in res.stdout.str()
 
@@ -189,8 +199,8 @@ def test_two(serial):
 
 
 def _write_tests(p: Paths, text: str) -> None:
-    (p.root / "tests").mkdir()
-    (p.root / "tests" / "test_fw.py").write_text(text)
+    (p.root / "tests" / "board").mkdir(parents=True)
+    (p.root / "tests" / "board" / "test_fw.py").write_text(text)
 
 
 def test_one_console_per_session(pytester: pytest.Pytester, project: Paths, board_attached) -> None:
@@ -252,7 +262,7 @@ import os
 import pytest
 
 
-@pytest.mark.host
+@pytest.mark.unit
 def test_pins_from_dotenv():
     assert os.environ["XEWE_TEST_BUTTONS_PIN"] == "7"
     assert os.environ["XEWE_TEST_PINS_ADC_PIN"] == "3"  # the real environment won
@@ -261,8 +271,8 @@ def test_pins_from_dotenv():
 
 def test_dotenv_pins_reach_module_tests(pytester: pytest.Pytester, project: Paths,
                                         monkeypatch: pytest.MonkeyPatch) -> None:
-    (project.root / "tests").mkdir()
-    (project.root / "tests" / "test_pins_env.py").write_text(PIN_TESTS)
+    (project.root / "tests" / "unit").mkdir(parents=True)
+    (project.root / "tests" / "unit" / "test_pins_env.py").write_text(PIN_TESTS)
     dotfile = project.root / ("." + "env")
     dotfile.write_text("XEWE_TEST_BUTTONS_PIN=7\nXEWE_TEST_PINS_ADC_PIN=5\n")
     monkeypatch.setenv("XEWE_TEST_PINS_ADC_PIN", "3")

@@ -44,20 +44,20 @@ def test_full_setup_with_local_sources(fresh: Paths, fake_cli, capsys: pytest.Ca
     assert cfg["paths"]["arduino_data"] == str(tools / "arduino15")
     assert cfg["paths"]["arduino_user"] == str(tools / "arduino-user")
     assert cfg["paths"]["esptool"] == str(tools / "arduino15/packages/esp32/tools/esptool_py/5.3.1/esptool")
-    assert cfg["paths"]["libraries"] == "libraries" and cfg["paths"]["modules"] == "modules"
+    assert cfg["paths"]["libraries"] == "libraries"
+    assert cfg["paths"]["modules"] == str(tmp_path / "modules-src")  # XEWE_MODULES_SOURCE is used where it is
     assert cfg["installed"]["esp32"] == "3.3.12" and cfg["installed"]["arduino_cli"] == "1.5.1"
     assert cfg["installed"]["core"]["source"].startswith("local:")
     assert cfg["installed"]["modules"]["source"].startswith("local:")
     assert (fresh.libraries / "XeWeCore" / "library.properties").is_file()
-    assert sorted(d.name for d in fresh.modules_checkout.iterdir())[0] == "xewe-os-module-buttons"
-    assert not (fresh.modules_checkout / "unrelated").exists()
     assert lockfile.load(fresh.lock).selected == ["scheduler"]
     assert "Scheduler scheduler(os, time_module);" in fresh.src_modules_h.read_text()
-    assert (fresh.modules_lib / "src" / "Scheduler").is_dir() and fresh.modules_lock.is_file()
+    assert (fresh.modules / "src" / "Scheduler").is_dir() and fresh.modules_lock.is_file()
+    assert fresh.modules_lock == fresh.build / "modules" / "modules.lock"
     assert (fresh.build / ".gitignore").read_text() == "*\n"
     assert sorted(d.name for d in tools.iterdir()) == [".lock", "arduino-user", "arduino15", "bin", "downloads"]
-    assert sorted(d.name for d in fresh.build.iterdir()) == [".gitignore", "config", "libraries", "modules",
-                                                              "modules-lib", "tmp"]
+    # no build/tmp after setup (created on demand by build and test)
+    assert sorted(d.name for d in fresh.build.iterdir()) == [".gitignore", "config", "libraries", "modules"]
     for call in fake_cli():  # every call is isolated from ~/.arduino15 and ~/Arduino
         assert call["env"]["ARDUINO_DIRECTORIES_DATA"] == str(tools / "arduino15")
         assert call["env"]["ARDUINO_DIRECTORIES_USER"] == str(tools / "arduino-user")
@@ -141,7 +141,7 @@ def test_tty_empty_answer_means_zero_modules(fresh: Paths, monkeypatch: pytest.M
     assert main(["setup"]) == 0
     assert "no modules selected" in caplog.text
     assert lockfile.load(fresh.lock).selected == []
-    assert fresh.src_modules_h.is_file() and (fresh.modules_lib / "library.properties").is_file()
+    assert fresh.src_modules_h.is_file() and (fresh.modules / "library.properties").is_file()
 
 
 @pytest.mark.parametrize("value", ["", "none"])
@@ -201,23 +201,60 @@ def git_sources(fresh: Paths, monkeypatch: pytest.MonkeyPatch) -> list[tuple[str
 
     tags = "\n".join(f"{'0' * 40}\trefs/tags/{t}" for t in ["v1.0.0", "v1.10.0", "v1.9.0", "1.2.0"])
     monkeypatch.setattr(fetch, "clone", clone)
-    monkeypatch.setattr(fetch, "head_commit", lambda path: "c0ffee")
-    monkeypatch.setattr(fetch, "git", lambda *a, **k: tags)
+    monkeypatch.setattr(fetch, "head_commit", lambda path: "c0ffee" if path.is_dir() else "-")
+    monkeypatch.setattr(fetch, "git", lambda *a, **k: tags if a[0] == "ls-remote" else "")
     return clones
 
 
-def test_git_sources_and_skip_when_recorded(fresh: Paths, git_sources: list[tuple[str, str]]) -> None:
+def test_git_sources_and_skip_when_recorded(fresh: Paths, git_sources: list[tuple[str, str]], tmp_path: Path) -> None:
     assert main(["setup", "--modules", "wifi"]) == 0
     assert git_sources == [("https://github.com/xewe-labs/xewe-os-core", "1.0.0"),
                            ("https://github.com/xewe-labs/xewe-os-modules", "v1.0.0")]
     cfg = config.load(fresh)
     assert cfg is not None and cfg.installed["core"] == {
         "ref": "1.0.0", "commit": "c0ffee", "source": "https://github.com/xewe-labs/xewe-os-core"}
+    # the modules repo is a shared checkout per ref outside the project
+    shared = tmp_path / "xewe-home" / "build-tools" / "sources" / "xewe-os-modules" / "v1.0.0"
+    assert fresh.modules_checkout("v1.0.0") == shared and (shared / "modules" / "wifi").is_dir()
+    assert cfg.paths["modules"] == str(shared)
+    assert cfg.installed["modules"] == {
+        "ref": "v1.0.0", "commit": "c0ffee", "source": "https://github.com/xewe-labs/xewe-os-modules"}
+    assert sorted(d.name for d in fresh.build.iterdir()) == [".gitignore", "config", "libraries", "modules"]
     git_sources.clear()
     assert main(["setup"]) == 0
     assert git_sources == []
+    # a second project on the same machine and ref reuses the checkout
+    other = write_project(tmp_path / "other", selected='["wifi"]')
+    assert main(["--project", str(other.root), "setup"]) == 0
+    assert git_sources == [("https://github.com/xewe-labs/xewe-os-core", "1.0.0")]
+    assert (other.modules / "src" / "Wifi").is_dir()
+    git_sources.clear()
     assert main(["setup", "--force"]) == 0
     assert len(git_sources) == 2
+
+
+def test_modules_branch_follows_remote_head(fresh: Paths, git_sources: list[tuple[str, str]],
+                                            monkeypatch: pytest.MonkeyPatch) -> None:
+    fresh.lock.write_text(fresh.lock.read_text().replace('ref = "v1.0.0"', 'ref = "feature/x"'))
+    followed: list[tuple[Path, str]] = []
+    monkeypatch.setattr(fetch, "current_branch", lambda path: "feature/x")
+    monkeypatch.setattr(fetch, "follow_branch", lambda path, ref: followed.append((path, ref)) or "beef")
+    assert main(["setup", "--modules", "wifi"]) == 0
+    assert ("https://github.com/xewe-labs/xewe-os-modules", "feature/x") in git_sources and followed == []
+    assert fresh.modules_checkout("feature/x").name == "feature_x"
+    git_sources.clear()
+    assert main(["setup"]) == 0
+    assert git_sources == [] and followed == [(fresh.modules_checkout("feature/x"), "feature/x")]
+    assert config.load(fresh).installed["modules"]["commit"] == "beef"
+
+
+def test_modules_checkout_of_another_repo_is_recloned(fresh: Paths, git_sources: list[tuple[str, str]],
+                                                      monkeypatch: pytest.MonkeyPatch) -> None:
+    assert main(["setup", "--modules", "wifi"]) == 0
+    git_sources.clear()
+    monkeypatch.setattr(fetch, "remote_url", lambda path: "https://github.com/example/fork")
+    assert main(["setup"]) == 0
+    assert git_sources == [("https://github.com/xewe-labs/xewe-os-modules", "v1.0.0")]
 
 
 def test_latest_installs_newest_tag_without_editing_lock(fresh: Paths, git_sources: list[tuple[str, str]]) -> None:
@@ -266,13 +303,13 @@ def test_module_library_from_catalogue(fresh: Paths, led_source: list[tuple[str,
     assert led_source == [(FASTLED, "3.10.3")]
     assert "library FastLED: from modules catalogue (3.10.3)" in caplog.text
     assert "XeWeOS" not in caplog.text  # the core library is never looked up
-    assert (fresh.modules_checkout / "libraries.toml").is_file()  # copied with the legacy layout too
+    assert config.load(fresh).paths["modules"] == str(fresh.root.parent / "modules-src")  # catalogue read there
     assert (fresh.libraries / "FastLED").is_dir()
     rec = config.load(fresh).installed["libraries"]["FastLED"]
     assert rec["ref"] == "3.10.3" and rec["source"] == FASTLED and rec["origin"] == "modules catalogue"
     assert lockfile.load(fresh.lock).libraries == {}  # the catalogue never edits the lock
     capsys.readouterr()
-    assert main(["lock", "show"]) == 0
+    assert main(["manifest", "show"]) == 0
     line = next(x for x in capsys.readouterr().out.splitlines() if "libraries.FastLED" in x)
     assert line.startswith(" ") and "3.10.3" in line and line.endswith("(modules catalogue)")
     # a re-run does not clone again
@@ -287,15 +324,15 @@ def test_lock_pin_wins_over_catalogue(fresh: Paths, led_source: list[tuple[str, 
     fresh.lock.write_text(fresh.lock.read_text() + f'FastLED = {{ repo = "{fork}", ref = "3.9.0" }}\n')
     assert main(["setup", "--modules", "led-strip"]) == 0
     assert led_source == [(fork, "3.9.0")]
-    assert "library FastLED: from xewe.lock (3.9.0)" in caplog.text
+    assert "library FastLED: from xewe.toml (3.9.0)" in caplog.text
     assert "from modules catalogue" not in caplog.text
-    assert config.load(fresh).installed["libraries"]["FastLED"]["origin"] == "xewe.lock"
+    assert config.load(fresh).installed["libraries"]["FastLED"]["origin"] == "xewe.toml"
     capsys.readouterr()
-    assert main(["lock", "show", "--json"]) == 0
+    assert main(["manifest", "show", "--json"]) == 0
     import json
 
     row = next(r for r in json.loads(capsys.readouterr().out) if r["name"] == "libraries.FastLED")
-    assert row["lock"] == "3.9.0" and row["origin"] == "xewe.lock" and not row["drift"]
+    assert row["manifest"] == "3.9.0" and row["origin"] == "xewe.toml" and not row["drift"]
 
 
 def test_unselected_module_libraries_are_not_installed(fresh: Paths, led_source: list[tuple[str, str]]) -> None:
@@ -309,7 +346,7 @@ def test_library_missing_from_catalogue_warns(fresh: Paths, led_source: list[tup
     (tmp_path / "modules-src" / "libraries.toml").unlink()
     assert main(["setup", "--modules", "led-strip"]) == 0
     assert led_source == []
-    assert "library FastLED (needed by module led-strip) is neither in xewe.lock [libraries] nor in the " \
+    assert "library FastLED (needed by module led-strip) is neither in xewe.toml [libraries] nor in the " \
            "modules libraries.toml; not installed" in caplog.text
 
 

@@ -1,8 +1,9 @@
 """``xewe setup``: install the shared toolchain and everything a project needs into ``build/`` (SPEC §6).
 
-The toolchain (arduino-cli, esp32 core, esptool) goes to ``~/.xewe-os/build-tools/`` (``XEWE_HOME``
-overrides ``~/.xewe-os``) once per machine; the project's libraries, modules and state go to
-``build/``. Each step is skipped when what it would install is already there at the wanted
+The toolchain (arduino-cli, esp32 core, esptool) and the modules repo checkout
+(``sources/xewe-os-modules/<ref>/``) go to ``~/.xewe-os/build-tools/`` (``XEWE_HOME`` overrides
+``~/.xewe-os``) once per machine; the project's libraries, generated modules library and state go
+to ``build/``. Each step is skipped when what it would install is already there at the wanted
 version/ref (``--force`` redoes the source checkouts). ``build/config/build_config.toml`` is
 removed at the start and written last, so an interrupted setup is detected by every other
 command (exit 3).
@@ -55,17 +56,11 @@ def _free_bytes(path: Path) -> int:
 
 def _install_source(
     label: str, src: Source, ref: str, dest: Path, local: Path | None, prev: dict[str, Any], force: bool,
-    modules_checkout: bool = False,
 ) -> dict[str, str]:
     """Clone ``src.repo`` at ``ref`` into ``dest`` (or copy ``local``); return the install record."""
     if local is not None:
-        only = None
-        if modules_checkout and not (local / "modules").is_dir() and not (local / "module.properties").is_file():
-            only = sorted(d.name for d in local.glob(f"{modules.LEGACY_PREFIX}*") if d.is_dir())
-            if (local / modules.CATALOGUE).is_file():
-                only.append(modules.CATALOGUE)
         log.info("%s: copying local source %s", label, local)
-        fetch.copy_tree(local, dest, only)
+        fetch.copy_tree(local, dest)
         return {"ref": ref, "commit": fetch.head_commit(local), "source": f"local:{local}"}
     if (
         not force
@@ -79,6 +74,34 @@ def _install_source(
     log.info("%s: cloning %s at %s", label, src.repo, ref)
     commit = fetch.clone(src.repo, ref, dest)
     return {"ref": ref, "commit": commit, "source": src.repo}
+
+
+def modules_checkout(p: Paths, src: Source, ref: str, local: Path | None, force: bool) -> tuple[Path, dict[str, str]]:
+    """The modules repo setup reads, and its install record.
+
+    ``local`` (``XEWE_MODULES_SOURCE``) is used where it is, nothing copied. Otherwise the shared
+    checkout ``build-tools/sources/xewe-os-modules/<ref>/`` (one per machine and ref) is cloned when
+    missing (or with ``force``), and a branch is fetched and reset to the remote head on every
+    setup; a tag or a commit is never fetched again. All under the toolchain lock.
+    """
+    if local is not None:
+        if not local.is_dir():
+            raise XeweError(f"local source {local} is not a directory", EXIT_FAIL)
+        log.info("modules: using local source %s", local)
+        return local, {"ref": ref, "commit": fetch.head_commit(local), "source": f"local:{local}"}
+    dest = p.modules_checkout(ref)
+    with arduino.toolchain_lock(p):
+        have = fetch.head_commit(dest) if dest.is_dir() else "-"
+        if force or have == "-" or fetch.remote_url(dest) not in ("", src.repo):
+            log.info("modules: cloning %s at %s into %s", src.repo, ref, dest)
+            commit = fetch.clone(src.repo, ref, dest)
+        elif fetch.current_branch(dest) == ref:
+            log.info("modules: following branch %s in %s", ref, dest)
+            commit = fetch.follow_branch(dest, ref)
+        else:
+            log.debug("modules: %s already at %s", dest, ref)
+            commit = have
+    return dest, {"ref": ref, "commit": commit, "source": src.repo}
 
 
 def _menu(registry: modules.Registry) -> list[str]:
@@ -105,11 +128,13 @@ def _menu(registry: modules.Registry) -> list[str]:
 
 
 def install_libraries(
-    p: Paths, lock: lockfile.Lock, order: list[modules.Module], prev_libs: dict[str, Any], force: bool
+    p: Paths, lock: lockfile.Lock, order: list[modules.Module], prev_libs: dict[str, Any], force: bool,
+    checkout: Path,
 ) -> dict[str, dict[str, str]]:
-    """Install the library plan (see :func:`modules.library_plan`; the lock wins) into ``build/libraries``."""
+    """Install the library plan (see :func:`modules.library_plan`; the lock wins) into ``build/libraries``;
+    the catalogue is ``libraries.toml`` of the modules ``checkout``."""
     plan, warnings = modules.library_plan(
-        {k: (s.repo, s.ref) for k, s in lock.libraries.items()}, order, modules.load_catalogue(p.modules_checkout)
+        {k: (s.repo, s.ref) for k, s in lock.libraries.items()}, order, modules.load_catalogue(checkout)
     )
     for warning in warnings:
         log.warning("%s", warning)
@@ -129,7 +154,7 @@ def _legacy_version_hint(p: Paths) -> None:
         return
     values = dict(line.split("=", 1) for line in state.read_text().splitlines() if "=" in line)
     version = f"{values.get('MAJOR', '0')}.{values.get('MINOR', '0')}.{values.get('PATCH', '0')}"
-    log.info('legacy build/version_state found: put  version = "%s"  under [project] in xewe.lock '
+    log.info('legacy build/version_state found: put  version = "%s"  under [project] in xewe.toml '
              "(the file is no longer used and was not deleted)", version)
 
 
@@ -163,7 +188,7 @@ def run_setup(p: Paths, opts: SetupOptions, sleep: Callable[[float], None] = tim
         src = lock.source(name)
         refs[name] = fetch.resolve_latest(src.repo) if opts.latest and locals_[name] is None else src.ref
         if refs[name] != src.ref:
-            log.info("--latest: %s %s (lock says %s; xewe.lock is not changed)", name, refs[name], src.ref)
+            log.info("--latest: %s %s (lock says %s; xewe.toml is not changed)", name, refs[name], src.ref)
 
     # arduino-cli data dir: --arduino-data, XEWE_ARDUINO_DATA, the previous explicit choice, the shared
     # build-tools/arduino15 (a previously recorded shared default follows the current XEWE_HOME)
@@ -225,17 +250,14 @@ def run_setup(p: Paths, opts: SetupOptions, sleep: Callable[[float], None] = tim
 
     # 6-8 sources
     cfg.paths["libraries"] = p.to_build(p.libraries)
-    cfg.paths["modules"] = p.to_build(p.modules_checkout)
     cfg.installed["core"] = _install_source(
         "core", lock.core, refs["core"], p.libraries / CORE_LIBRARY, core_local, prev.get("core", {}), opts.force
     )
-    cfg.installed["modules"] = _install_source(
-        "modules", lock.modules, refs["modules"], p.modules_checkout, modules_local, prev.get("modules", {}), opts.force,
-        modules_checkout=True,
-    )
+    checkout, cfg.installed["modules"] = modules_checkout(p, lock.modules, refs["modules"], modules_local, opts.force)
+    cfg.paths["modules"] = p.to_build(checkout)
 
     # 9 module selection (an empty selection is a valid project)
-    registry = modules.Registry.load(p.modules_checkout)
+    registry = modules.Registry.load(checkout)
     if not registry.all:
         where = modules_local or lock.modules.repo
         log.warning("no modules found in %s (looked for %s); continuing with zero modules",
@@ -253,8 +275,8 @@ def run_setup(p: Paths, opts: SetupOptions, sleep: Callable[[float], None] = tim
     mod = cfg.installed["modules"]
     order = modules.generate(p, registry, lock.selected, mod["source"], mod["ref"], mod["commit"])
 
-    # 10b libraries: xewe.lock [libraries] plus the selected modules' depends_libraries from the catalogue
-    cfg.installed["libraries"] = install_libraries(p, lock, order, prev.get("libraries", {}), opts.force)
+    # 10b libraries: xewe.toml [libraries] plus the selected modules' depends_libraries from the catalogue
+    cfg.installed["libraries"] = install_libraries(p, lock, order, prev.get("libraries", {}), opts.force, checkout)
 
     # 11 project files
     p.sketch_ino()

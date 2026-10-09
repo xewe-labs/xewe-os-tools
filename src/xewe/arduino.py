@@ -206,7 +206,7 @@ def compile_argv(cli: str, chip: Chip, p: Paths, sketch_dir: Path) -> list[str]:
         "--libraries",
         p.rel(p.libraries),
         "--library",
-        p.rel(p.modules_lib),
+        p.rel(p.modules),
         "--library",
         p.rel(p.gen_dir(chip.name) / "XeWeBuildInfo"),
         "--warnings",
