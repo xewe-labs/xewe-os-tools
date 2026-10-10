@@ -10,7 +10,7 @@ from xewe.board.boards import Board
 from xewe.board.serialio import Console, ExpectTimeout, wait_for_port
 from xewe.cli import main
 from xewe.env.project import Paths
-from xewe.report import EXIT_NO_BOARD, XeweError
+from xewe.report import EXIT_NO_BOARD, XeWeError
 
 STAMP = r"\d\d:\d\d:\d\d\.\d{3}  "
 
@@ -152,7 +152,7 @@ def test_wait_for_port_waits_for_a_stable_port(monkeypatch: pytest.MonkeyPatch) 
 def test_wait_for_port_never_appears_exit_4(monkeypatch: pytest.MonkeyPatch) -> None:
     clock = FakeClock()
     monkeypatch.setattr(serialio, "time", clock)
-    with pytest.raises(XeweError) as exc:
+    with pytest.raises(XeWeError) as exc:
         wait_for_port("/dev/x", lambda port: False, timeout=10.0)
     assert exc.value.code == EXIT_NO_BOARD and "/dev/x did not come back" in str(exc.value)
     assert 10.0 <= clock.now < 10.2
@@ -161,7 +161,7 @@ def test_wait_for_port_never_appears_exit_4(monkeypatch: pytest.MonkeyPatch) -> 
 def test_wait_for_port_flapping_never_settles(monkeypatch: pytest.MonkeyPatch) -> None:
     clock = FakeClock()
     monkeypatch.setattr(serialio, "time", clock)
-    with pytest.raises(XeweError):
+    with pytest.raises(XeWeError):
         wait_for_port("/dev/x", lambda port: int(clock.now * 10) % 4 != 0, timeout=3.0, settle=0.5)
 
 

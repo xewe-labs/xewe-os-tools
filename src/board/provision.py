@@ -30,7 +30,7 @@ from typing import Any
 
 import serial
 
-from xewe.report import EXIT_FAIL, EXIT_NO_BOARD, EXIT_OK, EXIT_USAGE, NO_BOARD, XeweError, log, result
+from xewe.report import EXIT_FAIL, EXIT_NO_BOARD, EXIT_OK, EXIT_USAGE, NO_BOARD, XeWeError, log, result
 from xewe.board.serialio import (
     BOOT_READY,
     BOOT_UNPROVISIONED,
@@ -135,7 +135,7 @@ def check_timezone(tz: str) -> str:
     """Validate ``GMT[+-]HH:MM`` (the range the firmware accepts); exit 2 otherwise."""
     m = TIMEZONE_RE.match(tz)
     if not m or int(m[2]) > 14 or int(m[3]) >= 60 or (int(m[2]) == 14 and int(m[3]) > 0):
-        raise XeweError(f"timezone {tz!r} is not GMT+HH:MM or GMT-HH:MM (e.g. GMT-08:00, GMT+05:30)", EXIT_USAGE)
+        raise XeWeError(f"timezone {tz!r} is not GMT+HH:MM or GMT-HH:MM (e.g. GMT-08:00, GMT+05:30)", EXIT_USAGE)
     return tz
 
 
@@ -167,11 +167,11 @@ def resolve(
     s.timezone = check_timezone(tz.strip().upper()) if tz else None
 
     if not s.name or len(s.name) > NAME_MAX or "\n" in s.name:
-        raise XeweError(f"device name must be 1..{NAME_MAX} characters on one line", EXIT_USAGE)
+        raise XeWeError(f"device name must be 1..{NAME_MAX} characters on one line", EXIT_USAGE)
     if s.wifi:
         missing = [k for k, v in (("XEWE_WIFI_SSID", s.ssid), ("XEWE_WIFI_PASSWORD", s.password)) if not v]
         if missing:
-            raise XeweError(
+            raise XeWeError(
                 f"wifi is enabled but {' and '.join(missing)} {'is' if len(missing) == 1 else 'are'} not set "
                 "(put them in .env, see .env.example; or the environment, or --env FILE); "
                 "set them, or leave wifi out of --modules", EXIT_USAGE)
@@ -452,7 +452,7 @@ def provision_main(
         console.open()
     except (serial.SerialException, OSError) as exc:
         console.close()
-        raise XeweError(f"cannot open {board.port}: {exc}", EXIT_FAIL) from None
+        raise XeWeError(f"cannot open {board.port}: {exc}", EXIT_FAIL) from None
     with console:
         try:
             m = _wait_start(console, timeout, reset)
@@ -479,7 +479,7 @@ def provision_main(
             log.error("%s", exc)
             _tail(console)
             return EXIT_FAIL
-        except XeweError as exc:  # port gone for good
+        except XeWeError as exc:  # port gone for good
             log.error("%s", exc)
             _tail(console)
             return exc.code

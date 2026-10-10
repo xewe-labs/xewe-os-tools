@@ -12,7 +12,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from xewe.report import EXIT_FAIL, EXIT_NOT_SETUP, XeweError, log
+from xewe.report import EXIT_FAIL, EXIT_NOT_SETUP, XeWeError, log
 
 TAG_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -38,7 +38,7 @@ def arduino_cli_platform(system: str | None = None, machine: str | None = None) 
         return "macOS_64bit", "tar.gz"
     if system == "Windows" and x64:
         return "Windows_64bit", "zip"
-    raise XeweError(f"no arduino-cli build for {system}/{machine}", EXIT_NOT_SETUP)
+    raise XeWeError(f"no arduino-cli build for {system}/{machine}", EXIT_NOT_SETUP)
 
 
 def parse_checksums(text: str) -> dict[str, str]:
@@ -66,7 +66,7 @@ def fetch_text(url: str, timeout: float = 60) -> str:
         with urllib.request.urlopen(url, timeout=timeout) as resp:
             return resp.read().decode("utf-8")
     except (urllib.error.URLError, OSError) as exc:
-        raise XeweError(f"cannot download {url}: {exc}") from None
+        raise XeWeError(f"cannot download {url}: {exc}") from None
 
 
 def download(url: str, dest: Path, sha256: str | None = None, timeout: float = 60) -> Path:
@@ -93,14 +93,14 @@ def download(url: str, dest: Path, sha256: str | None = None, timeout: float = 6
         if exc.code == 416 and offset:  # partial file already complete
             pass
         else:
-            raise XeweError(f"cannot download {url}: {exc}") from None
+            raise XeWeError(f"cannot download {url}: {exc}") from None
     except (urllib.error.URLError, OSError) as exc:
-        raise XeweError(f"cannot download {url}: {exc} (re-run to resume)") from None
+        raise XeWeError(f"cannot download {url}: {exc} (re-run to resume)") from None
     if sha256 is not None:
         got = sha256_file(part)
         if got != sha256.lower():
             part.unlink()
-            raise XeweError(f"checksum mismatch for {url}: expected {sha256}, got {got}")
+            raise XeWeError(f"checksum mismatch for {url}: expected {sha256}, got {got}")
     os.replace(part, dest)
     return dest
 
@@ -111,13 +111,13 @@ def download(url: str, dest: Path, sha256: str | None = None, timeout: float = 6
 def git(*args: str, cwd: Path | None = None, check: bool = True) -> str:
     """Run git (no terminal prompts) and return stdout."""
     if shutil.which("git") is None:
-        raise XeweError("git is required (install it with your system package manager)", EXIT_NOT_SETUP)
+        raise XeWeError("git is required (install it with your system package manager)", EXIT_NOT_SETUP)
     argv = ["git", *args]
     log.debug("$ %s", " ".join(argv))
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
     proc = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True)
     if check and proc.returncode != 0:
-        raise XeweError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
+        raise XeWeError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
     return proc.stdout
 
 
@@ -209,7 +209,7 @@ def follow_branch(path: Path, branch: str) -> str:
     try:
         git("fetch", "--quiet", "--depth", "1", "origin", branch, cwd=path)
         git("reset", "--quiet", "--hard", "FETCH_HEAD", cwd=path)
-    except XeweError as exc:
+    except XeWeError as exc:
         log.warning("cannot update %s to the head of %s; keeping the current checkout (%s)", path, branch, exc)
     return head_commit(path)
 
@@ -238,7 +238,7 @@ def copy_tree(src: Path, dest: Path, only: list[str] | None = None) -> None:
     ``only`` restricts the copy to those top-level entries of ``src``.
     """
     if not src.is_dir():
-        raise XeweError(f"local source {src} is not a directory", EXIT_FAIL)
+        raise XeWeError(f"local source {src} is not a directory", EXIT_FAIL)
     tmp = dest.with_name(f".tmp-{dest.name}")
     shutil.rmtree(tmp, ignore_errors=True)
     ignore = shutil.ignore_patterns(".git")

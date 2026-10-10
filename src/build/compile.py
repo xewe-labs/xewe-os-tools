@@ -20,7 +20,7 @@ from xewe.build import chips
 from xewe.env import arduino, config, fetch
 from xewe.env.project import Paths
 from xewe.modules.lockfile import Lock
-from xewe.report import EXIT_FAIL, EXIT_NOT_SETUP, EXIT_OK, EXIT_USAGE, XeweError, log, result, verbose
+from xewe.report import EXIT_FAIL, EXIT_NOT_SETUP, EXIT_OK, EXIT_USAGE, XeWeError, log, result, verbose
 
 DEFINE_KEY_RE = re.compile(r"^[A-Za-z_]\w*$")
 SIZE_RE = re.compile(r"Sketch uses (\d+) bytes(?: \((\d+)%\))?")
@@ -81,7 +81,7 @@ def parse_defines(items: list[str]) -> dict[str, str]:
     for item in items:
         key, sep, value = item.partition("=")
         if not sep or not DEFINE_KEY_RE.match(key):
-            raise XeweError(f"--define expects KEY=VALUE with a C identifier as KEY, got '{item}'", EXIT_USAGE)
+            raise XeWeError(f"--define expects KEY=VALUE with a C identifier as KEY, got '{item}'", EXIT_USAGE)
         out[key] = value
     return out
 
@@ -205,7 +205,7 @@ def _compile(argv: list[str], env_vars: dict[str, str], cwd: Path, log_path: Pat
     try:
         proc = subprocess.Popen(argv, cwd=cwd, env=env_vars, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     except FileNotFoundError:
-        raise XeweError(f"{argv[0]} not found; run ./setup.sh", EXIT_NOT_SETUP) from None
+        raise XeWeError(f"{argv[0]} not found; run ./setup.sh", EXIT_NOT_SETUP) from None
     chunks: list[str] = []
     with log_path.open("w", encoding="utf-8") as logf:
         assert proc.stdout is not None
@@ -234,7 +234,7 @@ def build_chip(
     if not dry_run:
         for needed in (p.src_modules_h, p.modules / "library.properties"):
             if not needed.is_file():
-                raise XeweError(f"{p.rel(needed)} missing; run `xewe modules generate`", EXIT_NOT_SETUP)
+                raise XeWeError(f"{p.rel(needed)} missing; run `xewe modules generate`", EXIT_NOT_SETUP)
     cli = cli_path(p, cfg)
     stem = p.sketch_ino().stem
     if p.root.name == stem:

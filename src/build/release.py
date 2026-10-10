@@ -22,7 +22,7 @@ from xewe.build import compile as build
 from xewe.env.project import Paths
 from xewe.modules import lockfile
 from xewe.modules.lockfile import Lock
-from xewe.report import EXIT_FAIL, EXIT_OK, EXIT_USAGE, XeweError, log, result
+from xewe.report import EXIT_FAIL, EXIT_OK, EXIT_USAGE, XeWeError, log, result
 
 NOTES_HEADER = "Release Notes for Version {version}\n===================================\n\n"
 _CHIP_RE = re.compile(r"^chip$", re.IGNORECASE)
@@ -64,12 +64,12 @@ def parse_matrix(text: str) -> Matrix:
     """Parse release_matrix.csv: CHIP required (any case), _BUILD_NOTES is notes only."""
     lines = [ln.replace("\r", "") for ln in text.splitlines()]
     if not lines:
-        raise XeweError("release matrix is empty", EXIT_USAGE)
+        raise XeWeError("release matrix is empty", EXIT_USAGE)
     headers = lines[0].split(",")
     chip_idx = next((i for i, h in enumerate(headers) if _CHIP_RE.match(h)), -1)
     notes_idx = next((i for i, h in enumerate(headers) if _NOTES_RE.match(h)), -1)
     if chip_idx < 0:
-        raise XeweError("release matrix has no CHIP column", EXIT_USAGE)
+        raise XeWeError("release matrix has no CHIP column", EXIT_USAGE)
     matrix = Matrix([h for i, h in enumerate(headers) if i != notes_idx])
     for line in lines[1:]:
         cells = line.split(",")
@@ -143,9 +143,9 @@ def release(
 ) -> int:
     """Build every matrix row with ``version`` and lay the artifacts out for publishing."""
     if not lockfile.VERSION_RE.match(version):
-        raise XeweError(f"--version must be X.Y.Z, got '{version}'", EXIT_USAGE)
+        raise XeWeError(f"--version must be X.Y.Z, got '{version}'", EXIT_USAGE)
     if _version_tuple(version) < _version_tuple(lock.version):
-        raise XeweError(f"{version} is less than the current version {lock.version}", EXIT_USAGE)
+        raise XeWeError(f"{version} is less than the current version {lock.version}", EXIT_USAGE)
     _check_tree(p)
 
     if matrix_file is None:

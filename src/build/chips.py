@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from xewe.report import EXIT_USAGE, XeweError
+from xewe.report import EXIT_USAGE, XeWeError
 
 BOARD_OPTIONS = (
     "CDCOnBoot=cdc,CPUFreq=160,DebugLevel=none,EraseFlash=all,FlashMode=qio,"
@@ -42,4 +42,4 @@ def get(name: str) -> Chip:
     try:
         return CHIPS[name]
     except KeyError:
-        raise XeweError(f"unknown chip '{name}' (expected c3, c6 or s3)", EXIT_USAGE) from None
+        raise XeWeError(f"unknown chip '{name}' (expected c3, c6 or s3)", EXIT_USAGE) from None

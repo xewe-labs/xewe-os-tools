@@ -623,7 +623,7 @@ def test_latest_offline_keeps_installed_checkout(fresh: Paths, latest_remote: di
 
     def git(*a: str, **k: Any) -> str:
         if a[0] == "ls-remote":
-            raise fetch.XeweError("git ls-remote failed: offline")
+            raise fetch.XeWeError("git ls-remote failed: offline")
         return offline_git(*a, **k)
 
     monkeypatch.setattr(fetch, "git", git)

@@ -28,7 +28,7 @@ from xewe.env.project import Paths
 from xewe.modules import lockfile
 from xewe.modules import registry as modules
 from xewe.modules.lockfile import Source
-from xewe.report import EXIT_FAIL, EXIT_NOT_SETUP, EXIT_OK, EXIT_USAGE, XeweError, log, result
+from xewe.report import EXIT_FAIL, EXIT_NOT_SETUP, EXIT_OK, EXIT_USAGE, XeWeError, log, result
 
 CORE_LIBRARY = "XeWeCore"
 
@@ -65,7 +65,7 @@ def latest_head(label: str, repo: str, prev: Any) -> Head:
     ``main``). Unreachable remote: keep the previously installed ``latest`` checkout, with a warning."""
     try:
         return fetch.remote_head(repo)
-    except XeweError as exc:
+    except XeWeError as exc:
         if isinstance(prev, dict) and prev.get("branch") and prev.get("source") == repo:
             log.warning("%s: cannot resolve latest of %s; keeping the installed %s@%s (%s)",
                         label, repo, prev["branch"], str(prev.get("commit", ""))[:7], exc)
@@ -137,7 +137,7 @@ def modules_checkout(
     """
     if local is not None:
         if not local.is_dir():
-            raise XeweError(f"local source {local} is not a directory", EXIT_FAIL)
+            raise XeWeError(f"local source {local} is not a directory", EXIT_FAIL)
         log.info("modules: using local source %s", local)
         return local, {"ref": ref, "commit": fetch.head_commit(local), "source": f"local:{local}"}
     dest = p.modules_checkout(ref)
@@ -186,7 +186,7 @@ def _menu(registry: modules.Registry) -> list[str]:
     for word in re.split(r"[,\s]+", choice):
         if word.isdigit():
             if not 1 <= int(word) <= len(slugs):
-                raise XeweError(f"no module number {word}", EXIT_USAGE)
+                raise XeWeError(f"no module number {word}", EXIT_USAGE)
             out.append(slugs[int(word) - 1])
         elif word:
             registry.get(word)
@@ -244,7 +244,7 @@ def run_setup(p: Paths, opts: SetupOptions, sleep: Callable[[float], None] = tim
 
     # 1 preflight
     if shutil.which("git") is None:
-        raise XeweError("git is required (install it with your system package manager)", EXIT_NOT_SETUP)
+        raise XeWeError("git is required (install it with your system package manager)", EXIT_NOT_SETUP)
 
     # 2 lock + refs
     lock = lockfile.load(p.lock)
@@ -286,7 +286,7 @@ def run_setup(p: Paths, opts: SetupOptions, sleep: Callable[[float], None] = tim
             cli = override
             version = arduino.cli_version(cli, env_vars)
             if version is None:
-                raise XeweError(f"XEWE_ARDUINO_CLI={cli} does not run", EXIT_NOT_SETUP)
+                raise XeWeError(f"XEWE_ARDUINO_CLI={cli} does not run", EXIT_NOT_SETUP)
         else:
             version = lock.arduino_cli_version
             log.info("arduino-cli %s", version)
@@ -297,7 +297,7 @@ def run_setup(p: Paths, opts: SetupOptions, sleep: Callable[[float], None] = tim
             log.info("esp32 core %s already installed in %s", want, data)
         else:
             if _free_bytes(data) < pins.MIN_FREE_DISK_BYTES:
-                raise XeweError(f"less than 6 GB free for the esp32 core in {data}", EXIT_NOT_SETUP)
+                raise XeWeError(f"less than 6 GB free for the esp32 core in {data}", EXIT_NOT_SETUP)
             data.mkdir(parents=True, exist_ok=True)
             arduino.install_core(cli, env_vars, want, sleep)
     # build_config.toml: absolute for the shared toolchain (and overrides), relative inside build/
@@ -314,7 +314,7 @@ def run_setup(p: Paths, opts: SetupOptions, sleep: Callable[[float], None] = tim
     try:
         cmd = esptool.command(p, found, data)
         esp_version = esptool.version(cmd)
-    except XeweError:
+    except XeWeError:
         esp_version = None
     if esp_version is None:
         log.warning("the core's esptool does not run on this host; flashing needs XEWE_ESPTOOL (e.g. 'python -m esptool')")
@@ -356,7 +356,7 @@ def run_setup(p: Paths, opts: SetupOptions, sleep: Callable[[float], None] = tim
     # 11 project files
     p.sketch_ino()
     if not (p.root / "Config.h").is_file():
-        raise XeweError("Config.h missing in the project root (the template provides it)", EXIT_FAIL)
+        raise XeWeError("Config.h missing in the project root (the template provides it)", EXIT_FAIL)
     _legacy_version_hint(p)
 
     # 12 build_config.toml

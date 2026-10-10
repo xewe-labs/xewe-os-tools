@@ -8,7 +8,7 @@ import pytest
 from conftest import REPO, write_project
 from xewe.env import dotenv
 from xewe.env.dotenv import apply, find, load, load_settings, package_checkout, parse
-from xewe.report import XeweError
+from xewe.report import XeWeError
 
 SECRET = "s3cr3t-value"
 
@@ -36,7 +36,7 @@ def test_parse_comments_quotes_export() -> None:
 
 @pytest.mark.parametrize("text", [f"XEWE_WIFI_PASSWORD {SECRET}\n", f"=={SECRET}\n", f"BAD KEY={SECRET}\n"])
 def test_parse_error_names_line_not_value(text: str) -> None:
-    with pytest.raises(XeweError) as exc:
+    with pytest.raises(XeWeError) as exc:
         parse("# ok\n" + text, "/x/.env")
     assert exc.value.code == 2 and "/x/.env:2" in str(exc.value) and SECRET not in str(exc.value)
 
@@ -91,7 +91,7 @@ def test_resolution_order(layout: tuple[Path, Path, Path]) -> None:
 
 def test_explicit_missing_file_exit_2(tmp_path: Path) -> None:
     for explicit, env in ((tmp_path / "nope", {}), (None, {"XEWE_ENV": str(tmp_path / "nope")})):
-        with pytest.raises(XeweError) as exc:
+        with pytest.raises(XeWeError) as exc:
             find(tmp_path, explicit, env)
         assert exc.value.code == 2 and "no such file" in str(exc.value)
 

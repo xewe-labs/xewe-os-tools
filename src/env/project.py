@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from xewe.report import EXIT_FAIL, EXIT_USAGE, XeweError
+from xewe.report import EXIT_FAIL, EXIT_USAGE, XeWeError
 
 LOCK_NAME = "xewe.toml"
 """The project manifest (name, version, chip, core/modules/tools refs, module selection, libraries)."""
@@ -24,13 +24,13 @@ def find_root(explicit: str | os.PathLike[str] | None = None, start: Path | None
     if explicit is not None:
         root = Path(explicit).expanduser().resolve()
         if not (root / LOCK_NAME).is_file():
-            raise XeweError(f"{root} has no {LOCK_NAME}", EXIT_USAGE)
+            raise XeWeError(f"{root} has no {LOCK_NAME}", EXIT_USAGE)
         return root
     here = (start or Path.cwd()).resolve()
     for candidate in (here, *here.parents):
         if (candidate / LOCK_NAME).is_file():
             return candidate
-    raise XeweError(f"no {LOCK_NAME} in {here} or any parent; pass --project DIR", EXIT_USAGE)
+    raise XeWeError(f"no {LOCK_NAME} in {here} or any parent; pass --project DIR", EXIT_USAGE)
 
 
 HOME_ENV = "XEWE_HOME"
@@ -202,7 +202,7 @@ class Paths:
         inos = sorted(self.root.glob("*.ino"))
         if len(inos) != 1:
             found = ", ".join(p.name for p in inos) or "none"
-            raise XeweError(f"expected exactly one .ino in {self.root} (found: {found})", EXIT_FAIL)
+            raise XeWeError(f"expected exactly one .ino in {self.root} (found: {found})", EXIT_FAIL)
         return inos[0]
 
 

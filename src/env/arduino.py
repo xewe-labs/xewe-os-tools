@@ -22,7 +22,7 @@ except ImportError:  # Windows: no advisory lock
 from xewe.build.chips import Chip
 from xewe.env import fetch, pins
 from xewe.env.project import Paths
-from xewe.report import EXIT_NOT_SETUP, XeweError, log, verbose
+from xewe.report import EXIT_NOT_SETUP, XeWeError, log, verbose
 
 CORE_ID = "esp32:esp32"
 RETRY_DELAYS = (10, 20, 40, 80)  # between the 5 install attempts
@@ -84,7 +84,7 @@ def run(argv: list[str], env_vars: dict[str, str], cwd: Path | None = None, time
             argv, env=env_vars, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout
         )
     except FileNotFoundError:
-        raise XeweError(f"{argv[0]} not found; run ./setup.sh", EXIT_NOT_SETUP) from None
+        raise XeWeError(f"{argv[0]} not found; run ./setup.sh", EXIT_NOT_SETUP) from None
     if verbose() and proc.stdout:
         log.debug(proc.stdout.rstrip())
     return proc
@@ -116,7 +116,7 @@ def install_cli(p: Paths, version: str, env_vars: dict[str, str]) -> Path:
     name = url.rsplit("/", 1)[1]
     sums = fetch.parse_checksums(fetch.fetch_text(pins.ARDUINO_CLI_CHECKSUMS_URL.format(version=version)))
     if name not in sums:
-        raise XeweError(f"{name} is not listed in the arduino-cli {version} checksums")
+        raise XeWeError(f"{name} is not listed in the arduino-cli {version} checksums")
     archive = fetch.download(url, p.downloads / "arduino-cli" / name, sums[name])
     p.bin.mkdir(parents=True, exist_ok=True)
     member = "arduino-cli.exe" if os.name == "nt" else "arduino-cli"
@@ -128,14 +128,14 @@ def install_cli(p: Paths, version: str, env_vars: dict[str, str]) -> Path:
         with tarfile.open(archive) as tf:
             fileobj = tf.extractfile(member)
             if fileobj is None:
-                raise XeweError(f"{name} has no {member}")
+                raise XeWeError(f"{name} has no {member}")
             with fileobj, tmp.open("wb") as dst:
                 shutil.copyfileobj(fileobj, dst)
     tmp.chmod(0o755)
     os.replace(tmp, target)
     got = cli_version(target, env_vars)
     if got != version:
-        raise XeweError(f"{target} reports version {got!r}, expected {version}", EXIT_NOT_SETUP)
+        raise XeWeError(f"{target} reports version {got!r}, expected {version}", EXIT_NOT_SETUP)
     return target
 
 
@@ -168,7 +168,7 @@ def install_core(
     """
     proc = run([str(cli), "core", "update-index"], env_vars)
     if proc.returncode != 0:
-        raise XeweError(f"arduino-cli core update-index failed:\n{proc.stdout.strip()}")
+        raise XeWeError(f"arduino-cli core update-index failed:\n{proc.stdout.strip()}")
     staging = Path(env_vars["ARDUINO_DIRECTORIES_DOWNLOADS"]) / "packages"
     attempts = rescues = 0
     while True:
@@ -184,14 +184,14 @@ def install_core(
             fetch.download(url, staging / url.rsplit("/", 1)[1])
             continue
         if attempts >= len(RETRY_DELAYS):
-            raise XeweError(f"arduino-cli core install failed:\n{proc.stdout.strip()[-2000:]}")
+            raise XeWeError(f"arduino-cli core install failed:\n{proc.stdout.strip()[-2000:]}")
         delay = RETRY_DELAYS[attempts]
         attempts += 1
         log.warning("core install failed (attempt %d of %d); retrying in %d s", attempts, len(RETRY_DELAYS) + 1, delay)
         sleep(delay)
     got = core_version(cli, env_vars)
     if got != version:
-        raise XeweError(f"{CORE_ID} reports {got!r} after install, expected {version}", EXIT_NOT_SETUP)
+        raise XeWeError(f"{CORE_ID} reports {got!r} after install, expected {version}", EXIT_NOT_SETUP)
 
 
 def compile_argv(cli: str, chip: Chip, p: Paths, sketch_dir: Path) -> list[str]:

@@ -11,7 +11,7 @@ from xewe.env.project import Paths
 from xewe.modules import lockfile
 from xewe.modules import registry as modules
 from xewe.modules.lockfile import Lock
-from xewe.report import EXIT_OK, EXIT_USAGE, XeweError, log, result
+from xewe.report import EXIT_OK, EXIT_USAGE, XeWeError, log, result
 
 SOURCES = ("core", "modules", "tools")
 
@@ -46,7 +46,7 @@ def libraries(p: Paths, lock: Lock, cfg: config.BuildConfig | None) -> list[modu
     try:
         order = modules.Registry.load(checkout).resolve(lock.selected, quiet=True)
         catalogue = modules.load_catalogue(checkout)
-    except XeweError:
+    except XeWeError:
         order, catalogue = [], {}
     plan, _ = modules.library_plan({k: (s.repo, s.ref) for k, s in lock.libraries.items()}, order, catalogue)
     return plan
@@ -56,7 +56,7 @@ def _remote(repo: str) -> str:
     """Head commit of ``repo``'s default branch now, or "" when it cannot be reached."""
     try:
         return fetch.remote_head(repo)[1]
-    except XeweError as exc:
+    except XeWeError as exc:
         log.warning("cannot check the remote head of %s: %s", repo, exc)
         return ""
 
@@ -122,9 +122,9 @@ def update(p: Paths, lock: Lock, names: list[str], to: str | None = None) -> int
     names = names or list(SOURCES)
     for name in names:
         if name not in SOURCES:
-            raise XeweError(f"unknown manifest entry '{name}' (expected core, modules or tools)", EXIT_USAGE)
+            raise XeWeError(f"unknown manifest entry '{name}' (expected core, modules or tools)", EXIT_USAGE)
     if to is not None and len(names) != 1:
-        raise XeweError("--to needs exactly one of core, modules, tools", EXIT_USAGE)
+        raise XeWeError("--to needs exactly one of core, modules, tools", EXIT_USAGE)
     before = lockfile.dumps(lock)
     for name in names:
         src = lock.source(name)

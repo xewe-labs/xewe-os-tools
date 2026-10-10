@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from xewe.env import fetch
-from xewe.report import XeweError
+from xewe.report import XeWeError
 
 PAYLOAD = bytes(range(256)) * 400
 
@@ -50,7 +50,7 @@ def test_asset_name(system: str, machine: str, asset: str) -> None:
 
 
 def test_unknown_host() -> None:
-    with pytest.raises(XeweError):
+    with pytest.raises(XeWeError):
         fetch.arduino_cli_platform("Linux", "riscv64")
 
 
@@ -72,7 +72,7 @@ def test_download_resumes_part_file(server: str, tmp_path: Path) -> None:
 
 def test_checksum_mismatch_rejected(server: str, tmp_path: Path) -> None:
     dest = tmp_path / "file.tar.gz"
-    with pytest.raises(XeweError, match="checksum mismatch"):
+    with pytest.raises(XeWeError, match="checksum mismatch"):
         fetch.download(server, dest, "0" * 64)
     assert not dest.exists() and not (tmp_path / "file.tar.gz.part").exists()
 

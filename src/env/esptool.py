@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 
 from xewe.env.project import Paths
-from xewe.report import EXIT_NOT_SETUP, XeweError, log
+from xewe.report import EXIT_NOT_SETUP, XeWeError, log
 
 _EXE = "esptool.exe" if os.name == "nt" else "esptool"
 
@@ -29,7 +29,7 @@ def command(p: Paths, recorded: Path | None = None, arduino_data: Path | None = 
         return [str(recorded)]
     found = find_in(arduino_data or p.default_arduino_data)
     if found is None:
-        raise XeweError("esptool not found in the esp32 core; run ./setup.sh (or set XEWE_ESPTOOL)", EXIT_NOT_SETUP)
+        raise XeWeError("esptool not found in the esp32 core; run ./setup.sh (or set XEWE_ESPTOOL)", EXIT_NOT_SETUP)
     return [str(found)]
 
 
@@ -40,16 +40,16 @@ def run(cmd: list[str], args: list[str], timeout: float | None = None) -> subpro
     try:
         return subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout)
     except FileNotFoundError:
-        raise XeweError(f"{cmd[0]} not found; run ./setup.sh (or set XEWE_ESPTOOL)", EXIT_NOT_SETUP) from None
+        raise XeWeError(f"{cmd[0]} not found; run ./setup.sh (or set XEWE_ESPTOOL)", EXIT_NOT_SETUP) from None
     except OSError as exc:
-        raise XeweError(f"{cmd[0]} cannot run on this host: {exc}", EXIT_NOT_SETUP) from None
+        raise XeWeError(f"{cmd[0]} cannot run on this host: {exc}", EXIT_NOT_SETUP) from None
 
 
 def version(cmd: list[str]) -> str | None:
     """``esptool version`` output's version number, or None if it does not run."""
     try:
         proc = run(cmd, ["version"], timeout=60)
-    except (XeweError, subprocess.TimeoutExpired):
+    except (XeWeError, subprocess.TimeoutExpired):
         return None
     m = re.search(r"(\d+\.\d+(?:\.\d+)?\S*)", proc.stdout)
     return m[1] if proc.returncode == 0 and m else None

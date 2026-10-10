@@ -211,10 +211,10 @@ def test_boot_silence_times_out(pytester: pytest.Pytester, project: Paths, board
 
 def test_port_not_back_after_flash_maps_to_exit_4(project: Paths, board_attached,
                                                    monkeypatch: pytest.MonkeyPatch) -> None:
-    from xewe.report import EXIT_NO_BOARD, XeweError
+    from xewe.report import EXIT_NO_BOARD, XeWeError
 
     def gone(*a: Any, **k: Any) -> None:
-        raise XeweError(f"{PORT} did not come back", EXIT_NO_BOARD)
+        raise XeWeError(f"{PORT} did not come back", EXIT_NO_BOARD)
 
     write_tests(project.root, SESSION_TESTS, unit=None)
     monkeypatch.setattr(flash, "write_image", gone)

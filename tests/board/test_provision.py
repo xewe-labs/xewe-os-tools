@@ -445,7 +445,7 @@ def test_resolve_precedence() -> None:
 
 @pytest.mark.parametrize("tz", ["GMT+8", "UTC+01:00", "GMT+15:00", "GMT+14:30", "GMT-08:60"])
 def test_bad_timezone_exit_2(tz: str) -> None:
-    with pytest.raises(provision.XeweError) as exc:
+    with pytest.raises(provision.XeWeError) as exc:
         resolve("d", modules="none", timezone=tz, env={})
     assert exc.value.code == 2
 

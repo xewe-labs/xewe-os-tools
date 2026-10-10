@@ -7,7 +7,7 @@ from conftest import write_project
 from xewe.cli import main
 from xewe.env import config
 from xewe.env.project import Paths, find_root, ref_dir
-from xewe.report import XeweError
+from xewe.report import XeWeError
 
 
 def test_find_root_walks_up(tmp_path: Path) -> None:
@@ -20,10 +20,10 @@ def test_find_root_walks_up(tmp_path: Path) -> None:
 def test_find_root_explicit_and_missing(tmp_path: Path) -> None:
     p = write_project(tmp_path / "proj")
     assert find_root(str(p.root)) == p.root
-    with pytest.raises(XeweError) as exc:
+    with pytest.raises(XeWeError) as exc:
         find_root(start=tmp_path)
     assert exc.value.code == 2
-    with pytest.raises(XeweError):
+    with pytest.raises(XeWeError):
         find_root(str(tmp_path))
 
 

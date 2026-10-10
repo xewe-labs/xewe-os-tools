@@ -19,7 +19,7 @@ try:
 except ImportError:  # Windows
     termios = None  # type: ignore[assignment]
 
-from xewe.report import BOARD_DISABLED, EXIT_FAIL, EXIT_NO_BOARD, EXIT_OK, NO_BOARD, XeweError, board_disabled, log, result
+from xewe.report import BOARD_DISABLED, EXIT_FAIL, EXIT_NO_BOARD, EXIT_OK, NO_BOARD, XeWeError, board_disabled, log, result
 
 RECONNECT_SECONDS = 5.0
 SILENCE_SECONDS = 0.5
@@ -103,7 +103,7 @@ class Console:
         With board access disabled (``XEWE_NO_BOARD``) nothing is opened: exit 4.
         """
         if board_disabled():
-            raise XeweError(BOARD_DISABLED, EXIT_NO_BOARD)
+            raise XeWeError(BOARD_DISABLED, EXIT_NO_BOARD)
         ser = (self.factory or serial.Serial)()
         ser.port = self.port
         ser.baudrate = self.baud
@@ -176,7 +176,7 @@ class Console:
                 continue
             self._emit_raw("-- port reconnected --")
             return
-        raise XeweError(f"{self.port} disappeared and did not come back within {RECONNECT_SECONDS:.0f} s", EXIT_FAIL)
+        raise XeWeError(f"{self.port} disappeared and did not come back within {RECONNECT_SECONDS:.0f} s", EXIT_FAIL)
 
     # ------------------------------------------------------------------ reading
 
@@ -346,9 +346,9 @@ def wait_for_banner(console: Console, pattern: str, timeout: float, reset: bool 
     """Optionally reset the board, then wait for a line matching ``pattern`` across port drops.
 
     A native-USB board's port vanishes on every reset (``reset()``, ``ESP.restart()`` after
-    first boot); ``Console`` reopens it for ``RECONNECT_SECONDS`` and raises ``XeweError`` when it
+    first boot); ``Console`` reopens it for ``RECONNECT_SECONDS`` and raises ``XeWeError`` when it
     stays gone longer. Here that is retried until the deadline. Raises ``ExpectTimeout`` when no
-    line matched in ``timeout`` seconds, or the last ``XeweError`` when the port was still gone.
+    line matched in ``timeout`` seconds, or the last ``XeWeError`` when the port was still gone.
 
     Lines captured before the reset (an earlier boot, e.g. the one the open itself triggered on
     native USB) are skipped, so a banner or prompt from that boot cannot match. ROM lines and a
@@ -359,12 +359,12 @@ def wait_for_banner(console: Console, pattern: str, timeout: float, reset: bool 
         console.mark()
         try:
             console.reset()
-        except XeweError:
+        except XeWeError:
             pass  # the port is gone for now; polling below keeps reconnecting until the deadline
     while True:
         try:
             return console.expect(pattern, timeout=max(0.0, deadline - time.monotonic()))
-        except XeweError:  # port gone longer than one reconnect window
+        except XeWeError:  # port gone longer than one reconnect window
             if time.monotonic() >= deadline:
                 raise
 
@@ -374,7 +374,7 @@ def wait_for_port(port: str, exists: Callable[[str], bool], timeout: float = 10.
 
     A native-USB board re-enumerates after esptool resets it: the port can still be there for a
     moment, vanish, then come back. Only a port that stayed present for ``settle`` counts. Raises
-    ``XeweError`` (exit 4) when that does not happen within ``timeout`` seconds.
+    ``XeWeError`` (exit 4) when that does not happen within ``timeout`` seconds.
     """
     deadline = time.monotonic() + timeout
     present_since: float | None = None
@@ -388,7 +388,7 @@ def wait_for_port(port: str, exists: Callable[[str], bool], timeout: float = 10.
         else:
             present_since = None
         if now >= deadline:
-            raise XeweError(
+            raise XeWeError(
                 f"{port} did not come back (present for {settle:g} s) within {timeout:.0f} s after esptool reset it; "
                 "unplug and replug the board",
                 EXIT_NO_BOARD,

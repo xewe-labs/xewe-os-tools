@@ -9,7 +9,7 @@ from xewe.build import release
 from xewe.cli import main
 from xewe.env.project import Paths
 from xewe.modules import lockfile
-from xewe.report import XeweError
+from xewe.report import XeWeError
 
 REL = "static/firmware/releases"
 
@@ -75,7 +75,7 @@ def test_matrix_columns_typing_and_notes(project: Paths, notes: Path, no_git_wri
 
 
 def test_parse_matrix_requires_chip() -> None:
-    with pytest.raises(XeweError):
+    with pytest.raises(XeWeError):
         release.parse_matrix("BOARD\nc3\n")
     matrix = release.parse_matrix("chip,X\nc6,1\n")
     assert matrix.rows[0].chip == "c6" and matrix.rows[0].defines == {"X": "1"}

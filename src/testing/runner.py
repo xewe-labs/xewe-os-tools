@@ -9,7 +9,7 @@ import pytest
 
 from xewe.env.project import Paths
 from xewe.modules.lockfile import Lock
-from xewe.report import EXIT_FAIL, EXIT_NO_BOARD, EXIT_OK, EXIT_USAGE, XeweError, log, result
+from xewe.report import EXIT_FAIL, EXIT_NO_BOARD, EXIT_OK, EXIT_USAGE, XeWeError, log, result
 from xewe.testing import plugin
 
 
@@ -28,11 +28,11 @@ def test_roots(p: Paths, lock: Lock, only: list[str]) -> list[Path]:
     slugs = installed_modules(p)
     if not slugs:
         if only:
-            raise XeweError("--module given but no modules are installed; run ./setup.sh", EXIT_USAGE)
+            raise XeWeError("--module given but no modules are installed; run ./setup.sh", EXIT_USAGE)
         return roots
     for slug in only:
         if slug not in slugs:
-            raise XeweError(f"module '{slug}' is not selected (selected: {', '.join(slugs)})", EXIT_USAGE)
+            raise XeWeError(f"module '{slug}' is not selected (selected: {', '.join(slugs)})", EXIT_USAGE)
     for slug in slugs:
         if (not only or slug in only) and p.module_tests(slug).is_dir():
             roots.append(p.module_tests(slug))

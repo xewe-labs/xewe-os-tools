@@ -8,7 +8,7 @@ from xewe.board import boards
 from xewe.cli import main
 from xewe.env import esptool
 from xewe.env.project import Paths
-from xewe.report import XeweError
+from xewe.report import XeWeError
 
 ESPTOOL5_OUTPUT = """esptool v5.3.1
 Connected to ESP32-C6 on /dev/ttyACM0:
@@ -76,7 +76,7 @@ def test_one_board(p: Paths, ports: list[Port]) -> None:
 
 def test_several_boards(p: Paths, ports: list[Port]) -> None:
     ports += [Port("/dev/ttyACM0", 0x303A, 0x1001, "A"), Port("/dev/ttyACM1", 0x303A, 0x1001, "B")]
-    with pytest.raises(XeweError) as exc:
+    with pytest.raises(XeWeError) as exc:
         boards.select(p, probe=False)
     assert exc.value.code == 4
     p.boards_toml.write_text('schema = 1\n[[board]]\nport = "x"\nserial_number = "B"\nchip = "s3"\n')
@@ -84,7 +84,7 @@ def test_several_boards(p: Paths, ports: list[Port]) -> None:
 
 
 def test_explicit_missing_port_is_exit_4(p: Paths, ports: list[Port]) -> None:
-    with pytest.raises(XeweError) as exc:
+    with pytest.raises(XeWeError) as exc:
         boards.select(p, port="/dev/does-not-exist")
     assert exc.value.code == 4
 

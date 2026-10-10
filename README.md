@@ -148,3 +148,5 @@ must set `XEWE_NO_BOARD=1`.
 ## License
 
 GPL-3.0-only (see `LICENSE.txt`).
+
+`scripts/brand-lint.sh [DIR...]` fails on banned brand spellings (rules: `xewe-os/NAMING.md`).

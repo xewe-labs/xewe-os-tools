@@ -5,7 +5,7 @@ import pytest
 from conftest import LOCK
 from xewe.env import pins
 from xewe.modules import lockfile
-from xewe.report import XeweError
+from xewe.report import XeWeError
 
 
 def test_parse_defaults() -> None:
@@ -43,7 +43,7 @@ def test_toolchain_override() -> None:
     "not toml [",
 ])
 def test_invalid_lock_is_usage_error(text: str) -> None:
-    with pytest.raises(XeweError) as exc:
+    with pytest.raises(XeWeError) as exc:
         lockfile.parse(text)
     assert exc.value.code == 2
 

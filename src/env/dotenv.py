@@ -25,7 +25,7 @@ from collections.abc import Iterable, Mapping, MutableMapping
 from pathlib import Path
 
 from xewe.env.project import Paths
-from xewe.report import EXIT_USAGE, XeweError, log
+from xewe.report import EXIT_USAGE, XeWeError, log
 
 FILENAME = ".env"
 ENV_VAR = "XEWE_ENV"
@@ -54,7 +54,7 @@ def parse(text: str, source: str = "<text>") -> dict[str, str]:
         key, sep, value = line.partition("=")
         key = key.strip()
         if not sep or not key or not key.replace("_", "").isalnum():
-            raise XeweError(f"{source}:{n}: expected KEY=VALUE", EXIT_USAGE)
+            raise XeWeError(f"{source}:{n}: expected KEY=VALUE", EXIT_USAGE)
         value = value.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
             value = value[1:-1]
@@ -71,7 +71,7 @@ def load(paths: Iterable[Path]) -> dict[str, str]:
         except FileNotFoundError:
             continue
         except OSError as exc:
-            raise XeweError(f"{path}: cannot read ({exc.strerror})", EXIT_USAGE) from None
+            raise XeWeError(f"{path}: cannot read ({exc.strerror})", EXIT_USAGE) from None
         for key, value in parse(text, str(path)).items():
             out.setdefault(key, value)
     return out
@@ -116,7 +116,7 @@ def find(project_root: Path | None, explicit: str | Path | None = None,
         path = Path(given).expanduser()
         if not path.is_file():
             how = "--env" if explicit else ENV_VAR
-            raise XeweError(f"{how} {path}: no such file", EXIT_USAGE)
+            raise XeWeError(f"{how} {path}: no such file", EXIT_USAGE)
         return path
     candidates = [project_root / FILENAME] if project_root is not None else []
     tools = tools_checkout(project_root)

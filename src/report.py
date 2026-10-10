@@ -24,7 +24,7 @@ NO_BOARD_ENV = "XEWE_NO_BOARD"
 log = logging.getLogger("xewe")
 
 
-class XeweError(Exception):
+class XeWeError(Exception):
     """An error that ends the command with ``code`` (see the exit-code table in SPEC §3)."""
 
     def __init__(self, message: str, code: int = EXIT_FAIL) -> None:

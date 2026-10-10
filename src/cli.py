@@ -24,7 +24,7 @@ from xewe.report import (
     EXIT_OK,
     EXIT_USAGE,
     NO_BOARD,
-    XeweError,
+    XeWeError,
     board_disabled,
     board_disabled_exit,
     disable_board,
@@ -291,7 +291,7 @@ def _modules_command(args: argparse.Namespace, p: Paths) -> int:
 def _boards_command(args: argparse.Namespace, p: Paths) -> int:
     if args.set_port or args.clear or args.set_chip:
         if args.set_chip and not args.set_port:
-            raise XeweError("--set-chip needs --set-port", EXIT_USAGE)
+            raise XeWeError("--set-chip needs --set-port", EXIT_USAGE)
         override = boards.set_override(p, args.set_port, args.set_chip, args.clear)
         result(f"override: {override or 'none'}")
         return EXIT_OK
@@ -372,7 +372,7 @@ def dispatch(args: argparse.Namespace, extra: list[str]) -> int:
         return doctor.doctor(p, lock)
     if cmd == "release":
         return release.release(p, lock, args.release_version, args.matrix, args.notes)
-    raise XeweError(f"unknown command {cmd}", EXIT_USAGE)
+    raise XeWeError(f"unknown command {cmd}", EXIT_USAGE)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -389,7 +389,7 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_USAGE
     try:
         return dispatch(args, extra)
-    except XeweError as exc:
+    except XeWeError as exc:
         log.error("%s", exc)
         return exc.code
     except KeyboardInterrupt:

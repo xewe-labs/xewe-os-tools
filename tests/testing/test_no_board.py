@@ -8,7 +8,7 @@ from conftest import BIN
 from xewe.board import boards, serialio
 from xewe.cli import main
 from xewe.env.project import Paths
-from xewe.report import BOARD_DISABLED, XeweError
+from xewe.report import BOARD_DISABLED, XeWeError
 
 @pytest.fixture
 def attached(monkeypatch: pytest.MonkeyPatch, port_node: str) -> str:
@@ -31,7 +31,7 @@ def test_discovery_returns_nothing(project: Paths, attached: str, disabled: None
 
 
 def test_console_never_opens(disabled: None, attached: str) -> None:
-    with pytest.raises(XeweError) as exc:
+    with pytest.raises(XeWeError) as exc:
         serialio.Console(attached).open()
     assert exc.value.code == 4 and str(exc.value) == BOARD_DISABLED
 

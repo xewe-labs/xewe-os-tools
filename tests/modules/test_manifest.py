@@ -76,7 +76,7 @@ def test_show_latest_unreachable_is_not_drift(project: Paths, monkeypatch: pytes
     _track_latest(project, SHA)
 
     def offline(*a: str, **k: object) -> str:
-        raise fetch.XeweError("git ls-remote failed: offline")
+        raise fetch.XeWeError("git ls-remote failed: offline")
 
     monkeypatch.setattr(fetch, "git", offline)
     assert main(["manifest", "show"]) == 0

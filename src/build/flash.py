@@ -18,7 +18,7 @@ from xewe.build import compile as build
 from xewe.env import config, esptool
 from xewe.env.project import Paths
 from xewe.modules.lockfile import Lock
-from xewe.report import EXIT_FAIL, EXIT_OK, EXIT_USAGE, XeweError, board_disabled, board_disabled_exit, log, no_board, result
+from xewe.report import EXIT_FAIL, EXIT_OK, EXIT_USAGE, XeWeError, board_disabled, board_disabled_exit, log, no_board, result
 
 DEFAULT_BAUD = 921600
 FALLBACK_BAUD = 460800
@@ -86,10 +86,10 @@ def ensure_built(
     if no_build:
         if binary.is_file():
             return binary
-        raise XeweError(f"{p.rel(binary)} missing and --no-build given", EXIT_FAIL)
+        raise XeWeError(f"{p.rel(binary)} missing and --no-build given", EXIT_FAIL)
     res = build.build_chip(p, lock, chip, defines)
     if not res.ok or res.binary is None:
-        raise XeweError(f"build failed for {chip}", EXIT_FAIL)
+        raise XeWeError(f"build failed for {chip}", EXIT_FAIL)
     return res.binary
 
 
@@ -109,7 +109,7 @@ def write_image(cmd: list[str], board: Board, chip: str, binary: Path, baud: int
     if erase:
         proc = esptool.run(cmd, [*base, "erase-flash"])
         if proc.returncode != 0:
-            raise XeweError(f"esptool erase-flash failed:\n{proc.stdout.strip()[-2000:]}")
+            raise XeWeError(f"esptool erase-flash failed:\n{proc.stdout.strip()[-2000:]}")
         wait_for_port(board.port, boards.port_exists)
     bauds = [baud] + ([FALLBACK_BAUD] if baud == DEFAULT_BAUD else [])
     image = binary.read_bytes()
@@ -133,7 +133,7 @@ def write_image(cmd: list[str], board: Board, chip: str, binary: Path, baud: int
             if i + 1 < len(bauds):
                 log.warning("esptool failed at %d baud; retrying at %d", rate, bauds[i + 1])
             else:
-                raise XeweError(f"esptool write-flash failed:\n{proc.stdout.strip()[-2000:]}")
+                raise XeWeError(f"esptool write-flash failed:\n{proc.stdout.strip()[-2000:]}")
     wait_for_port(board.port, boards.port_exists)
 
 
@@ -158,7 +158,7 @@ def flash_with_board(
     if board is None:
         return no_board(chip, p.rel(binary), require_board), None
     if board.chip and board.chip != chip:
-        raise XeweError(f"board on {board.port} is {board.chip}, selected chip is {chip}", EXIT_USAGE)
+        raise XeWeError(f"board on {board.port} is {board.chip}, selected chip is {chip}", EXIT_USAGE)
     write_image(esptool_cmd(p), board, chip, binary, baud, erase)
     result(f"flashed  {chip}  {board.port}  {p.rel(binary)}  ({ERASED_HINT if erase else KEPT_HINT})")
     return EXIT_OK, board

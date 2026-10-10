@@ -12,7 +12,7 @@ from xewe.build.chips import CHIPS, DEFAULT_CHIP
 from xewe.env import pins
 from xewe.env.project import write_atomic
 from xewe.modules import tomlw
-from xewe.report import EXIT_USAGE, XeweError
+from xewe.report import EXIT_USAGE, XeWeError
 
 SCHEMA = 1
 DEFAULT_HEADER = (
@@ -76,12 +76,12 @@ class Lock:
     def source(self, name: str) -> Source:
         """The core/modules/tools source by name."""
         if name not in ("core", "modules", "tools"):
-            raise XeweError(f"unknown manifest entry '{name}' (expected core, modules or tools)", EXIT_USAGE)
+            raise XeWeError(f"unknown manifest entry '{name}' (expected core, modules or tools)", EXIT_USAGE)
         return getattr(self, name)
 
 
-def _err(path: Path, msg: str) -> XeweError:
-    return XeweError(f"{path.name}: {msg}", EXIT_USAGE)
+def _err(path: Path, msg: str) -> XeWeError:
+    return XeWeError(f"{path.name}: {msg}", EXIT_USAGE)
 
 
 def _str(path: Path, table: str, key: str, v: Any) -> str:
@@ -157,7 +157,7 @@ def parse(text: str, path: Path = Path("xewe.toml")) -> Lock:
 def load(path: Path) -> Lock:
     """Read and validate ``path``."""
     if not path.is_file():
-        raise XeweError(f"{path} not found", EXIT_USAGE)
+        raise XeWeError(f"{path} not found", EXIT_USAGE)
     return parse(path.read_text(encoding="utf-8"), path)
 
 

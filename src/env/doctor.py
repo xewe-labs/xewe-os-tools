@@ -22,7 +22,7 @@ from xewe.env import arduino, config, esptool, pins
 from xewe.env.project import Paths
 from xewe.modules import manifest
 from xewe.modules.lockfile import Lock
-from xewe.report import EXIT_NOT_SETUP, EXIT_OK, NO_BOARD, XeweError, log, result, verbose
+from xewe.report import EXIT_NOT_SETUP, EXIT_OK, NO_BOARD, XeWeError, log, result, verbose
 
 OK, WARN, ERROR = "ok", "warn", "error"
 ROSETTA_MISSING = ("Rosetta 2 is not installed; the esp32 core's ctags binary needs it: "
@@ -130,7 +130,7 @@ def checks(p: Paths, lock: Lock) -> list[Check]:
         cmd = esptool.command(p, cfg.path(p, "esptool") if cfg else None, data)
         esp = esptool.version(cmd)
         out.append(Check(OK, "esptool", esp) if esp else Check(WARN, "esptool", f"{cmd[0]} does not run on this host"))
-    except XeweError as exc:
+    except XeWeError as exc:
         out.append(Check(WARN, "esptool", str(exc)))
 
     drift = [r.name for r in manifest.rows(p, lock) if r.drift]

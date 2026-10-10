@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from xewe.env.project import Paths, write_atomic
-from xewe.report import EXIT_FAIL, EXIT_USAGE, XeweError, log, result
+from xewe.report import EXIT_FAIL, EXIT_USAGE, XeWeError, log, result
 
 LEGACY_PREFIX = "xewe-os-module-"
 REQUIRED_KEYS = (
@@ -144,7 +144,7 @@ class Registry:
     def load(cls, root: Path) -> Registry:
         """Discover modules under ``root`` (both layouts)."""
         if not root.is_dir():
-            raise XeweError(f"modules checkout {root} not found; run ./setup.sh", EXIT_FAIL)
+            raise XeWeError(f"modules checkout {root} not found; run ./setup.sh", EXIT_FAIL)
         found: list[Module] = []
         new_layout = root / "modules"
         if new_layout.is_dir():
@@ -172,7 +172,7 @@ class Registry:
         try:
             return self.by_slug[slug]
         except KeyError:
-            raise XeweError(f"module '{slug}' not found in {self.root}", EXIT_USAGE) from None
+            raise XeWeError(f"module '{slug}' not found in {self.root}", EXIT_USAGE) from None
 
     def resolve(self, selected: list[str], quiet: bool = False) -> list[Module]:
         """Depth-first over ``selected``, dependencies first (the old ``visit()`` order)."""
@@ -185,7 +185,7 @@ class Registry:
             if slug in done:
                 return
             if slug in visiting:
-                raise XeweError(f"dependency cycle through module '{slug}'", EXIT_FAIL)
+                raise XeWeError(f"dependency cycle through module '{slug}'", EXIT_FAIL)
             module = self.get(slug)
             visiting.append(slug)
             for dep in module.deps:
@@ -210,12 +210,12 @@ def load_catalogue(root: Path) -> dict[str, tuple[str, str]]:
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except tomllib.TOMLDecodeError as exc:
-        raise XeweError(f"{path}: invalid TOML: {exc}", EXIT_FAIL) from None
+        raise XeWeError(f"{path}: invalid TOML: {exc}", EXIT_FAIL) from None
     out: dict[str, tuple[str, str]] = {}
     for name, spec in data.items():
         if (not isinstance(spec, dict) or set(spec) != {"repo", "ref"}
                 or not all(isinstance(v, str) and v for v in spec.values())):
-            raise XeweError(f'{path}: [{name}] must have exactly repo = "..." and ref = "..."', EXIT_FAIL)
+            raise XeWeError(f'{path}: [{name}] must have exactly repo = "..." and ref = "..."', EXIT_FAIL)
         out[name] = (spec["repo"], spec["ref"])
     return out
 
@@ -353,11 +353,11 @@ def generate(p: Paths, registry: Registry, selected: list[str], source: str, ref
         folder = module.folder
         src = module.dir / "src" / folder
         if not FOLDER_RE.match(folder) or not src.is_dir():
-            raise XeweError(f"module '{module.slug}': src/{folder} not found in {module.dir}", EXIT_FAIL)
+            raise XeWeError(f"module '{module.slug}': src/{folder} not found in {module.dir}", EXIT_FAIL)
         if (stage / "src" / folder).exists():
-            raise XeweError(f"module '{module.slug}': folder '{folder}' is used by another module", EXIT_FAIL)
+            raise XeWeError(f"module '{module.slug}': folder '{folder}' is used by another module", EXIT_FAIL)
         if not module.props.get("include") or not module.props.get("declare"):
-            raise XeweError(f"module '{module.slug}': module.properties needs include= and declare=", EXIT_FAIL)
+            raise XeWeError(f"module '{module.slug}': module.properties needs include= and declare=", EXIT_FAIL)
         shutil.copytree(src, stage / "src" / folder, ignore=ignore)
         for sub in TEST_FOLDERS:
             if (module.tests_dir / sub).is_dir():

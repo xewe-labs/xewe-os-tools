@@ -31,7 +31,7 @@ from xewe.env import dotenv
 from xewe.env.project import Paths, find_root
 from xewe.modules import lockfile
 from xewe.modules.lockfile import Lock
-from xewe.report import BOARD_DISABLED, EXIT_NO_BOARD, NO_BOARD, XeweError, board_disabled, disable_board
+from xewe.report import BOARD_DISABLED, EXIT_NO_BOARD, NO_BOARD, XeWeError, board_disabled, disable_board
 
 NOT_RUN = "compiled, not run"
 BOARD_FIXTURES = frozenset({"compiled", "board", "firmware", "serial"})
@@ -56,7 +56,7 @@ class Firmware:
     """The session's serial console (open for the whole session; the ``serial`` fixture hands it out)."""
 
 
-class XeweContext:
+class XeWeContext:
     """Per-session state: project paths, lock, chosen chip and port."""
 
     def __init__(self, config: pytest.Config) -> None:
@@ -70,7 +70,7 @@ class XeweContext:
         explicit = config.getoption("xewe_project")
         try:
             self.paths: Paths | None = Paths(find_root(explicit, start=config.rootpath))
-        except XeweError:
+        except XeWeError:
             self.paths = None
         self.explicit = explicit is not None
         self._chip: str | None = config.getoption("xewe_chip")
@@ -85,7 +85,7 @@ class XeweContext:
         """True inside a xewe project."""
         return self.paths is not None
 
-    def fail(self, exc: XeweError) -> None:
+    def fail(self, exc: XeWeError) -> None:
         """``pytest.fail`` with the error; remember board-missing errors for ``xewe test``'s exit 4."""
         if exc.code == EXIT_NO_BOARD:
             self.no_board = True
@@ -109,7 +109,7 @@ class XeweContext:
         return self._chip
 
 
-_KEY = pytest.StashKey[XeweContext]()
+_KEY = pytest.StashKey[XeWeContext]()
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -125,14 +125,14 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "unit: pure logic; runs on the developer machine, never needs a board or a build")
     config.addinivalue_line("markers", "board: needs firmware on a board")
-    ctx = XeweContext(config)
+    ctx = XeWeContext(config)
     config.stash[_KEY] = ctx
     # XEWE_TEST_* pins, XEWE_PORT, XEWE_CHIP from the dotenv file (real environment wins), before
     # collection so module tests read them from os.environ. Only inside a xewe project.
     if ctx.paths is not None:
         try:
             dotenv.load_settings(ctx.paths.root)
-        except XeweError as exc:
+        except XeWeError as exc:
             raise pytest.UsageError(str(exc)) from None
 
 
@@ -148,18 +148,18 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 
 @pytest.fixture(scope="session")
-def xewe(pytestconfig: pytest.Config) -> XeweContext:
+def xewe(pytestconfig: pytest.Config) -> XeWeContext:
     """The session's xewe context."""
     return pytestconfig.stash[_KEY]
 
 
 @pytest.fixture(scope="session")
-def compiled(xewe: XeweContext) -> Path:
+def compiled(xewe: XeWeContext) -> Path:
     """Build the selected chip once; a failure fails every board test."""
     p = xewe.project()
     try:
         res = build.build_chip(p, xewe.lock, xewe.chip)
-    except XeweError as exc:
+    except XeWeError as exc:
         pytest.fail(f"build failed for {xewe.chip}: {exc}", pytrace=False)
     if not res.ok or res.binary is None:
         pytest.fail(f"build failed for {xewe.chip}; see {p.rel(p.out_dir(xewe.chip) / 'compile.log')}", pytrace=False)
@@ -167,20 +167,20 @@ def compiled(xewe: XeweContext) -> Path:
 
 
 @pytest.fixture(scope="session")
-def board(xewe: XeweContext, compiled: Path) -> Board:
+def board(xewe: XeWeContext, compiled: Path) -> Board:
     """The attached board; skipped ("compiled, not run") when there is none."""
     p = xewe.project()
     if board_disabled():
         if xewe.require_board:
-            xewe.fail(XeweError(f"{NOT_RUN}: {BOARD_DISABLED} (--require-board)", EXIT_NO_BOARD))
+            xewe.fail(XeWeError(f"{NOT_RUN}: {BOARD_DISABLED} (--require-board)", EXIT_NO_BOARD))
         pytest.skip(f"{NOT_RUN}: {NO_BOARD} ({BOARD_DISABLED})")
     try:
         found = boards.select(p, chip=xewe.chip, port=xewe.port, esptool_cmd=lambda: flash.esptool_cmd(p))
-    except XeweError as exc:
+    except XeWeError as exc:
         xewe.fail(exc)
     if found is None:
         if xewe.require_board:
-            xewe.fail(XeweError(f"{NOT_RUN}: {NO_BOARD} (--require-board)", EXIT_NO_BOARD))
+            xewe.fail(XeWeError(f"{NOT_RUN}: {NO_BOARD} (--require-board)", EXIT_NO_BOARD))
         pytest.skip(f"{NOT_RUN}: {NO_BOARD}")
     if found.chip and found.chip != xewe.chip:
         pytest.fail(f"board on {found.port} is {found.chip}, tests were built for {xewe.chip}", pytrace=False)
@@ -199,7 +199,7 @@ def wait_for_boot(console: Console, timeout: float = BOOT_TIMEOUT_SECONDS) -> No
     except ExpectTimeout as exc:
         pytest.fail(f"board on {console.port} did not finish booting within {timeout:g} s "
                     f"(no {BOOT_READY!r}); {exc}", pytrace=False)
-    except XeweError as exc:  # port still gone at the deadline
+    except XeWeError as exc:  # port still gone at the deadline
         pytest.fail(f"board on {console.port} did not finish booting within {timeout:g} s: {exc}", pytrace=False)
     if m.group(0) == BOOT_UNPROVISIONED:
         pytest.fail(UNPROVISIONED_MESSAGE.format(port=console.port), pytrace=False)
@@ -207,7 +207,7 @@ def wait_for_boot(console: Console, timeout: float = BOOT_TIMEOUT_SECONDS) -> No
 
 
 @pytest.fixture(scope="session")
-def firmware(xewe: XeweContext, board: Board, compiled: Path) -> Iterator[Firmware]:
+def firmware(xewe: XeWeContext, board: Board, compiled: Path) -> Iterator[Firmware]:
     """Flash the session's image once, open the session console, wait for the boot banner.
 
     The console stays open for the whole session (one port open: every open can pulse a
@@ -216,7 +216,7 @@ def firmware(xewe: XeweContext, board: Board, compiled: Path) -> Iterator[Firmwa
     p = xewe.project()
     try:
         flash.write_image(flash.esptool_cmd(p), board, xewe.chip, compiled)
-    except XeweError as exc:
+    except XeWeError as exc:
         xewe.fail(exc)
     console = Console(board.port)
     try:
