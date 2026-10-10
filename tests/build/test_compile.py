@@ -13,7 +13,7 @@ from xewe.env.project import Paths
 META_KEYS = [
     "type", "chip_family", "project_name", "version", "timestamp_param", "config", "fqbn", "fqbn_extra",
     "compile_time_sec", "artifacts", "tools_version", "arduino_cli", "esp32_core", "core_ref", "modules_ref",
-    "modules", "sketch_size", "sketch_size_percent", "warnings",
+    "modules_version", "modules", "sketch_size", "sketch_size_percent", "warnings",
 ]
 
 
@@ -35,6 +35,7 @@ def test_build_outputs(project: Paths, capsys: pytest.CaptureFixture[str]) -> No
     }
     assert meta["sketch_size"] == 1123456 and meta["sketch_size_percent"] == 85 and meta["warnings"] == 1
     assert meta["modules"] == {"selected": ["wifi", "web-interface"], "resolved": ["wifi", "web-interface"]}
+    assert meta["modules_version"] == "1.0.0"  # the tag of build/modules/library.properties
     assert "JTAGAdapter" not in meta["fqbn"]
 
 

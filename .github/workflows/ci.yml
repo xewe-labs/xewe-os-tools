@@ -1,0 +1,65 @@
+# ci.yml: the tools' own checks (pytest, pyflakes, mypy) plus actionlint on the reusable
+# workflows in this folder. Board-free; no toolchain download.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest, pyflakes, mypy (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: |
+          python -m pip install -q --upgrade pip
+          python -m pip install -q . pyflakes mypy types-pyserial
+      - name: pytest
+        run: python -m pytest -q
+      - name: pyflakes
+        run: python -m pyflakes src tests
+      # by package name, not folder (SPEC.md): mypy on a symlink <tmp>/xewe -> src
+      - name: mypy
+        run: |
+          ln -s "$GITHUB_WORKSPACE/src" "$RUNNER_TEMP/xewe"
+          python -m mypy "$RUNNER_TEMP/xewe"
+
+  actionlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker://rhysd/actionlint:latest
+        with:
+          # xewe-board: the label of the future self-hosted board runner (xewe-board.yml)
+          args: -color -ignore xewe-board
+
+  brand-lint:
+    name: brand-lint (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/brand-lint.sh .

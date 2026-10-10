@@ -12,6 +12,7 @@ from typing import Any
 from xewe import __version__
 from xewe.board import boards, provision, serialio
 from xewe.build import chips, flash, release
+from xewe.build import format as fmt
 from xewe.build import compile as build
 from xewe.env import clean, config, doctor, dotenv, setup
 from xewe.env.project import Paths, find_root
@@ -221,6 +222,14 @@ def parser() -> argparse.ArgumentParser:
 
     sub.add_parser("doctor", help="check the environment")
 
+    sp = sub.add_parser(
+        "format", help="clang-format the C++ (and ruff-format the Python) of the project",
+        description="Format *.h *.hpp *.c *.cpp *.ino in the project root, src/, examples/ and tests/unit/ (never "
+                    "build/) with the project's .clang-format (no column alignment), and *.py with ruff format "
+                    "when ruff is installed. --check changes nothing and exits 1 listing the files that would change.")
+    sp.add_argument("--check", action="store_true", help="change nothing; exit 1 if any file would change")
+    sp.add_argument("paths", nargs="*", type=Path, metavar="PATH", help="files or directories (default: the project)")
+
     sp = sub.add_parser("release", help="build the release matrix into static/firmware/releases/<version>/")
     sp.add_argument("--version", required=True, dest="release_version", metavar="X.Y.Z")
     sp.add_argument("--matrix", type=Path, metavar="FILE")
@@ -335,6 +344,8 @@ def dispatch(args: argparse.Namespace, extra: list[str]) -> int:
         return _boards_command(args, p)
     if cmd == "clean":
         return clean.clean(p, args.all, args.modules)
+    if cmd == "format":
+        return fmt.format_main(p, args.paths, args.check)
     lock = lockfile.load(p.lock)
     if cmd in ("build", "run"):
         setup.warn_no_modules(lock.selected)

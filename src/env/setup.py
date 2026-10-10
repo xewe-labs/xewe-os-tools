@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from xewe import __version__
-from xewe.env import arduino, config, esptool, fetch, pins
+from xewe.env import arduino, config, esptool, fetch, pins, runscript
 from xewe.env.project import Paths
 from xewe.modules import lockfile
 from xewe.modules import registry as modules
@@ -358,6 +358,7 @@ def run_setup(p: Paths, opts: SetupOptions, sleep: Callable[[float], None] = tim
     if not (p.root / "Config.h").is_file():
         raise XeWeError("Config.h missing in the project root (the template provides it)", EXIT_FAIL)
     _legacy_version_hint(p)
+    runscript.write(p, lock.chip)  # run.sh from the tools' template (a hand-written one is kept)
 
     # 12 build_config.toml
     if tools_local is not None:

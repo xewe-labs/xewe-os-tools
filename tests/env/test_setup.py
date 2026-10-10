@@ -6,7 +6,7 @@ import pytest
 
 from conftest import REPO, make_modules_checkout, write_project
 from xewe.cli import main
-from xewe.env import arduino, config, fetch, setup
+from xewe.env import arduino, config, fetch, runscript, setup
 from xewe.env.project import Paths
 from xewe.env.setup import SetupOptions
 from xewe.modules import lockfile
@@ -631,3 +631,15 @@ def test_latest_offline_keeps_installed_checkout(fresh: Paths, latest_remote: di
     assert latest_remote["clones"] == [] and latest_remote["follows"] == []
     assert "cannot resolve latest" in caplog.text
     assert config.load(fresh).installed["core"]["commit"] == HEAD_SHA
+
+
+def test_setup_generates_run_sh(fresh: Paths, capsys: pytest.CaptureFixture[str]) -> None:
+    run = fresh.root / "run.sh"
+    assert not run.exists()
+    assert main(["setup", "--modules", "scheduler"]) == 0
+    assert run.read_text() == runscript.render("c3")
+    run.write_text("#!/bin/sh\necho mine\n")  # hand-written: kept, with a note
+    capsys.readouterr()
+    assert main(["setup"]) == 0
+    assert run.read_text() == "#!/bin/sh\necho mine\n"
+    assert "run.sh is hand-written" in capsys.readouterr().out

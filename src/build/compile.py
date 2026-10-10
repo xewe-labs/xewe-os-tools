@@ -147,6 +147,18 @@ def cli_path(p: Paths, cfg: config.BuildConfig | None) -> Path:
     return arduino.cli_override() or (cfg.path(p, "arduino_cli") if cfg else None) or arduino.default_cli(p)
 
 
+def _modules_version(p: Paths) -> str:
+    """``version=`` of the generated ``build/modules/library.properties`` (the resolved modules
+    tag or ``0.0.0+<sha7>``); "" when it is missing."""
+    props = p.modules / "library.properties"
+    if not props.is_file():
+        return ""
+    for line in props.read_text(encoding="utf-8").splitlines():
+        if line.startswith("version="):
+            return line.removeprefix("version=").strip()
+    return ""
+
+
 def _resolved_modules(p: Paths) -> list[str]:
     lock_file = p.modules_lock
     if not lock_file.is_file():
@@ -311,6 +323,7 @@ def build_chip(
         "esp32_core": installed.get("esp32", ""),
         "core_ref": installed.get("core", {}).get("ref", lock.core.ref),
         "modules_ref": installed.get("modules", {}).get("ref", lock.modules.ref),
+        "modules_version": _modules_version(p),
         "modules": {"selected": lock.selected, "resolved": _resolved_modules(p)},
         "sketch_size": size,
         "sketch_size_percent": percent,

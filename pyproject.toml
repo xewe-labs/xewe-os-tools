@@ -13,9 +13,10 @@ license-files = ["LICENSE.txt"]
 dependencies = ["pyserial>=3.5", "pytest>=8.0"]
 
 [project.optional-dependencies]
-# pytest is already a runtime dependency (it is the firmware test runner); the extra exists so
-# `pip install -e .[dev]` works for development checkouts.
-dev = []
+# pytest is already a runtime dependency (it is the firmware test runner). dev adds ruff, which
+# `xewe format` runs on Python files when it is importable (C++ needs clang-format, not a pip
+# dependency: system package, or `pip install clang-format` into the same venv).
+dev = ["ruff"]
 
 [project.scripts]
 xewe = "xewe.cli:main"
@@ -29,6 +30,10 @@ packages = ["xewe", "xewe.env", "xewe.build", "xewe.board", "xewe.modules", "xew
 
 [tool.setuptools.package-dir]
 xewe = "src"
+
+[tool.ruff]
+# the tools' own style (the code is not ruff-formatted yet: that is a separate whitespace-only commit)
+line-length = 120
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

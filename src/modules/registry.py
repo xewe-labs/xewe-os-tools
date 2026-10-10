@@ -279,11 +279,25 @@ def render_library_h(order: list[Module]) -> str:
     return f"{LIBRARY_H_HEADER}\n{includes}"
 
 
+TAG_RE = re.compile(r"^v?(\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.+-]*)?)$")
+"""A ref that is a release tag (``v1.2.3``, ``1.2``, ``v1.0.0-rc1``); group 1 is the version without ``v``."""
+
+
+def library_version(ref: str, commit: str) -> str:
+    """Version of the generated ``XeWeModules`` library: the tag (without ``v``) when ``ref`` is a
+    release tag, else ``0.0.0+<sha7>`` of the resolved commit (``latest``, a branch, a SHA, a local
+    source), else ``0.0.0`` when the commit is unknown."""
+    match = TAG_RE.match(ref or "")
+    if match:
+        return match.group(1)
+    sha = commit if commit and commit != "-" else ""
+    return f"0.0.0+{sha[:7]}" if sha else "0.0.0"
+
+
 def render_library_properties(order: list[Module], ref: str, commit: str) -> str:
-    """``library.properties`` of the generated ``XeWeModules`` library (version = modules ref or commit)."""
-    version = ref if ref and ref != "-" else commit
+    """``library.properties`` of the generated ``XeWeModules`` library (version: see ``library_version``)."""
     return LIBRARY_PROPERTIES.format(
-        name=LIBRARY_NAME, version=version or "0.0.0", header=LIBRARY_HEADER,
+        name=LIBRARY_NAME, version=library_version(ref, commit), header=LIBRARY_HEADER,
         modules=", ".join(m.slug for m in order) or "none",
     )
 

@@ -1,0 +1,22 @@
+#!/usr/bin/env python3
+"""Fake clang-format for the xewe self-tests: prints the file (last argument) with every run of
+spaces after the indentation collapsed to one (an "unaligned" style); logs argv as JSON lines to
+$FAKE_CLANG_FORMAT_LOG; exits 1 for a file whose text contains FAKE_CLANG_FORMAT_FAIL."""
+import json
+import os
+import re
+import sys
+
+if os.environ.get("FAKE_CLANG_FORMAT_LOG"):
+    with open(os.environ["FAKE_CLANG_FORMAT_LOG"], "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(sys.argv[1:]) + "\n")
+with open(sys.argv[-1], encoding="utf-8") as fh:
+    text = fh.read()
+if "FAKE_CLANG_FORMAT_FAIL" in text:
+    sys.stderr.write("fake clang-format: error\n")
+    sys.exit(1)
+out = []
+for line in text.splitlines(keepends=True):
+    indent = line[: len(line) - len(line.lstrip(" "))]
+    out.append(indent + re.sub(r" {2,}", " ", line[len(indent):]))
+sys.stdout.write("".join(out))

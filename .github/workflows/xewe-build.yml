@@ -1,0 +1,145 @@
+# xewe-build.yml: reusable build + host tests for a XeWe OS firmware project (the template or a
+# project cloned from it). Called from the project's .github/workflows/ci.yml; see ci/README.md.
+# Mirrors the local flow (run_tests/10_project.sh): ./setup.sh, xewe build, xewe test without a board.
+name: xewe-build
+
+on:
+  workflow_call:
+    inputs:
+      chips:
+        description: "comma-separated chips to build (c3,c6,s3)"
+        type: string
+        default: "c3,c6,s3"
+      modules:
+        description: "optional ./setup.sh --modules value (LIST|all|none); empty keeps xewe.toml's selection"
+        type: string
+        default: ""
+      python-version:
+        type: string
+        default: "3.12"
+
+permissions:
+  contents: read
+
+env:
+  XEWE_NO_BOARD: "1"
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  build:
+    name: build and host tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      # The toolchain pins (arduino-cli and esp32 core versions) live in the tools at the ref the
+      # project's xewe.toml names (`latest` = the tools' default branch). Read them before ./setup.sh
+      # so the shared toolchain cache key matches what setup will install.
+      - name: Resolve the tools ref and the toolchain pins
+        id: pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -r repo ref < <(python3 -c 'import tomllib; t = tomllib.load(open("xewe.toml", "rb")).get("tools", {}); print(t.get("repo", "https://github.com/xewe-labs/xewe-os-tools"), t.get("ref", "latest"))')
+          dest="$RUNNER_TEMP/xewe-tools"
+          if [[ "$ref" =~ ^[0-9a-f]{7,40}$ ]]; then
+            git init -q "$dest"; git -C "$dest" fetch -q --depth 1 "$repo" "$ref"; git -C "$dest" checkout -q FETCH_HEAD
+          else
+            track="$ref"; [[ "$ref" == latest ]] && track=""
+            git clone -q --depth 1 ${track:+--branch "$track"} "$repo" "$dest"
+          fi
+          python3 - "$dest/src/env/pins.py" >> "$GITHUB_OUTPUT" <<'PY'
+          import runpy, sys
+          pins = runpy.run_path(sys.argv[1])
+          print(f"cli={pins['ARDUINO_CLI_VERSION']}")
+          print(f"esp32={pins['ESP32_CORE_VERSION']}")
+          PY
+          echo "tools=$ref@$(git -C "$dest" rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      # ~6 GB installed (1.7 GB download): restored instead of downloaded when the pins are unchanged.
+      # downloads/ (the archives) is not cached: the installed tree is enough.
+      - name: Cache the shared toolchain (~/.xewe-os/build-tools)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.xewe-os/build-tools/bin
+            ~/.xewe-os/build-tools/arduino15
+            ~/.xewe-os/build-tools/arduino-user
+          key: xewe-toolchain-${{ runner.os }}-${{ runner.arch }}-cli${{ steps.pins.outputs.cli }}-esp32-${{ steps.pins.outputs.esp32 }}
+
+      - name: ./setup.sh
+        shell: bash
+        env:
+          MODULES: ${{ inputs.modules }}
+        run: ./setup.sh ${MODULES:+--modules "$MODULES"} </dev/null
+
+      - name: xewe manifest show
+        run: build/tools/.venv/bin/python -m xewe manifest show
+
+      - name: xewe build
+        shell: bash
+        env:
+          CHIPS: ${{ inputs.chips }}
+        run: |
+          set -euo pipefail
+          for chip in ${CHIPS//,/ }; do
+            build/tools/.venv/bin/python -m xewe build --chip "$chip"
+          done
+
+      # unit tests run; board tests are compiled-not-run (skipped) without a board
+      - name: xewe test --no-board
+        run: build/tools/.venv/bin/python -m xewe test --no-board
+
+      - name: Upload the firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ github.sha }}
+          path: |
+            build/builds/*/out/*.bin
+            build/builds/*/out/manifest.json
+            build/builds/*/out/meta.json
+            build/config/build_config.toml
+          if-no-files-found: error
+          retention-days: 14
+
+  # NON-BLOCKING until the whitespace/format commits land: failures show as annotations, the run
+  # stays green. Flip continue-on-error to false (or delete the line) to enforce.
+  lint:
+    name: lint (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Install the tools at the manifest ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -r repo ref < <(python3 -c 'import tomllib; t = tomllib.load(open("xewe.toml", "rb")).get("tools", {}); print(t.get("repo", "https://github.com/xewe-labs/xewe-os-tools"), t.get("ref", "latest"))')
+          dest="$RUNNER_TEMP/xewe-tools"
+          if [[ "$ref" =~ ^[0-9a-f]{7,40}$ ]]; then
+            git init -q "$dest"; git -C "$dest" fetch -q --depth 1 "$repo" "$ref"; git -C "$dest" checkout -q FETCH_HEAD
+          else
+            track="$ref"; [[ "$ref" == latest ]] && track=""
+            git clone -q --depth 1 ${track:+--branch "$track"} "$repo" "$dest"
+          fi
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install -q "$dest"
+      - name: xewe format --check
+        shell: bash
+        run: |
+          if "$RUNNER_TEMP/venv/bin/xewe" format --help >/dev/null 2>&1; then
+            "$RUNNER_TEMP/venv/bin/xewe" --project . format --check
+          else
+            echo "::notice::xewe format is not in this tools version; skipped"
+          fi
+      - name: brand-lint
+        run: bash "$RUNNER_TEMP/xewe-tools/scripts/brand-lint.sh" .

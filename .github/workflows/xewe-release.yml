@@ -1,0 +1,248 @@
+# xewe-release.yml: reusable release for a XeWe OS firmware project, run on a version tag.
+# Mirrors the old build/scripts/release.sh and today's `xewe release`: build the release matrix into
+# static/firmware/releases/<version>/, then publish it twice:
+#   1. a GitHub Release with the binaries and firmware-<version>.tar.gz (canonical, permanent)
+#   2. a commit of the same folder to the `releases` branch (static files for the web flasher)
+# Tags: vX.Y.Z (release) or vX.Y.Z-<suffix> (pre-release, e.g. v2.0.0-rc1). X.Y.Z must equal
+# [project] version in xewe.toml at the tagged commit. See ci/README.md.
+name: xewe-release
+
+on:
+  workflow_call:
+    inputs:
+      publish_branch:
+        description: "also commit the release folder to the releases branch"
+        type: boolean
+        default: true
+      releases_branch:
+        description: "branch that holds static/firmware/releases/ for the web flasher"
+        type: string
+        default: "releases"
+      modules:
+        description: "optional ./setup.sh --modules value; empty keeps xewe.toml's selection"
+        type: string
+        default: ""
+      python-version:
+        type: string
+        default: "3.12"
+
+permissions:
+  contents: write
+
+env:
+  XEWE_NO_BOARD: "1"
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version from the tag
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          [[ "$GITHUB_REF_TYPE" == tag ]] || { echo "::error::run on a tag (got $GITHUB_REF)"; exit 1; }
+          full="${tag#v}"
+          base="${full%%-*}"
+          [[ "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::tag $tag is not vX.Y.Z[-suffix]"; exit 1; }
+          manifest="$(python3 -c 'import tomllib; print(tomllib.load(open("xewe.toml", "rb"))["project"]["version"])')"
+          [[ "$manifest" == "$base" ]] || { echo "::error::tag $tag does not match [project] version $manifest in xewe.toml; bump xewe.toml first"; exit 1; }
+          pre=false; [[ "$full" != "$base" ]] && pre=true
+          { echo "tag=$tag"; echo "version=$full"; echo "base=$base"; echo "prerelease=$pre"; } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Resolve the tools ref and the toolchain pins
+        id: pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -r repo ref < <(python3 -c 'import tomllib; t = tomllib.load(open("xewe.toml", "rb")).get("tools", {}); print(t.get("repo", "https://github.com/xewe-labs/xewe-os-tools"), t.get("ref", "latest"))')
+          dest="$RUNNER_TEMP/xewe-tools"
+          if [[ "$ref" =~ ^[0-9a-f]{7,40}$ ]]; then
+            git init -q "$dest"; git -C "$dest" fetch -q --depth 1 "$repo" "$ref"; git -C "$dest" checkout -q FETCH_HEAD
+          else
+            track="$ref"; [[ "$ref" == latest ]] && track=""
+            git clone -q --depth 1 ${track:+--branch "$track"} "$repo" "$dest"
+          fi
+          python3 - "$dest/src/env/pins.py" >> "$GITHUB_OUTPUT" <<'PY'
+          import runpy, sys
+          pins = runpy.run_path(sys.argv[1])
+          print(f"cli={pins['ARDUINO_CLI_VERSION']}")
+          print(f"esp32={pins['ESP32_CORE_VERSION']}")
+          PY
+
+      - name: Cache the shared toolchain (~/.xewe-os/build-tools)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.xewe-os/build-tools/bin
+            ~/.xewe-os/build-tools/arduino15
+            ~/.xewe-os/build-tools/arduino-user
+          key: xewe-toolchain-${{ runner.os }}-${{ runner.arch }}-cli${{ steps.pins.outputs.cli }}-esp32-${{ steps.pins.outputs.esp32 }}
+
+      # `latest` refs resolve here, at release time; build_config.toml records the commits.
+      - name: ./setup.sh
+        shell: bash
+        env:
+          MODULES: ${{ inputs.modules }}
+        run: ./setup.sh ${MODULES:+--modules "$MODULES"} </dev/null
+
+      - name: Release notes from the tag message
+        shell: bash
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch -q --force --depth 1 origin "+refs/tags/$TAG:refs/tags/$TAG"
+          git for-each-ref --format='%(contents)' "refs/tags/$TAG" | sed '/-----BEGIN PGP SIGNATURE-----/,$d' > "$RUNNER_TEMP/notes.txt"
+          [[ -n "$(tr -d '[:space:]' < "$RUNNER_TEMP/notes.txt")" ]] || echo "Release $TAG" > "$RUNNER_TEMP/notes.txt"
+          cat "$RUNNER_TEMP/notes.txt"
+
+      # builds every release_matrix.csv row (default c3, c6, s3) with version X.Y.Z
+      - name: xewe release
+        env:
+          BASE: ${{ steps.ver.outputs.base }}
+        run: build/tools/.venv/bin/python -m xewe release --version "$BASE" --notes "$RUNNER_TEMP/notes.txt"
+
+      # Pre-release tags: the folder is renamed to the full tag version (X.Y.Z-rc1) so it never
+      # claims X.Y.Z; the binaries inside still report X.Y.Z. Every release also gets resolved.json:
+      # the commits that `latest` resolved to (meta.json only records the ref names).
+      - name: Finish the release folder
+        id: dir
+        shell: bash
+        env:
+          BASE: ${{ steps.ver.outputs.base }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          rel=static/firmware/releases
+          if [[ "$VERSION" != "$BASE" ]]; then
+            rm -rf "${rel:?}/$VERSION"
+            mv "$rel/$BASE" "$rel/$VERSION"
+            rm -f "$rel/firmware-$BASE.tar.gz"
+          fi
+          python3 - "$rel/$VERSION" "$BASE" "$VERSION" <<'PY'
+          import json, os, pathlib, sys, tomllib
+          root, base, version = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+          for meta in root.rglob("meta.json"):
+              data = json.loads(meta.read_text())
+              for k, v in data.get("artifacts", {}).items():
+                  if k.startswith("path_rel_"):
+                      data["artifacts"][k] = v.replace(f"/releases/{base}/", f"/releases/{version}/")
+              data["release_tag"] = os.environ["GITHUB_REF_NAME"]
+              meta.write_text(json.dumps(data, indent=2) + "\n")
+          with open("build/config/build_config.toml", "rb") as f:
+              installed = tomllib.load(f).get("installed", {})
+          resolved = {
+              "tag": os.environ["GITHUB_REF_NAME"],
+              "project_commit": os.environ["GITHUB_SHA"],
+              "arduino_cli": installed.get("arduino_cli"),
+              "esp32_core": installed.get("esp32"),
+              **{k: {"ref": v.get("ref"), "commit": v.get("commit"), "source": v.get("source")}
+                 for k, v in installed.items() if isinstance(v, dict) and "commit" in v},
+              "libraries": installed.get("libraries", {}),
+          }
+          (root / "resolved.json").write_text(json.dumps(resolved, indent=2) + "\n")
+          PY
+          tar -C "$rel" -czf "$rel/firmware-$VERSION.tar.gz" "$VERSION"
+          echo "path=$rel/$VERSION" >> "$GITHUB_OUTPUT"
+          find "$rel/$VERSION" -type f | sort
+
+      - name: GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          DIR: ${{ steps.dir.outputs.path }}
+          PRE: ${{ steps.ver.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          assets="$RUNNER_TEMP/assets"; mkdir -p "$assets"
+          cp "static/firmware/releases/firmware-$VERSION.tar.gz" "$DIR/resolved.json" "$assets/"
+          # one flat file per binary; rows below a nested matrix folder keep that path in the name
+          while IFS= read -r bin; do
+            sub="$(dirname "${bin#"$DIR"/}")"
+            name="$(basename "$bin")"
+            if [[ "$sub" == */* ]]; then cp "$bin" "$assets/${sub//\//_}_$name"; else cp "$bin" "$assets/$name"; fi
+          done < <(find "$DIR" -name '*.bin')
+          flags=(--title "$TAG" --notes-file "$DIR/release_notes.txt" --verify-tag)
+          if [[ "$PRE" == true ]]; then flags+=(--prerelease); fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$assets"/* --clobber
+          else
+            gh release create "$TAG" "$assets"/* "${flags[@]}"
+          fi
+
+      - name: Commit to the releases branch
+        if: inputs.publish_branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BR: ${{ inputs.releases_branch }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          w="$RUNNER_TEMP/releases-branch"
+          url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git ls-remote --exit-code --heads origin "$BR" >/dev/null; then
+            git fetch -q --depth 1 origin "$BR"
+            git worktree add -q -B "$BR" "$w" FETCH_HEAD
+          else
+            git worktree add -q --detach "$w" HEAD
+            git -C "$w" checkout -q --orphan "$BR"
+            git -C "$w" rm -rq --cached .
+            find "$w" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+            printf '# %s releases\n\nRelease folders for the web flasher, written by CI from version tags.\nThe canonical copies are the GitHub Releases. Never edit by hand.\n' "${GITHUB_REPOSITORY#*/}" > "$w/README.md"
+          fi
+          rel=static/firmware/releases
+          mkdir -p "$w/$rel"
+          rm -rf "${w:?}/$rel/$VERSION"
+          cp -R "$rel/$VERSION" "$w/$rel/"
+          # index.json: every version on the branch, newest first, for the flasher's version picker
+          python3 - "$w/$rel" <<'PY'
+          import json, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          entries = []
+          for d in root.iterdir():
+              if not d.is_dir():
+                  continue
+              res = d / "resolved.json"
+              builds = []
+              for meta in sorted(d.rglob("meta.json")):
+                  m = json.loads(meta.read_text())
+                  builds.append({"chip": m.get("type"), "path": str(meta.parent.relative_to(root)),
+                                 "binary": m.get("artifacts", {}).get("binary_filename"),
+                                 "config": m.get("config", {})})
+              entries.append({"version": d.name, "prerelease": "-" in d.name,
+                              "tag": json.loads(res.read_text()).get("tag") if res.is_file() else None,
+                              "builds": builds})
+          def key(e):
+              base, _, pre = e["version"].partition("-")
+              nums = tuple(int(x) for x in base.split(".") if x.isdigit())
+              return (nums, pre == "", pre)
+          entries.sort(key=key, reverse=True)
+          (root / "index.json").write_text(json.dumps({"releases": entries}, indent=2) + "\n")
+          PY
+          git -C "$w" add -A
+          if git -C "$w" diff --cached --quiet; then echo "releases branch already up to date"; exit 0; fi
+          git -C "$w" -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "release $VERSION ($TAG, ${GITHUB_SHA::7})"
+          git -C "$w" push -q "$url" "HEAD:refs/heads/$BR"
+          echo "pushed $BR: $rel/$VERSION"
+
+      - name: Upload the release folder
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ steps.ver.outputs.version }}
+          path: ${{ steps.dir.outputs.path }}
+          retention-days: 30

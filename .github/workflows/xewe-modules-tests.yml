@@ -1,0 +1,103 @@
+# xewe-modules-tests.yml: reusable checks for xewe-os-modules. Like the local harness flow
+# (run_tests/00_setup.sh): a template clone with every module selected and the modules source
+# pointed at the commit under test, then the validator, the module unit tests and one compile.
+name: xewe-modules-tests
+
+on:
+  workflow_call:
+    inputs:
+      template_ref:
+        description: "xewe-os template ref used as the harness"
+        type: string
+        default: "main"
+      chip:
+        description: "chip to compile the all-modules harness for"
+        type: string
+        default: "c3"
+      python-version:
+        type: string
+        default: "3.12"
+
+permissions:
+  contents: read
+
+env:
+  XEWE_NO_BOARD: "1"
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  harness:
+    name: validator, unit tests, ${{ inputs.chip }} compile
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      XEWE_MODULES_SOURCE: ${{ github.workspace }}/modules
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: modules
+      - uses: actions/checkout@v4
+        with:
+          repository: xewe-labs/xewe-os
+          ref: ${{ inputs.template_ref }}
+          path: harness
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Resolve the tools ref and the toolchain pins
+        id: pins
+        shell: bash
+        working-directory: harness
+        run: |
+          set -euo pipefail
+          read -r repo ref < <(python3 -c 'import tomllib; t = tomllib.load(open("xewe.toml", "rb")).get("tools", {}); print(t.get("repo", "https://github.com/xewe-labs/xewe-os-tools"), t.get("ref", "latest"))')
+          dest="$RUNNER_TEMP/xewe-tools"
+          if [[ "$ref" =~ ^[0-9a-f]{7,40}$ ]]; then
+            git init -q "$dest"; git -C "$dest" fetch -q --depth 1 "$repo" "$ref"; git -C "$dest" checkout -q FETCH_HEAD
+          else
+            track="$ref"; [[ "$ref" == latest ]] && track=""
+            git clone -q --depth 1 ${track:+--branch "$track"} "$repo" "$dest"
+          fi
+          python3 - "$dest/src/env/pins.py" >> "$GITHUB_OUTPUT" <<'PY'
+          import runpy, sys
+          pins = runpy.run_path(sys.argv[1])
+          print(f"cli={pins['ARDUINO_CLI_VERSION']}")
+          print(f"esp32={pins['ESP32_CORE_VERSION']}")
+          PY
+
+      - name: Cache the shared toolchain (~/.xewe-os/build-tools)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.xewe-os/build-tools/bin
+            ~/.xewe-os/build-tools/arduino15
+            ~/.xewe-os/build-tools/arduino-user
+          key: xewe-toolchain-${{ runner.os }}-${{ runner.arch }}-cli${{ steps.pins.outputs.cli }}-esp32-${{ steps.pins.outputs.esp32 }}
+
+      - name: harness ./setup.sh --modules all
+        working-directory: harness
+        run: ./setup.sh --modules all </dev/null
+
+      - name: tools/validate.py
+        run: harness/build/tools/.venv/bin/python modules/tools/validate.py --harness harness
+
+      - name: module unit tests
+        run: harness/build/tools/.venv/bin/python -m xewe --project harness test --unit-only
+
+      - name: compile the all-modules harness
+        env:
+          CHIP: ${{ inputs.chip }}
+        run: harness/build/tools/.venv/bin/python -m xewe --project harness build --chip "$CHIP"
+
+  brand-lint:
+    name: brand-lint (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: brand-lint
+        run: |
+          git clone -q --depth 1 https://github.com/xewe-labs/xewe-os-tools "$RUNNER_TEMP/xewe-tools"
+          bash "$RUNNER_TEMP/xewe-tools/scripts/brand-lint.sh" .
