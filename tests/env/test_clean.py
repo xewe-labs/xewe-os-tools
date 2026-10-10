@@ -10,9 +10,12 @@ def test_clean(project: Paths) -> None:
     assert not project.builds.exists() and not project.tmp.exists()
     assert project.build_config.exists() and project.modules.is_dir() and project.src_modules_h.is_file()
     assert main(["build", "--chip", "c3"]) == 0
+    config_h = project.root / "Config.h"
+    config_h.write_text("// mine\n// ---- wifi (xewe modules generate) ----\n")
     assert main(["clean", "--modules"]) == 0
     assert not project.modules.exists() and not project.src_modules_h.exists() and not project.builds.exists()
     assert project.build_config.exists() and project.libraries.is_dir()
+    assert config_h.read_text() == "// mine\n// ---- wifi (xewe modules generate) ----\n"  # the user's file stays
     assert main(["build"]) == 3
 
 

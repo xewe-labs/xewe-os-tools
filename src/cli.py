@@ -300,9 +300,14 @@ def _modules_command(args: argparse.Namespace, p: Paths) -> int:
             return EXIT_OK
     cfg = config.require(p)
     rec = cfg.installed.get("modules", {})
+    config_h = p.root / "Config.h"
+    before = config_h.read_text(encoding="utf-8") if config_h.is_file() else None
     order = modules.generate(p, registry, lock.selected, rec.get("source", lock.modules.repo),
                              rec.get("ref", lock.modules.ref), rec.get("commit", "-"))
-    result(f"modules: {', '.join(m.slug for m in order) or 'none'}  (build/modules, src/Modules.h)")
+    written = "build/modules, src/Modules.h"
+    if config_h.is_file() and config_h.read_text(encoding="utf-8") != before:
+        written += ", Config.h"
+    result(f"modules: {', '.join(m.slug for m in order) or 'none'}  ({written})")
     return EXIT_OK
 
 

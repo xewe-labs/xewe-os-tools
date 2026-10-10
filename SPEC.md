@@ -421,7 +421,8 @@ template):
 └── .lock                            fcntl.flock while setup installs the cli, the core or a source checkout
 
 <project>/
-├── <name>.ino  Config.h  xewe.toml  setup.sh  run.sh ...
+├── <name>.ino  xewe.toml  setup.sh  run.sh ...
+├── Config.h                         yours; generate appends one block per module with knobs (§10)
 ├── src/Modules.h                    generated: #include <XeWeModules.h> + the declare lines (§10)
 └── build/
     ├── builds/<chip>/gen/XeWeBuildInfo/   generated per build (§7)
@@ -565,8 +566,12 @@ Steps per chip:
    #define BUILD_VERSION "2.0.15"
    #define BUILD_TIMESTAMP "2026-10-08T12:00:00Z"
    #define BUILD_CHIP "c3"
+   #define XEWE_CHIP_C3 1       // the chip as a macro: C3, C6 or S3
    #define LED_PIN 8            // one line per --define / release-matrix column
    ```
+   `XEWE_CHIP_<C3|C6|S3>` is for chip-conditional values in `Config.h`: the core's
+   `CONFIG_IDF_TARGET_*` macros live in `sdkconfig.h` (not on the command line in esp32 3.3.12),
+   and `Config.h` is read before any header (step 4).
    The template's `Config.h` does `#include <XeWeBuildInfo.h>` and wraps its own defaults in
    `#ifndef`. This replaces today's in-place rewriting of `Config.h` by `build.sh` (which dirtied
    a committed file on every build). `--define KEY=VALUE` replaces `--config_json`; values are
@@ -586,11 +591,24 @@ Steps per chip:
      --libraries build/libraries \
      --library build/modules \
      --library build/builds/<chip>/gen/XeWeBuildInfo \
+     --build-property 'compiler.cpp.extra_flags=-I "<abs>/build/builds/<chip>/gen/XeWeBuildInfo/src" -include "<abs sketch dir>/Config.h"' \
      --warnings default \
      --jobs 0 \
      <sketch dir>
    ```
    (`XeWeBuildInfo` stays its own `--library`: module sources include it and must keep seeing it.)
+
+   `compiler.cpp.extra_flags` (empty in esp32 platform.txt 3.3.12 and meant for this; not
+   `build.extra_flags`, which the platform uses for `ARDUINO_USB_CDC_ON_BOOT`) prefixes every C++
+   translation unit, sketch, modules, libraries and the esp32 core alike, with the project's
+   `Config.h`, so a value set there (a module's `XEWE_MODULE_<SLUG>_<VAR>`, §10) reaches the module
+   sources. The esp32 core is compiled with the core and variant include paths only, so the `-I`
+   on the generated library makes `Config.h`'s `#include <XeWeBuildInfo.h>` resolve there too.
+   Both paths are absolute and double-quoted (arduino-cli splits the recipe on unquoted spaces);
+   the `-include` names the sketch directory's copy (the mirror of step 2 when the folder was
+   renamed), the same file the sketch includes, so `#pragma once` makes that include a no-op. The
+   up-to-date check counts `Config.h` as a source (step 5), and gcc's dependency files list
+   `-include` headers, so arduino-cli's own cache is invalidated by an edit as well.
    stdout+stderr go to `build/builds/<chip>/out/compile.log`; on failure print the last 15 lines matching
    `error` (as `validate.sh` does) and exit 1. `--verbose` streams the log live.
 5. Artifacts into `build/builds/<chip>/out/` (directory emptied first; no timestamped history, no `latest`
@@ -935,6 +953,22 @@ Parsing = today's `prop()`: first `key=` line wins, value is everything after th
    `// no modules selected` comment, and `modules.lock` only its header line.
 5. A `src/modules/` left by the previous layout is removed (`removed legacy src/modules/`) only when
    its `modules.lock` starts with the generated header line; otherwise it is left alone.
+6. The project's `Config.h` (`fill_config_h`). For every module of the resolved order that has a
+   `src/<Folder>/Config.h` (`Module.config_h`; the modules contract: pure preprocessor,
+   `XEWE_MODULE_<SLUG>_<VAR>` defines in `#ifndef` guards), look for the marker line
+   `// ---- <slug> (xewe modules generate) ----`. Present: leave the file alone. Absent: append
+   ```c
+
+   // ---- led (xewe modules generate) ----
+   // Values of the led module. Edit the numbers; keep this marker and the end marker.
+   <the module's Config.h after its #pragma once (else without its SPDX lines)>
+   // ---- end led ----
+   ```
+   A block is never removed or rewritten: the user's edits in it survive every generate, and a
+   block whose module is no longer selected stays with one `note:` line. `Config.h` is never
+   created (the template owns it; setup fails without it). `xewe clean --modules` does not touch
+   it. The CLI summary line reads `(build/modules, src/Modules.h, Config.h)` when a block was
+   added, `(build/modules, src/Modules.h)` otherwise.
 
 `xewe modules validate [PATH]` — runs over every module in the checkout, prints one line per
 problem, exit 1 if any:

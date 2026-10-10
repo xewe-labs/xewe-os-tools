@@ -55,6 +55,35 @@ def checkout(request: pytest.FixtureRequest, tmp_path: Path) -> Path:
     return make_modules_checkout(tmp_path / "checkout", request.param)
 
 
+PINS_CONFIG_H = """\
+// SPDX-FileCopyrightText: 2026 Someone
+// SPDX-License-Identifier: GPL-3.0-only
+// xewe-os-modules/modules/pins/src/Pins/Config.h
+#pragma once
+
+// Claim slots.
+#ifndef XEWE_MODULE_PINS_CLAIMS_MAX
+#define XEWE_MODULE_PINS_CLAIMS_MAX 8
+#endif
+"""
+PINS_BLOCK = """
+// ---- pins (xewe modules generate) ----
+// Values of the pins module. Edit the numbers; keep this marker and the end marker.
+// Claim slots.
+#ifndef XEWE_MODULE_PINS_CLAIMS_MAX
+#define XEWE_MODULE_PINS_CLAIMS_MAX 8
+#endif
+// ---- end pins ----
+"""
+PROJECT_CONFIG_H = "#pragma once\n#include <XeWeBuildInfo.h>\n"
+
+
+def _module_config(checkout: Path, slug: str, text: str = PINS_CONFIG_H) -> None:
+    """Give module ``slug`` of ``checkout`` a ``src/<Folder>/Config.h``."""
+    folder = next(next(checkout.rglob(f"*{slug}/src")).iterdir())
+    (folder / "Config.h").write_text(text)
+
+
 def _set(checkout: Path, slug: str, key: str, value: str | None) -> None:
     props = next(checkout.rglob(f"*{slug}/module.properties"))
     lines = [ln for ln in props.read_text().splitlines() if not ln.startswith(f"{key}=")]
@@ -117,6 +146,55 @@ def test_generate_writes_modules(tmp_path: Path, checkout: Path) -> None:
     assert sorted(f.name for f in p.root.iterdir()) == ["build", "src"]
     assert sorted(f.name for f in (p.root / "src").iterdir()) == ["Modules.h"]  # no src/modules/ any more
     assert sorted(f.name for f in p.build.iterdir()) == ["modules"]  # staging swapped away, build/tmp removed
+
+
+def test_generate_appends_config_blocks(tmp_path: Path, checkout: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _module_config(checkout, "pins")
+    _module_config(checkout, "wifi", "#pragma once\n#ifndef XEWE_MODULE_WIFI_DEBUG\n#define XEWE_MODULE_WIFI_DEBUG 0\n#endif\n")
+    p = Paths(tmp_path / "proj")
+    p.root.mkdir()
+    config_h = p.root / "Config.h"
+    config_h.write_text(PROJECT_CONFIG_H)
+    assert Registry.load(checkout).get("pins").config_h is not None
+    assert Registry.load(checkout).get("buttons").config_h is None
+    modules.generate(p, Registry.load(checkout), ["pins", "buttons", "wifi"], "s", "r", "c")
+    text = config_h.read_text()
+    assert text == PROJECT_CONFIG_H + PINS_BLOCK + (
+        "\n// ---- wifi (xewe modules generate) ----\n"
+        "// Values of the wifi module. Edit the numbers; keep this marker and the end marker.\n"
+        "#ifndef XEWE_MODULE_WIFI_DEBUG\n#define XEWE_MODULE_WIFI_DEBUG 0\n#endif\n// ---- end wifi ----\n")
+    assert "buttons" not in text  # a module without Config.h adds no block
+    # a second generate is a no-op, byte for byte
+    modules.generate(p, Registry.load(checkout), ["pins", "buttons", "wifi"], "s", "r", "c")
+    assert config_h.read_text() == text
+    # an edited value survives; the block is never rewritten
+    edited = text.replace("CLAIMS_MAX 8", "CLAIMS_MAX 16")
+    config_h.write_text(edited)
+    capsys.readouterr()
+    modules.generate(p, Registry.load(checkout), ["pins", "wifi"], "s", "r", "c")
+    assert config_h.read_text() == edited
+    assert "note:" not in capsys.readouterr().out
+    # deselecting keeps the block and says so
+    modules.generate(p, Registry.load(checkout), ["wifi"], "s", "r", "c")
+    assert config_h.read_text() == edited
+    assert "note: Config.h keeps the pins block; the module is not selected" in capsys.readouterr().out
+
+
+def test_generate_without_config_h(tmp_path: Path, checkout: Path) -> None:
+    _module_config(checkout, "pins")
+    p = Paths(tmp_path / "proj")
+    modules.generate(p, Registry.load(checkout), ["pins"], "s", "r", "c")
+    assert not (p.root / "Config.h").exists()  # never created: the template owns it
+
+
+def test_config_block_strips_the_header() -> None:
+    # no #pragma once: only the SPDX lines go
+    text = "// SPDX-FileCopyrightText: x\n// SPDX-License-Identifier: y\n#ifndef A\n#define A 1\n#endif\n"
+    module = modules.Module(Path("/x"), "led", {"slug": "led", "folder": "Led"})
+    assert modules.config_block(module, text) == (
+        "\n// ---- led (xewe modules generate) ----\n"
+        "// Values of the led module. Edit the numbers; keep this marker and the end marker.\n"
+        "#ifndef A\n#define A 1\n#endif\n// ---- end led ----\n")
 
 
 def test_library_version_falls_back_to_commit(tmp_path: Path, checkout: Path) -> None:
@@ -308,6 +386,14 @@ def test_cli_list_select_generate(project: Paths, capsys: pytest.CaptureFixture[
     assert 'selected = ["scheduler"]' in project.lock.read_text()
     assert (project.modules / "src" / "XeWeModules.h").read_text().count("#include") == 3
     assert project.src_modules_h.read_text().count("(os") == 3
+    assert "modules: wifi, time, scheduler  (build/modules, src/Modules.h)" in capsys.readouterr().out
+    # a module with knobs: the first generate adds its block and says so, the next one is silent
+    _module_config(project.root.parent / "modules-src", "wifi")
+    assert main(["modules", "generate"]) == 0
+    assert "modules: wifi, time, scheduler  (build/modules, src/Modules.h, Config.h)" in capsys.readouterr().out
+    assert "// ---- wifi (xewe modules generate) ----" in (project.root / "Config.h").read_text()
+    assert main(["modules", "generate"]) == 0
+    assert "(build/modules, src/Modules.h)" in capsys.readouterr().out
     assert main(["modules", "select", "nope"]) == 2
     assert main(["modules", "select", "none"]) == 0
     assert "selected = []" in project.lock.read_text()

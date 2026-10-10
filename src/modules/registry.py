@@ -121,6 +121,12 @@ class Module:
         """``tests/`` (pytest collects ``board/`` and ``unit/`` below it recursively)."""
         return self.dir / "tests"
 
+    @property
+    def config_h(self) -> Path | None:
+        """``src/<Folder>/Config.h``, the module's compile-time knobs, or None when it has none."""
+        path = self.dir / "src" / self.folder / "Config.h"
+        return path if self.folder and path.is_file() else None
+
     def declared(self) -> tuple[str, str, list[str]] | None:
         """(type, variable, arguments) of ``declare=``, or None when it does not parse."""
         m = DECLARE_RE.match(self.props.get("declare", "").strip())
@@ -317,6 +323,58 @@ def render_modules_lock(order: list[Module], source: str, ref: str, commit: str)
     return "\n".join(lines) + "\n"
 
 
+CONFIG_MARK = "// ---- {slug} (xewe modules generate) ----"
+CONFIG_END = "// ---- end {slug} ----"
+CONFIG_MARK_RE = re.compile(r"^// ---- ([a-z0-9-]+) \(xewe modules generate\) ----$", re.M)
+
+
+def config_block(module: Module, text: str) -> str:
+    """The block ``fill_config_h`` appends for ``module``: the markers around its ``Config.h``
+    without the file header (everything up to ``#pragma once``, else the SPDX lines)."""
+    lines = text.splitlines()
+    if "#pragma once" in lines:
+        lines = lines[lines.index("#pragma once") + 1:]
+    else:
+        lines = [ln for ln in lines if not ln.startswith("// SPDX-")]
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    body = "\n".join(lines)
+    return (
+        f"\n{CONFIG_MARK.format(slug=module.slug)}\n"
+        f"// Values of the {module.slug} module. Edit the numbers; keep this marker and the end marker.\n"
+        f"{body}\n{CONFIG_END.format(slug=module.slug)}\n"
+    )
+
+
+def fill_config_h(p: Paths, order: list[Module]) -> list[str]:
+    """Append one marked block per module of ``order`` that has a ``Config.h`` and no block yet in
+    the project's ``Config.h``; return the slugs added. The file is the user's: an existing block
+    is never touched, a block of a module that is no longer selected stays (one ``note:`` line),
+    and a missing ``Config.h`` is left to setup to report."""
+    config_h = p.root / "Config.h"
+    if not config_h.is_file():
+        return []
+    text = config_h.read_text(encoding="utf-8")
+    present = set(CONFIG_MARK_RE.findall(text))
+    selected = {m.slug for m in order}
+    for slug in sorted(present - selected):
+        result(f"note: Config.h keeps the {slug} block; the module is not selected")
+    added: list[str] = []
+    for module in order:
+        if module.slug in present or module.config_h is None:
+            continue
+        if text and not text.endswith("\n"):
+            text += "\n"
+        text += config_block(module, module.config_h.read_text(encoding="utf-8"))
+        added.append(module.slug)
+    if added:
+        config_h.write_text(text, encoding="utf-8")
+        log.info("Config.h: added the %s block(s)", ", ".join(added))
+    return added
+
+
 def remove_legacy_src_modules(p: Paths) -> bool:
     """Remove ``src/modules/`` of the previous layout, only when xewe generated it (its
     ``modules.lock`` starts with the generated header). Returns True when it was removed."""
@@ -356,7 +414,8 @@ def generate(p: Paths, registry: Registry, selected: list[str], source: str, ref
     is removed again when that leaves it empty). An empty ``selected`` is valid: the library is
     still written (``XeWeModules.h`` includes nothing), ``Modules.h`` declares nothing and
     ``modules.lock`` holds only its header line. Arduino reads only ``library.properties`` and
-    ``src/`` of the library, so the tests beside it are not compiled.
+    ``src/`` of the library, so the tests beside it are not compiled. Last, the project's
+    ``Config.h`` gets one block per module with knobs that has none yet (``fill_config_h``).
     """
     order = registry.resolve(selected)
     stage = p.tmp / "modules"
@@ -390,6 +449,7 @@ def generate(p: Paths, registry: Registry, selected: list[str], source: str, ref
     shutil.rmtree(old, ignore_errors=True)
     p.drop_tmp_if_empty()
     write_atomic(p.src_modules_h, render_modules_h(order))
+    fill_config_h(p, order)
     remove_legacy_build(p)
     remove_legacy_src_modules(p)
     return order

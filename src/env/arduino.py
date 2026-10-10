@@ -194,6 +194,16 @@ def install_core(
         raise XeWeError(f"{CORE_ID} reports {got!r} after install, expected {version}", EXIT_NOT_SETUP)
 
 
+def config_flags(chip: Chip, p: Paths, sketch_dir: Path) -> str:
+    """``compiler.cpp.extra_flags`` of the compile: every C++ translation unit (the sketch, the
+    modules, every library and the esp32 core) starts with the project's ``Config.h``, so a value
+    set there reaches the module sources too. The ``-I`` lets its ``#include <XeWeBuildInfo.h>``
+    resolve in the core as well, which arduino-cli compiles with the core and variant include
+    paths only. Paths are absolute and quoted; arduino-cli splits the recipe on unquoted spaces."""
+    gen = p.gen_dir(chip.name) / "XeWeBuildInfo" / "src"
+    return f'-I "{gen}" -include "{sketch_dir / "Config.h"}"'
+
+
 def compile_argv(cli: str, chip: Chip, p: Paths, sketch_dir: Path) -> list[str]:
     """The exact ``arduino-cli compile`` argv for ``chip`` (paths relative to the project root)."""
     return [
@@ -209,6 +219,8 @@ def compile_argv(cli: str, chip: Chip, p: Paths, sketch_dir: Path) -> list[str]:
         p.rel(p.modules),
         "--library",
         p.rel(p.gen_dir(chip.name) / "XeWeBuildInfo"),
+        "--build-property",
+        f"compiler.cpp.extra_flags={config_flags(chip, p, sketch_dir)}",
         "--warnings",
         "default",
         "--jobs",

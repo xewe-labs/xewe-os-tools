@@ -31,6 +31,8 @@ def test_compile_argv_per_chip(chip: str, tmp_path: Path) -> None:
         "--libraries", "build/libraries",
         "--library", "build/modules",
         "--library", f"build/builds/{chip}/gen/XeWeBuildInfo",
+        "--build-property",
+        f'compiler.cpp.extra_flags=-I "{p.root}/build/builds/{chip}/gen/XeWeBuildInfo/src" -include "{p.root}/Config.h"',
         "--warnings", "default",
         "--jobs", "0",
         ".",
@@ -42,9 +44,12 @@ def test_dry_run_prints_exact_command(project: Paths, chip: str, capsys: pytest.
                                       fake_cli: object) -> None:
     assert main(["build", "--chip", chip, "--dry-run"]) == 0
     out = capsys.readouterr().out.strip()
+    root = project.root
     assert out.endswith(
         f"compile --fqbn {GOLDEN_FQBN[chip]} --build-path build/builds/{chip}/cache --libraries build/libraries "
-        f"--library build/modules --library build/builds/{chip}/gen/XeWeBuildInfo --warnings default --jobs 0 ."
+        f"--library build/modules --library build/builds/{chip}/gen/XeWeBuildInfo --build-property "
+        f"'compiler.cpp.extra_flags=-I \"{root}/build/builds/{chip}/gen/XeWeBuildInfo/src\" "
+        f"-include \"{root}/Config.h\"' --warnings default --jobs 0 ."
     )
     assert fake_cli() == []  # nothing ran
     assert not project.out_dir(chip).exists()
