@@ -513,7 +513,7 @@ def test_cli_missing_password_exit_2_before_port(project: Paths, monkeypatch: py
     monkeypatch.setattr(boards, "select", no_select)
     monkeypatch.setenv("XEWE_WIFI_SSID", "HomeNet")
     assert main(["provision"]) == 2
-    assert "XEWE_WIFI_PASSWORD is not set" in caplog.text and ".env.example" in caplog.text
+    assert "XEWE_WIFI_PASSWORD is not set" in caplog.text and "fill in the dotenv file" in caplog.text
     assert main(["provision", "--modules", "pins", "--timezone", "GMT+8"]) == 2
 
 

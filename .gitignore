@@ -5,7 +5,6 @@ __pycache__/
 /build/
 /dist/
 .pytest_cache/
-# credentials and settings (xewe.dotenv); only the example is committed
+# credentials and settings (xewe.env.dotenv)
 .env
 .env.*
-!.env.example

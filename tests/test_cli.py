@@ -8,7 +8,7 @@ from xewe import __version__
 from xewe.cli import main
 from xewe.env.project import Paths
 
-COMMANDS = ["setup", "build", "flash", "serial", "provision", "test", "run", "boards", "modules", "manifest", "clean", "doctor", "release"]
+COMMANDS = ["setup", "check", "brand-lint", "build", "flash", "serial", "provision", "test", "run", "boards", "modules", "manifest", "clean", "doctor", "release"]
 SUBCOMMANDS = ["modules list", "modules select", "modules validate", "modules generate", "manifest show", "manifest update"]
 
 

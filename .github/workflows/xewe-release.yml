@@ -1,11 +1,11 @@
 # xewe-release.yml: reusable release for a XeWe OS firmware project, run on a version tag.
-# Mirrors the old build/scripts/release.sh and today's `xewe release`: build the release matrix into
-# static/firmware/releases/<version>/, then publish it twice:
+# Runs `xewe release`: build the release matrix into static/firmware/releases/<version>/, then
+# publish it twice:
 #   1. a GitHub Release with the binaries and firmware-<version>.tar.gz (canonical, permanent);
 #      every meta.json records the resolved commits of core, modules, tools and libraries
 #   2. a commit of the same folder to the `releases` branch (static files for the web flasher)
 # Tags: vX.Y.Z (release) or vX.Y.Z-<suffix> (pre-release, e.g. v2.0.0-rc1). X.Y.Z must equal
-# [project] version in xewe.toml at the tagged commit. See ci/README.md.
+# [project] version in xewe.toml at the tagged commit. See doc/ci.md.
 name: xewe-release
 
 on:
@@ -73,7 +73,8 @@ jobs:
             track="$ref"; [[ "$ref" == latest ]] && track=""
             git clone -q --depth 1 ${track:+--branch "$track"} "$repo" "$dest"
           fi
-          python3 - "$dest/src/env/pins.py" >> "$GITHUB_OUTPUT" <<'PY'
+          pins="$dest/src/xewe/env/pins.py"; [[ -f "$pins" ]] || pins="$dest/src/env/pins.py"
+          python3 - "$pins" >> "$GITHUB_OUTPUT" <<'PY'
           import runpy, sys
           pins = runpy.run_path(sys.argv[1])
           print(f"cli={pins['ARDUINO_CLI_VERSION']}")
@@ -116,7 +117,7 @@ jobs:
       # Pre-release tags: the folder is renamed to the full tag version (X.Y.Z-rc1) so it never
       # claims X.Y.Z; the binaries inside still report X.Y.Z. meta.json already records what the
       # release was built from (project_commit, core/modules/tools *_ref + *_commit, libraries:
-      # SPEC §11); this step adds release_tag and, for a tools ref older than that change, fills the
+      # doc/spec.md §11); this step adds release_tag and, for a tools ref older than that change, fills the
       # commits in from build_config.toml [installed]. The first meta.json's provenance also goes
       # into the release notes.
       - name: Finish the release folder

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import REPO, write_project
+from conftest import write_project
 from xewe.env import dotenv
 from xewe.env.dotenv import apply, find, load, load_settings, package_checkout, parse
 from xewe.report import XeWeError
@@ -98,9 +98,9 @@ def test_explicit_missing_file_exit_2(tmp_path: Path) -> None:
 
 def test_tools_checkout_falls_back_to_package_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     checkout = tmp_path / "tools"
-    (checkout / "src" / "env").mkdir(parents=True)
+    (checkout / "src" / "xewe" / "env").mkdir(parents=True)
     (checkout / "pyproject.toml").write_text("[project]\n")
-    module = checkout / "src" / "env" / "dotenv.py"
+    module = checkout / "src" / "xewe" / "env" / "dotenv.py"
     assert package_checkout(module) == checkout
     assert package_checkout(tmp_path / "site-packages" / "xewe" / "env" / "dotenv.py") is None  # not a checkout
     (checkout / ".env").write_text("XEWE_CHIP=s3\n")
@@ -124,8 +124,27 @@ def test_load_settings_logs_count_never_values(layout: tuple[Path, Path, Path],
     assert SECRET not in caplog.text and "typo" not in caplog.text
 
 
-def test_example_file_lists_every_key() -> None:
-    example = REPO / ".env.example"
-    values = load([example])
-    assert set(values) == set(dotenv.KEYS)
-    assert values["XEWE_WIFI_SSID"] == "example-network"
+def test_skeleton_written_when_absent(tmp_path: Path) -> None:
+    assert dotenv.write_skeleton(tmp_path)
+    path = tmp_path / dotenv.FILENAME
+    text = path.read_text()
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert parse(text) == {key: "" for key in dotenv.KEYS}
+    lines = text.splitlines()
+    for key, help_ in dotenv.KEYS.items():
+        i = lines.index(f"{key}=")
+        assert lines[i - 1] == f"# {help_}" and "first provision" in help_
+
+
+def test_skeleton_never_overwrites(tmp_path: Path) -> None:
+    path = tmp_path / dotenv.FILENAME
+    path.write_text("XEWE_PORT=/dev/ttyX\n")
+    assert not dotenv.write_skeleton(tmp_path)
+    assert path.read_text() == "XEWE_PORT=/dev/ttyX\n"
+
+
+def test_skeleton_loads_as_no_settings(tmp_path: Path) -> None:
+    dotenv.write_skeleton(tmp_path)
+    env: dict[str, str] = {}
+    load_settings(tmp_path, None, env)
+    assert env == {}

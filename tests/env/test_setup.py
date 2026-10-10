@@ -4,9 +4,10 @@ from typing import Any
 
 import pytest
 
-from conftest import REPO, make_modules_checkout, write_project
+from conftest import FIXTURES, make_modules_checkout, write_project
+from xewe.build import chips
 from xewe.cli import main
-from xewe.env import arduino, config, fetch, runscript, setup
+from xewe.env import arduino, config, dotenv, fetch, runscript, setup
 from xewe.env.project import Paths
 from xewe.env.setup import SetupOptions
 from xewe.modules import lockfile
@@ -500,20 +501,20 @@ def test_tools_branch_ref_is_recorded(fresh: Paths, monkeypatch: pytest.MonkeyPa
     assert fresh.tools_checkout in commits and fresh.venv == fresh.root / "build" / "tools" / ".venv"
 
 
-def test_bootstrap_scripts_use_new_layout() -> None:
+def test_bootstrap_script_uses_new_layout() -> None:
+    """tests/fixtures/setup.sh is a copy of the template's setup.sh (the template owns the file)."""
     import subprocess
 
-    scripts = REPO / "scripts"
-    for name in ("setup.sh", "run.sh"):
-        assert subprocess.run(["bash", "-n", str(scripts / name)]).returncode == 0
-    boot = (scripts / "setup.sh").read_text()
+    setup_sh = FIXTURES / "setup.sh"
+    assert subprocess.run(["bash", "-n", str(setup_sh)]).returncode == 0
+    boot = setup_sh.read_text()
     assert 'VENV="${BUILD}/tools/.venv"' in boot and 'SRC="${BUILD}/tools"' in boot
     assert 'reset --quiet --hard "origin/${TRACK}"' in boot  # branch refs follow the remote head
     # `latest`: the default branch from ls-remote --symref (else main), then followed like a branch
     assert '[[ "${TOOLS_REF}" == "latest" ]]' in boot and 'git ls-remote --symref "${TOOLS_REPO}" HEAD' in boot
     assert 'TRACK="${TRACK:-main}"' in boot and '--branch "${TRACK}"' in boot
     assert 'echo "tools: latest -> ${TRACK}@' in boot
-    assert "build/tools/.venv/bin/python" in (scripts / "run.sh").read_text()
+    assert 'exec "${VPY}" -m xewe --project "${ROOT}" setup "$@"' in boot
 
 
 # --- the ref `latest`: the default branch head, followed on every setup
@@ -633,13 +634,136 @@ def test_latest_offline_keeps_installed_checkout(fresh: Paths, latest_remote: di
     assert config.load(fresh).installed["core"]["commit"] == HEAD_SHA
 
 
-def test_setup_generates_run_sh(fresh: Paths, capsys: pytest.CaptureFixture[str]) -> None:
+def test_setup_generates_run_sh(fresh: Paths) -> None:
     run = fresh.root / "run.sh"
     assert not run.exists()
     assert main(["setup", "--modules", "scheduler"]) == 0
     assert run.read_text() == runscript.render("c3")
-    run.write_text("#!/bin/sh\necho mine\n")  # hand-written: kept, with a note
-    capsys.readouterr()
+    run.write_text("#!/bin/sh\necho mine\n")
     assert main(["setup"]) == 0
-    assert run.read_text() == "#!/bin/sh\necho mine\n"
-    assert "run.sh is hand-written" in capsys.readouterr().out
+    assert run.read_text() == runscript.render("c3")
+
+
+def test_setup_writes_dotenv_skeleton_once(fresh: Paths) -> None:
+    path = fresh.root / dotenv.FILENAME
+    assert not path.exists()
+    assert main(["setup", "--modules", "none"]) == 0
+    assert path.read_text() == dotenv.skeleton()
+    assert all(f"\n{key}=\n" in path.read_text() for key in dotenv.KEYS)
+    path.write_text("XEWE_CHIP=s3\n")
+    assert main(["setup"]) == 0
+    assert path.read_text() == "XEWE_CHIP=s3\n"
+
+
+# --- library mode: library.properties and no xewe.toml (xewe-os-core)
+
+
+@pytest.fixture
+def lib_clones() -> list[tuple[str, str]]:
+    """The (repo, ref) of every clone the ``library`` fixture's fake git made."""
+    return []
+
+
+@pytest.fixture
+def library(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_cli: Any, no_ports: None,
+            lib_clones: list[tuple[str, str]]) -> Paths:
+    """An Arduino library like xewe-os-core: two examples (one nested), a unit runner, depends=ArduinoJson."""
+    root = tmp_path / "xewe-os-core"
+    (root / "src").mkdir(parents=True)
+    (root / "library.properties").write_text(
+        "name=XeWeCore\nversion=2.1.0\ndepends=ArduinoJson (>=7.0.0), Missing\nincludes=XeWeCore.h\n")
+    for ex in ("01_Hello", "Group/02_Nested"):
+        d = root / "examples" / ex
+        d.mkdir(parents=True)
+        (d / f"{d.name}.ino").write_text("#include <XeWeCore.h>\nvoid setup() {}\nvoid loop() {}\n")
+    (root / "examples" / "README.md").write_text("pointer\n")
+    unit = root / "tests" / "unit"
+    unit.mkdir(parents=True)
+    (unit / "run.sh").write_text('#!/usr/bin/env bash\necho "AJ=${ARDUINOJSON_SRC:-unset}" > "$(dirname "$0")/ran"\n'
+                                 'exit "${FAKE_UNIT_EXIT:-0}"\n')
+    def clone(repo: str, ref: str, dest: Path) -> str:
+        lib_clones.append((repo, ref))
+        (dest / "src").mkdir(parents=True, exist_ok=True)
+        (dest / "src" / "ArduinoJson.h").write_text("#pragma once\n")
+        return "a150"
+
+    monkeypatch.setattr(fetch, "clone", clone)
+    monkeypatch.setattr(fetch, "head_commit", lambda path: "a150" if path.is_dir() else "-")
+    monkeypatch.setattr(setup.pins, "MIN_FREE_DISK_BYTES", 0)
+    monkeypatch.chdir(root / "examples")
+    return Paths(root)
+
+
+def test_library_setup(library: Paths, lib_clones: list[tuple[str, str]], caplog: pytest.LogCaptureFixture,
+                       capsys: pytest.CaptureFixture[str]) -> None:
+    assert library.is_library
+    assert main(["setup"]) == 0
+    assert "setup complete (library XeWeCore)" in capsys.readouterr().out
+    assert lib_clones == [("https://github.com/bblanchon/ArduinoJson", "v7.4.3")]
+    assert "library Missing (depends= of library.properties) has no pin" in caplog.text
+    assert (library.libraries / "ArduinoJson" / "src" / "ArduinoJson.h").is_file()
+    assert (library.root / "run.sh").read_text() == runscript.render_check()
+    assert not (library.root / dotenv.FILENAME).exists() and not (library.root / "xewe.toml").exists()
+    cfg = config.load(library)
+    assert cfg is not None and cfg.installed["esp32"] == "3.3.12" and cfg.installed["arduino_cli"] == "1.5.1"
+    assert cfg.installed["libraries"]["ArduinoJson"]["ref"] == "v7.4.3"
+    assert cfg.installed["libraries"]["ArduinoJson"]["origin"] == "tools"
+    assert "modules" not in cfg.installed and "core" not in cfg.installed
+    lib_clones.clear()
+    assert main(["setup"]) == 0
+    assert lib_clones == []
+
+
+@pytest.mark.parametrize("flag", [["--latest"], ["--modules", "wifi"], ["--core-source", "."], ["--modules-source", "."]])
+def test_library_setup_rejects_project_flags(library: Paths, flag: list[str], caplog: pytest.LogCaptureFixture) -> None:
+    assert main(["setup", *flag]) == 2
+    assert "needs a project (xewe.toml)" in caplog.text
+    assert not library.build_config.exists()
+
+
+def test_library_setup_with_project_argument(library: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert main(["--project", str(library.root), "setup"]) == 0
+    assert (library.root / "run.sh").is_file()
+    assert main(["--project", str(library.root), "build"]) == 2  # build needs xewe.toml
+
+
+def test_check_examples_and_unit(library: Paths, fake_cli: Any, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["setup"]) == 0
+    capsys.readouterr()
+    assert main(["check", "--all-chips"]) == 0
+    out = capsys.readouterr().out
+    assert (library.root / "tests" / "unit" / "ran").read_text().strip() == \
+        f"AJ={library.libraries / 'ArduinoJson' / 'src'}"
+    assert "ok     c3  01_Hello" in out and "ok     s3  Group/02_Nested" in out
+    assert "check: unit ok; examples 6/6 compiled (c3, c6, s3), 0 failed, 6 warnings" in out
+    compiles = [c for c in fake_cli() if c["argv"][0] == "compile"]
+    assert len(compiles) == 6
+    first = compiles[0]
+    assert first["cwd"] == str(library.root)
+    assert first["argv"] == [
+        "compile", "--fqbn", chips.get("c3").fqbn,
+        "--build-path", "build/builds/c3/examples/01_Hello", "--libraries", "build/libraries", "--library", ".",
+        "--warnings", "default", "--jobs", "0", "examples/01_Hello"]
+    assert (library.builds / "c3" / "examples" / "01_Hello" / "compile.log").is_file()
+
+
+def test_check_parts_and_failures(library: Paths, fake_cli: Any, monkeypatch: pytest.MonkeyPatch,
+                                  capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["check", "--examples"]) == 3  # not set up
+    assert main(["check", "--unit"]) == 0  # the unit part needs no setup
+    assert (library.root / "tests" / "unit" / "ran").read_text().strip() == "AJ=unset"
+    monkeypatch.setenv("FAKE_UNIT_EXIT", "1")
+    assert main(["check", "--unit"]) == 1
+    monkeypatch.delenv("FAKE_UNIT_EXIT")
+    assert main(["setup"]) == 0
+    monkeypatch.setenv("FAKE_ARDUINO_COMPILE_FAIL", "esp32c6")
+    capsys.readouterr()
+    assert main(["check", "--examples", "--chip", "c6"]) == 1
+    out = capsys.readouterr().out
+    assert "FAIL   c6  01_Hello" in out and "check: examples 0/2 compiled (c6), 2 failed" in out
+
+
+def test_check_refuses_a_project(fresh: Paths, caplog: pytest.LogCaptureFixture) -> None:
+    assert main(["check"]) == 2
+    assert "xewe check runs in an Arduino library" in caplog.text

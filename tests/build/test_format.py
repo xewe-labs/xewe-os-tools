@@ -59,14 +59,13 @@ def test_format_rewrites_then_check_is_clean(proj: Paths, tmp_path: Path, capsys
     assert (proj.root / "build/libraries/X/X.h").read_text() == ALIGNED
     assert main(["format", "--check"]) == 0
     assert "0 would reformat" in capsys.readouterr().out
-    # the project's .clang-format is not there: the bundled style goes inline
-    assert all(c[0].startswith("--style={BasedOnStyle: LLVM, IndentWidth: 4,") for c in _calls(tmp_path))
+    assert all(c[0] == f"--style=file:{fmt.STYLE_FILE}" for c in _calls(tmp_path))
 
 
-def test_project_clang_format_and_paths(proj: Paths, tmp_path: Path) -> None:
+def test_project_clang_format_is_ignored_and_paths(proj: Paths, tmp_path: Path) -> None:
     (proj.root / ".clang-format").write_text("BasedOnStyle: LLVM\n")
     assert main(["format", "src/Foo/Foo.h"]) == 0
-    assert _calls(tmp_path) == [[f"--style=file:{proj.root / '.clang-format'}", str(proj.root / "src/Foo/Foo.h")]]
+    assert _calls(tmp_path) == [[f"--style=file:{fmt.STYLE_FILE}", str(proj.root / "src/Foo/Foo.h")]]
     assert (proj.root / "src/Foo/Foo.cpp").read_text() == ALIGNED
     assert main(["format", "nope.h"]) == 2
 
@@ -77,13 +76,31 @@ def test_clang_format_failure(proj: Paths, capsys: pytest.CaptureFixture[str]) -
     assert "clang-format failed on src/Foo/Foo.h" in capsys.readouterr().err
 
 
-def test_bundled_style_matches_the_rules() -> None:
-    style = fmt.inline_style()
+def test_shipped_style_matches_the_rules() -> None:
+    lines = fmt.STYLE_FILE.read_text().splitlines()
     for rule in ("AlignConsecutiveDeclarations: None", "AlignTrailingComments: false", "AlignOperands: DontAlign",
                  "AlignAfterOpenBracket: DontAlign", "SortIncludes: false", "PointerAlignment: Left",
-                 "ColumnLimit: 100", "AllowShortFunctionsOnASingleLine: Empty"):
-        assert rule in style
-    assert fmt.inline_style("# c\nA: 1\n\nB: x\n") == "{A: 1, B: x}"
+                 "ColumnLimit: 100", "AllowShortFunctionsOnASingleLine: Empty", "BasedOnStyle: LLVM",
+                 "IndentWidth: 4"):
+        assert rule in lines
+
+
+def test_shipped_style_is_package_data() -> None:
+    from importlib.resources import files
+
+    assert files("xewe.build").joinpath("clang-format").read_text() == fmt.STYLE_FILE.read_text()
+
+
+def test_format_runs_in_a_library(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    lib = tmp_path / "lib"
+    (lib / "src").mkdir(parents=True)
+    (lib / "library.properties").write_text("name=Lib\n")
+    (lib / "src" / "Lib.h").write_text(ALIGNED)
+    monkeypatch.setenv("XEWE_CLANG_FORMAT", str(FAKES / "clang-format"))
+    monkeypatch.setattr(fmt, "ruff_available", lambda: False)
+    monkeypatch.chdir(lib / "src")
+    assert main(["format"]) == 0
+    assert (lib / "src" / "Lib.h").read_text() == UNALIGNED
 
 
 def test_find_order(proj: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,5 +1,5 @@
 # xewe-build.yml: reusable build + host tests for a XeWe OS firmware project (the template or a
-# project cloned from it). Called from the project's .github/workflows/ci.yml; see ci/README.md.
+# project cloned from it). Called from the project's .github/workflows/ci.yml; see doc/ci.md.
 # Mirrors the local flow (run_tests/10_project.sh): ./setup.sh, xewe build, xewe test without a board.
 name: xewe-build
 
@@ -57,7 +57,8 @@ jobs:
             track="$ref"; [[ "$ref" == latest ]] && track=""
             git clone -q --depth 1 ${track:+--branch "$track"} "$repo" "$dest"
           fi
-          python3 - "$dest/src/env/pins.py" >> "$GITHUB_OUTPUT" <<'PY'
+          pins="$dest/src/xewe/env/pins.py"; [[ -f "$pins" ]] || pins="$dest/src/env/pins.py"
+          python3 - "$pins" >> "$GITHUB_OUTPUT" <<'PY'
           import runpy, sys
           pins = runpy.run_path(sys.argv[1])
           print(f"cli={pins['ARDUINO_CLI_VERSION']}")
@@ -146,5 +147,11 @@ jobs:
           else
             echo "::notice::xewe format is not in this tools version; skipped"
           fi
-      - name: brand-lint
-        run: bash "$RUNNER_TEMP/xewe-tools/scripts/brand-lint.sh" .
+      - name: xewe brand-lint
+        shell: bash
+        run: |
+          if "$RUNNER_TEMP/venv/bin/python" -m xewe brand-lint --help >/dev/null 2>&1; then
+            "$RUNNER_TEMP/venv/bin/python" -m xewe brand-lint .
+          else
+            echo "::notice::xewe brand-lint is not in this tools version; skipped"
+          fi

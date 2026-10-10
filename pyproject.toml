@@ -25,15 +25,21 @@ xewe = "xewe.cli:main"
 xewe = "xewe.testing.plugin"
 
 [tool.setuptools]
-# src/ is the `xewe` package; list every subpackage (a missing one ships silently absent).
-packages = ["xewe", "xewe.env", "xewe.build", "xewe.board", "xewe.modules", "xewe.testing"]
+package-dir = {"" = "src"}
 
-[tool.setuptools.package-dir]
-xewe = "src"
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"xewe.build" = ["clang-format"]
 
 [tool.ruff]
-# the tools' own style (the code is not ruff-formatted yet: that is a separate whitespace-only commit)
 line-length = 120
+src = ["src", "tests"]
+
+[tool.mypy]
+mypy_path = "src"
+packages = ["xewe"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

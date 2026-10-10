@@ -59,7 +59,8 @@ jobs:
             track="$ref"; [[ "$ref" == latest ]] && track=""
             git clone -q --depth 1 ${track:+--branch "$track"} "$repo" "$dest"
           fi
-          python3 - "$dest/src/env/pins.py" >> "$GITHUB_OUTPUT" <<'PY'
+          pins="$dest/src/xewe/env/pins.py"; [[ -f "$pins" ]] || pins="$dest/src/env/pins.py"
+          python3 - "$pins" >> "$GITHUB_OUTPUT" <<'PY'
           import runpy, sys
           pins = runpy.run_path(sys.argv[1])
           print(f"cli={pins['ARDUINO_CLI_VERSION']}")
@@ -97,7 +98,11 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: brand-lint
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: xewe brand-lint
         run: |
-          git clone -q --depth 1 https://github.com/xewe-labs/xewe-os-tools "$RUNNER_TEMP/xewe-tools"
-          bash "$RUNNER_TEMP/xewe-tools/scripts/brand-lint.sh" .
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install -q "git+https://github.com/xewe-labs/xewe-os-tools"
+          "$RUNNER_TEMP/venv/bin/python" -m xewe brand-lint .

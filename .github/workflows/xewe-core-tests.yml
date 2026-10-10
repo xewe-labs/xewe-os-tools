@@ -1,18 +1,19 @@
 # xewe-core-tests.yml: reusable checks for xewe-os-core (the XeWeCore Arduino library).
 # Host unit tests (tests/unit/run.sh), arduino-lint, and every example compiled for c3, c6 and s3.
-# Releases are NOT done here: core is released through publish-arduino-library (tag X.Y.Z, then the
-# Arduino Library Manager picks it up). See ci/README.md.
+# The examples job runs `xewe setup` and `xewe check --examples` in the core checkout (library mode).
+# Releases are not done here: core is released through publish-arduino-library (tag X.Y.Z, then the
+# Arduino Library Manager picks it up). See doc/ci.md.
 name: xewe-core-tests
 
 on:
   workflow_call:
     inputs:
       tools_ref:
-        description: "xewe-os-tools ref whose pins (arduino-cli, esp32 core, FQBN options) are used"
+        description: "xewe-os-tools ref whose pins (arduino-cli, esp32 core, FQBN options, libraries) are used"
         type: string
         default: "main"
       arduinojson_ref:
-        description: "ArduinoJson tag (mirrors [libraries] in the template's xewe.toml)"
+        description: "ArduinoJson tag for the host unit tests (the examples use the tools' pin)"
         type: string
         default: "v7.4.3"
 
@@ -51,12 +52,16 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: brand-lint
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: xewe brand-lint
         env:
           REF: ${{ inputs.tools_ref }}
         run: |
-          git clone -q --depth 1 --branch "$REF" https://github.com/xewe-labs/xewe-os-tools "$RUNNER_TEMP/xewe-tools"
-          bash "$RUNNER_TEMP/xewe-tools/scripts/brand-lint.sh" .
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install -q "git+https://github.com/xewe-labs/xewe-os-tools@$REF"
+          "$RUNNER_TEMP/venv/bin/python" -m xewe brand-lint .
 
   examples:
     name: examples (${{ matrix.chip }})
@@ -71,52 +76,27 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Pins and FQBN from the tools
-        id: pins
+      - name: Install the tools
+        id: tools
         env:
           REF: ${{ inputs.tools_ref }}
-          CHIP: ${{ matrix.chip }}
         run: |
           set -euo pipefail
-          git clone -q --depth 1 --branch "$REF" https://github.com/xewe-labs/xewe-os-tools "$RUNNER_TEMP/xewe-tools"
           python3 -m venv "$RUNNER_TEMP/venv"
-          "$RUNNER_TEMP/venv/bin/pip" install -q "$RUNNER_TEMP/xewe-tools"
-          "$RUNNER_TEMP/venv/bin/python" - "$CHIP" >> "$GITHUB_OUTPUT" <<'PY'
-          import sys
-          from xewe.build import chips
-          from xewe.env import pins
-          print(f"cli={pins.ARDUINO_CLI_VERSION}")
-          print(f"esp32={pins.ESP32_CORE_VERSION}")
-          print(f"index={pins.ESP32_INDEX_URL}")
-          print(f"fqbn={chips.get(sys.argv[1]).fqbn}")
-          PY
-      - uses: arduino/setup-arduino-cli@v2
-        with:
-          version: ${{ steps.pins.outputs.cli }}
-      - name: Cache the esp32 core (~/.arduino15)
+          "$RUNNER_TEMP/venv/bin/pip" install -q "git+https://github.com/xewe-labs/xewe-os-tools@$REF"
+          echo "esp32=$("$RUNNER_TEMP/venv/bin/python" -c 'from xewe.env import pins; print(pins.ESP32_CORE_VERSION)')" >> "$GITHUB_OUTPUT"
+      - name: Cache the shared toolchain (XEWE_HOME)
         uses: actions/cache@v4
         with:
-          path: ~/.arduino15
-          key: arduino15-${{ runner.os }}-${{ runner.arch }}-esp32-${{ steps.pins.outputs.esp32 }}-${{ inputs.arduinojson_ref }}
-      - name: Install the esp32 core and ArduinoJson
+          path: ${{ runner.temp }}/xewe-home
+          key: xewe-home-${{ runner.os }}-${{ runner.arch }}-esp32-${{ steps.tools.outputs.esp32 }}
+      - name: xewe setup (library mode)
         env:
-          INDEX: ${{ steps.pins.outputs.index }}
-          ESP32: ${{ steps.pins.outputs.esp32 }}
-          AJ: ${{ inputs.arduinojson_ref }}
-        run: |
-          set -euo pipefail
-          arduino-cli core update-index --additional-urls "$INDEX"
-          arduino-cli core install "esp32:esp32@$ESP32" --additional-urls "$INDEX"
-          arduino-cli lib install "ArduinoJson@${AJ#v}"
+          XEWE_HOME: ${{ runner.temp }}/xewe-home
+          XEWE_TOOLS_REF: ${{ inputs.tools_ref }}
+        run: '"$RUNNER_TEMP/venv/bin/python" -m xewe --project . setup'
       - name: Compile every example
         env:
-          FQBN: ${{ steps.pins.outputs.fqbn }}
-        run: |
-          set -euo pipefail
-          fail=0
-          for ex in examples/*/; do
-            echo "::group::${ex%/} ($FQBN)"
-            arduino-cli compile --fqbn "$FQBN" --library "$GITHUB_WORKSPACE" --warnings default "$ex" || { echo "::error::${ex%/} failed"; fail=1; }
-            echo "::endgroup::"
-          done
-          exit "$fail"
+          XEWE_HOME: ${{ runner.temp }}/xewe-home
+          CHIP: ${{ matrix.chip }}
+        run: '"$RUNNER_TEMP/venv/bin/python" -m xewe --project . check --examples --chip "$CHIP"'

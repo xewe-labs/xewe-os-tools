@@ -1,5 +1,5 @@
-# xewe-board.yml: board tests on a self-hosted runner with a board attached (proposal P2 in the
-# phase-4 CI/CD proposals; ci/README.md). The steps are the Mac's run_tests/10_project.sh as a job:
+# xewe-board.yml: board tests on a self-hosted runner with a board attached (doc/ci.md).
+# The steps are the Mac's run_tests/10_project.sh as a job:
 # setup, build, erase + flash, first-boot capture, provision, board tests in two passes (everything
 # but the restart tests, then the restart tests), with a liveness probe between them.
 #

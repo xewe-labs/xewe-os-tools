@@ -22,8 +22,6 @@ from xewe.env.project import Paths
 from xewe.modules.registry import Registry
 
 HERE = Path(__file__).parent
-REPO = HERE.parent
-"""The tools checkout (``scripts/``, ``.env.example``)."""
 FAKES = HERE / "fakes"
 FIXTURES = HERE / "fixtures"
 PROPERTIES = FIXTURES / "module_properties"
