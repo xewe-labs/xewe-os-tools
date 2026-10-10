@@ -111,6 +111,9 @@ def parser() -> argparse.ArgumentParser:
                     help="erase the whole flash (NVS too) first, so the board starts with a first boot; "
                          "default: NVS (name, Wi-Fi, module choices) is kept")
     sp.add_argument("--no-build", action="store_true", help="flash the existing image")
+    sp.add_argument("--settle", type=float, metavar="S",
+                    help="after a reset re-enumerates the port, it must stay present S seconds in a row "
+                         "(default 0.5, or XEWE_SETTLE); raise it when a hub or VM passthrough is slow")
     _require_board(sp)
     _env_arg(sp)
 
@@ -180,6 +183,9 @@ def parser() -> argparse.ArgumentParser:
     sp.add_argument("--keep-nvs", action="store_true",
                     help="do not erase the flash first; the board keeps its name, Wi-Fi and module choices")
     sp.add_argument("--no-serial", action="store_true", help="stop after flashing")
+    sp.add_argument("--settle", type=float, metavar="S",
+                    help="after a reset re-enumerates the port, it must stay present S seconds in a row "
+                         "(default 0.5, or XEWE_SETTLE); raise it when a hub or VM passthrough is slow")
     sp.add_argument("--no-input", action="store_true",
                     help="listen only; do not send lines typed on the terminal")
     sp.add_argument("--timestamps", action="store_true",
@@ -192,6 +198,9 @@ def parser() -> argparse.ArgumentParser:
     sp.add_argument("--set-port", metavar="P", help="write [override] port to build/config/boards.toml")
     sp.add_argument("--set-chip", choices=chips.ALL_CHIPS, help="with --set-port: [override] chip")
     sp.add_argument("--clear", action="store_true", help="remove the [override]")
+    sp.add_argument("--settle", type=float, metavar="S",
+                    help="after a reset re-enumerates the port, it must stay present S seconds in a row "
+                         "(default 0.5, or XEWE_SETTLE); raise it when a hub or VM passthrough is slow")
     _require_board(sp)
     _env_arg(sp)
 
@@ -304,7 +313,7 @@ def _boards_command(args: argparse.Namespace, p: Paths) -> int:
         override = boards.set_override(p, args.set_port, args.set_chip, args.clear)
         result(f"override: {override or 'none'}")
         return EXIT_OK
-    found = boards.scan(p, probe=not args.no_probe, esptool_cmd=lambda: flash.esptool_cmd(p))
+    found = boards.scan(p, probe=not args.no_probe, esptool_cmd=lambda: flash.esptool_cmd(p), settle=args.settle)
     if args.json:
         result(json.dumps([vars(b) for b in found], indent=2))
     for b in found if not args.json else []:
@@ -353,7 +362,8 @@ def dispatch(args: argparse.Namespace, extra: list[str]) -> int:
         return build.build(p, lock, _chips(args, p, lock), build.parse_defines(args.define), args.clean, args.dry_run)
     if cmd == "flash":
         code, _ = flash.flash_with_board(
-            p, lock, args.chip, args.port, args.baud, args.erase, args.no_build, _require_board_flag(args)
+            p, lock, args.chip, args.port, args.baud, args.erase, args.no_build, _require_board_flag(args),
+            settle=args.settle,
         )
         return code
     if cmd in ("serial", "provision") and board_disabled():
@@ -374,7 +384,8 @@ def dispatch(args: argparse.Namespace, extra: list[str]) -> int:
                          _require_board_flag(args), extra)
     if cmd == "run":
         return flash.run(p, lock, args.chip, args.port, build.parse_defines(args.define), args.no_serial,
-                         no_input=args.no_input, timestamps=args.timestamps, erase=not args.keep_nvs)
+                         no_input=args.no_input, timestamps=args.timestamps, erase=not args.keep_nvs,
+                         settle=args.settle)
     if cmd == "manifest":
         if args.manifest_command == "show":
             return manifest.show(p, lock, args.json)

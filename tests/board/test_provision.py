@@ -342,6 +342,61 @@ def test_unknown_prompt_that_never_ends_fails(caplog: pytest.LogCaptureFixture) 
     assert "keeps asking for input this tool does not know" in caplog.text
 
 
+# --------------------------------------------------------------------------- wrapped module questions
+
+
+def wrapped_module_block(name: str, *rows: str, sep: str = SEP, edge: str = "|") -> list[Any]:
+    """``print_header`` with a question wider than the 48-character box: word-wrapped into ``rows``."""
+    box = [sep, *(f"{edge}{row:^48}{edge}" for row in rows), f"{edge}{'':^48}{edge}",
+           f"{edge}{'description':^48}{edge}", sep]
+    return [*header(f"{name} Setup"), *box, "(y/n) > ", IN]
+
+
+HA_ROWS = ("Would you like to enable Home Assistant", "module?")
+
+
+def ha_first_boot(*block: Any) -> list[Any]:
+    """Name, Alexa (one-line header), Home Assistant (wrapped header), then the reboot."""
+    return [*name_block("Kitchen Lights"), *module_block("Alexa"), *block, *finish_block()]
+
+
+def test_wrapped_module_question_is_enabled(caplog: pytest.LogCaptureFixture,
+                                            capsys: pytest.CaptureFixture[str]) -> None:
+    fake = FakeBoard(ha_first_boot(*wrapped_module_block("Home Assistant", *HA_ROWS)))
+    with caplog.at_level("INFO", logger="xewe"):
+        assert run(fake, settings(modules=frozenset({"alexa", "home-assistant"}))) == 0
+    assert fake.answers == ["Kitchen Lights", "y", "y", "y"]
+    out = capsys.readouterr().out
+    assert "modules alexa, home-assistant;" in out and "answered with their default" not in out
+    assert "auto-answer" not in caplog.text
+    assert PASSWORD not in caplog.text + out
+
+
+def test_wrapped_module_question_not_listed_gets_n() -> None:
+    fake = FakeBoard(ha_first_boot(*wrapped_module_block("Home Assistant", *HA_ROWS)))
+    assert run(fake, settings(modules=frozenset({"alexa"}), ssid=None, password=None)) == 0
+    assert fake.answers == ["Kitchen Lights", "y", "y", "n"]
+
+
+def test_wrapped_module_question_split_inside_the_name_with_box_drawing(
+        capsys: pytest.CaptureFixture[str]) -> None:
+    block = wrapped_module_block("Home Assistant", "Would you like to enable Home", "Assistant   module?",
+                                 sep="\u250c" + "\u2500" * 48 + "\u2510", edge="\u2502")
+    fake = FakeBoard(ha_first_boot(*block))
+    assert run(fake, settings(modules=None)) == 0
+    assert fake.answers[-1] == "y"
+    assert "modules alexa, home-assistant;" in capsys.readouterr().out
+
+
+def test_answered_module_question_is_not_reused_for_a_later_yn_prompt() -> None:
+    """Only lines after the last answer are joined: an unknown (y/n) after a module still gets n."""
+    transcript = [*name_block("Kitchen Lights"), *module_block("Alexa"), "Reset the counter?", "(y/n) > ", IN,
+                  *finish_block()]
+    fake = FakeBoard(transcript)
+    assert run(fake, settings(modules=None, ssid=None, password=None)) == 0
+    assert fake.answers == ["Kitchen Lights", "y", "y", "n"]
+
+
 # --------------------------------------------------------------------------- the real S3 Wi-Fi prompt
 
 

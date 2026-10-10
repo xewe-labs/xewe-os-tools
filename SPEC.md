@@ -455,6 +455,12 @@ ARDUINO_NETWORK_CONNECTION_TIMEOUT=300s
 ARDUINO_UPDATER_ENABLE_NOTIFICATION=false
 ```
 
+No build cache is shared between projects: with `--build-path` arduino-cli ≥ 1.0.4 ignores its
+global build cache (`build_cache.path`, `ARDUINO_BUILD_CACHE_PATH`) and builds everything, core
+included, in the given path (arduino-cli `docs/UPGRADING.md`, 1.0.4; `--build-cache-path` is
+deprecated). Measured on the harness c3: recompiling only the core costs ~4 s, so this is not
+worth working around; the libraries are the cost of a fresh build path.
+
 No `arduino-cli.yaml` is written; `~/.arduino15` and `~/Arduino` are never read or written.
 
 Steps (each is skipped when its record in `build_config.toml [installed]` matches the wanted
@@ -665,8 +671,14 @@ its own `builds/<chip>/cache` and `builds/<chip>/gen`, so incremental rebuilds s
 - If esptool fails at 921600, retry once at 460800 (CH340 boards), then exit 1.
 - After each esptool command (erase-flash, write-flash) the hard reset re-enumerates a native
   USB port (it can linger, vanish, then come back): `wait_for_port` waits up to 10 s until the
-  port has stayed present for 0.5 s in a row, so the next esptool call / `run` / tests open a
-  stable port. Not back in time → exit 4.
+  port has stayed present for 0.5 s in a row (`--settle S` on `flash`, `run` and `boards`, or
+  `XEWE_SETTLE`; raise it for a slow hub or VM passthrough), so the next esptool call / `run` /
+  tests open a stable port. If the port does not return but a port with the same USB serial
+  number appears under another name (macOS can give a re-enumerated board another
+  `/dev/cu.usbmodem<N>`; Linux takes `ttyACM1` while `ttyACM0` is still held), that port is used
+  after the same settle, with a warning `<old> came back as <new>`, and the `flashed` line names it.
+  Not back in time → exit 4; the message names the new port (`pass --port <new>`) when one was seen.
+  `xewe boards` waits the same way after each esptool probe (the probe hard-resets the board).
 
 **Serial** (`serialio.Console`, pyserial):
 - Open without resetting the board: `dsrdtr=False, rtscts=False`; set `dtr=True, rts=False`
@@ -696,7 +708,11 @@ its own `builds/<chip>/cache` and `builds/<chip>/gen`, so incremental rebuilds s
   ~30 s) → exit 1, last 20 lines, nothing sent. One status line says what happened:
   `boot: System Setup Complete after 12.3 s`.
 - Send: write `CMD + "\n"` (the XeWe serial reader ignores `\r` and ends a line on `\n`,
-  `SerialPort.cpp`); echo it as `> CMD`; then read lines until `--expect` regex matches (exit 0)
+  `SerialPort.cpp`). A write longer than 900 bytes (`SEND_CHUNK_BYTES`) is split into 900-byte
+  pieces 50 ms apart: the board's USB console (HWCDC, USB-Serial/JTAG) queues at most 1024 bytes
+  (`SerialPortConfig::rx_buffer_size`) and has no flow control, so a longer burst loses its tail
+  (an S3 lost `\n$system uid\n` at the end of a 1037-byte write). `Console.write(data,
+  chunk=0)` still sends one burst (overflow tests; core's flood tests write `_ser` directly); echo it as `> CMD`; then read lines until `--expect` regex matches (exit 0)
   or `--timeout` (default 10 s, exit 1, last 20 lines printed). Without `--expect`, collect output
   until 500 ms of silence and exit 0.
 - Defaults: 115200 baud (today's `SERIAL_BAUD`).
@@ -805,7 +821,7 @@ folders need no `conftest.py`):
 | `compiled` | session | Builds the selected chip once (same code path as `xewe build`); a build failure fails every board test. |
 | `board` | session | Depends on `compiled`; detects the board (§5). None, or board access disabled (`XEWE_NO_BOARD`/`--xewe-no-board`; no port is looked at) → `pytest.skip("compiled, not run: no board attached")`; with `--require-board` → `pytest.fail(...)`. Returns `Board(port, chip, serial_number)`. |
 | `firmware` | session | Depends on `board`; flashes `build/builds/<chip>/out/` once per session, opens the session's one `Console`, pulses reset and waits up to 90 s for `System Setup Complete` (through a first-boot `Initial Setup Complete`/`Rebooting` and port drops), then 0.5 s of silence. `Name your device` (unprovisioned board) fails with a pointer to `xewe provision` and the runbook's first-boot provisioning. The wait is `serialio.wait_for_banner` (§8), shared with `xewe provision`. The console is closed at session end. Returns `Firmware(bin_path, version, chip, console)`. |
-| `serial` | function | Depends on `firmware`; the session `Console` (never opened/closed per test), drained and with `lines` emptied at test start: `send(cmd)`, `expect(regex, timeout=10) -> re.Match`, `command(cmd, expect, timeout) -> re.Match`, `lines` (captured since the test started), `drain()`, `reset()`. Expect failures raise `AssertionError` with the last 20 lines. |
+| `serial` | function | Depends on `firmware`; the session `Console` (never opened/closed per test), drained and with `lines` emptied at test start: `send(cmd)`, `expect(regex, timeout=10) -> re.Match`, `command(cmd, expect, timeout) -> re.Match`, `lines` (captured since the test started), `drain()`, `reset()`, `write(bytes)`, `reopen()`, `probe()`. Expect failures raise `AssertionError` with the last 20 lines. After a board test fails on a timeout or a vanished port, the next `serial` reopens the port once (a stale native-USB endpoint after a restart) and sends `$system uid` (3 tries in 15 s); no `uid64` reply → `pytest.exit("board on <port> is silent after a restart …; power-cycle it")`, exit 1, so one silent board fails one test instead of every later one (TV1 F7). A board at `Name your device` is not probed. The `firmware` boot wait does the same when the banner never comes. |
 
 No-board summary and exit code: the plugin's `pytest_terminal_summary` lists every test skipped
 with a reason starting `compiled, not run`:
@@ -959,7 +975,13 @@ in an `xewe-os` checkout, then `xewe modules validate` (the checkout setup used,
    quotes/backslashes stripped, spaces → `_`, empty → `empty`; for the default matrix this is
    `<version>/c3/`, exactly today's layout). Write `build_notes.txt` when the row has notes, and
    `firmware_map.csv` with the header row minus `_BUILD_NOTES`, as today. Rewrite `path_rel_*` in
-   `meta.json` to the release location.
+   `meta.json` to the release location, and record what the release was built from, read from
+   `build_config.toml [installed]` (what `./setup.sh` resolved, so a `latest` ref is pinned to the
+   commit it meant at release time): `project_commit` (HEAD of the project, read-only
+   `git rev-parse`), then each ref with its commit, `core_ref, core_commit, modules_ref,
+   modules_commit, tools_ref, tools_commit`, and `libraries = {<name>: {ref, commit}}` at the end.
+   An unknown commit (local source that is not a git checkout, nothing recorded) is `-`. CI reads
+   these fields; it no longer writes a separate `resolved.json` (`ci/README.md`).
 5. Write `[project] version = "X.Y.Z"` into `xewe.toml`; create
    `static/firmware/releases/firmware-X.Y.Z.tar.gz` (tarfile, as today).
 6. Print, do not run:
@@ -1002,7 +1024,7 @@ fixtures and fakes (`tests/README.md`); `pytest tests/<area>` runs one area.
 | `env/test_dotenv.py` | parsing (comments, quotes, `export`, no interpolation), errors without values, real environment wins, resolution order (`--env`, `XEWE_ENV`, project, tools checkout from `build_config.toml` or the package checkout), missing file is not an error, only the key count is logged, `.env.example` lists every key |
 | `testing/test_plugin.py` | `pytester`: no board → "compiled, not run" summary and exit 0; `--require-board` → pytest 1, `xewe test` 4; faked board: one port open per session, boot banner wait (first-boot reboot, unprovisioned, timeout); unit tests run; `--unit-only` runs only `unit` tests and builds nothing; board tests found under `modules/<slug>/tests/board/`; compile failure fails board tests; pins from the project `.env` reach `os.environ` (real environment wins) |
 | `modules/test_registry.py` | dependency order and cycle error against fixtures copied from the six real `module.properties`; generated `build/modules/` (`library.properties`, `XeWeModules.h`, `tests/<slug>/{board,unit}/`, `modules.lock`) and `src/Modules.h` golden, library version (tag / `0.0.0+<sha7>` / `0.0.0`), empty selection, legacy `src/modules/`, `build/modules-lib/` and `build/config/modules.lock` removal; every validator rule (tests layout included) has a failing fixture |
-| `build/test_release.py` | matrix parsing and typing, folder layout, `firmware_map.csv`, version ≥ check, printed commands, never calls git |
+| `build/test_release.py` | matrix parsing and typing, folder layout, `firmware_map.csv`, version ≥ check, printed commands, never calls git (but `status`/`rev-parse`), `meta.json` provenance (`*_commit` next to each ref, libraries, `-` when unknown) |
 | `test_cli.py` | every subcommand's `--help`, exit-code table, `--verbose` |
 | `env/test_clean.py` | `clean` levels (`--modules`; `--all` keeps `build/tools`, never touches `build-tools`) |
 | `modules/test_manifest.py` | `manifest show` drift marks, `manifest update` (latest tag, `--to`, usage errors); ref `latest`: `latest (main@<sha7>)`, drift when the remote head moved, unreachable remote, freeze with `update` and `--to latest` |

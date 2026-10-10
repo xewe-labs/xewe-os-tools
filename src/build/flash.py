@@ -93,7 +93,10 @@ def ensure_built(
     return res.binary
 
 
-def write_image(cmd: list[str], board: Board, chip: str, binary: Path, baud: int = DEFAULT_BAUD, erase: bool = False) -> None:
+def write_image(
+    cmd: list[str], board: Board, chip: str, binary: Path, baud: int = DEFAULT_BAUD, erase: bool = False,
+    settle: float | None = None,
+) -> None:
     """erase (optional) + write-flash of the merged image, retrying once at 460800 baud.
 
     The image is written in pieces (``flash_segments``) so that data partitions the image leaves
@@ -102,7 +105,9 @@ def write_image(cmd: list[str], board: Board, chip: str, binary: Path, baud: int
 
     esptool hard-resets the board after each command, which re-enumerates a native-USB port, so
     after erase-flash and after write-flash we wait until the port is back and stable
-    (``wait_for_port``; exit 4 when it does not return).
+    (``wait_for_port``, ``settle`` seconds in a row; exit 4 when it does not return). When the
+    board comes back under another name (macOS ``cu.usbmodem<N>``, matched by USB serial number),
+    ``board.port`` is updated to it and a warning says so.
     """
     esp_chip = chips.get(chip).esptool_id
     base = ["--chip", esp_chip, "--port", board.port]
@@ -110,7 +115,7 @@ def write_image(cmd: list[str], board: Board, chip: str, binary: Path, baud: int
         proc = esptool.run(cmd, [*base, "erase-flash"])
         if proc.returncode != 0:
             raise XeWeError(f"esptool erase-flash failed:\n{proc.stdout.strip()[-2000:]}")
-        wait_for_port(board.port, boards.port_exists)
+        _settle(board, settle)
     bauds = [baud] + ([FALLBACK_BAUD] if baud == DEFAULT_BAUD else [])
     image = binary.read_bytes()
     pieces = flash_segments(image)
@@ -134,7 +139,15 @@ def write_image(cmd: list[str], board: Board, chip: str, binary: Path, baud: int
                 log.warning("esptool failed at %d baud; retrying at %d", rate, bauds[i + 1])
             else:
                 raise XeWeError(f"esptool write-flash failed:\n{proc.stdout.strip()[-2000:]}")
-    wait_for_port(board.port, boards.port_exists)
+    _settle(board, settle)
+
+
+def _settle(board: Board, settle: float | None) -> None:
+    """Wait for the re-enumerated port; follow a rename (``wait_for_port``)."""
+    port = wait_for_port(board.port, boards.port_exists, settle=settle, renamed=lambda: boards.renamed_port(board))
+    if port != board.port:
+        log.warning("%s came back as %s after the reset (same USB serial number); using %s", board.port, port, port)
+        board.port = port
 
 
 def flash_with_board(
@@ -147,6 +160,7 @@ def flash_with_board(
     no_build: bool = False,
     require_board: bool = False,
     defines: dict[str, str] | None = None,
+    settle: float | None = None,
 ) -> tuple[int, Board | None]:
     """Select the board, build if needed, flash. Returns (exit code, board or None)."""
     board = boards.select(p, chip=chip_flag, port=port, esptool_cmd=lambda: esptool_cmd(p))
@@ -159,18 +173,18 @@ def flash_with_board(
         return no_board(chip, p.rel(binary), require_board), None
     if board.chip and board.chip != chip:
         raise XeWeError(f"board on {board.port} is {board.chip}, selected chip is {chip}", EXIT_USAGE)
-    write_image(esptool_cmd(p), board, chip, binary, baud, erase)
+    write_image(esptool_cmd(p), board, chip, binary, baud, erase, settle)
     result(f"flashed  {chip}  {board.port}  {p.rel(binary)}  ({ERASED_HINT if erase else KEPT_HINT})")
     return EXIT_OK, board
 
 
 def run(
     p: Paths, lock: Lock, chip_flag: str | None, port: str | None, defines: dict[str, str], no_serial: bool, baud: int = 115200,
-    no_input: bool = False, timestamps: bool = False, erase: bool = True,
+    no_input: bool = False, timestamps: bool = False, erase: bool = True, settle: float | None = None,
 ) -> int:
     """build (when stale for these ``defines``) -> erase (unless ``erase`` is False, i.e. ``--keep-nvs``)
     -> flash -> serial console, interactive on a terminal (what run.sh calls)."""
-    code, board = flash_with_board(p, lock, chip_flag, port, erase=erase, defines=defines)
+    code, board = flash_with_board(p, lock, chip_flag, port, erase=erase, defines=defines, settle=settle)
     if code != EXIT_OK or board is None or no_serial:
         return code
     with Console(board.port, baud, echo=True) as console:

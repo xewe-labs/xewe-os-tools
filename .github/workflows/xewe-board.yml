@@ -1,13 +1,22 @@
-# xewe-board.yml: PLACEHOLDER for board tests on a future self-hosted runner with the S3 attached
-# (today the Mac runs run_tests/10_project.sh by hand). Nothing calls this yet, and a call without
-# a registered runner labelled [self-hosted, xewe-board] waits in the queue until it times out.
-# Enable: register a runner on the Mac with the label `xewe-board`, put the dotenv on that machine
-# (never in a secret or the repo), then add to a project's ci.yml:
+# xewe-board.yml: board tests on a self-hosted runner with a board attached (proposal P2 in the
+# phase-4 CI/CD proposals; ci/README.md). The steps are the Mac's run_tests/10_project.sh as a job:
+# setup, build, erase + flash, first-boot capture, provision, board tests in two passes (everything
+# but the restart tests, then the restart tests), with a liveness probe between them.
+#
+# Runner: the owner's Mac, registered with the labels [self-hosted, macOS, ARM64, xewe-board]. The
+# dotenv (Wi-Fi, device settings) lives on that machine at the path passed as `dotenv`; it is never a
+# secret or a repo file. Only trusted events may reach it: the job refuses pull_request events, so
+# call it from `schedule` or `workflow_dispatch` only, e.g. in a project's ci.yml:
+#   on: { schedule: [{ cron: "30 9 * * *" }], workflow_dispatch: {} }   # plus the existing triggers
 #   board:
-#     needs: build
-#     if: github.event_name == 'workflow_dispatch'
+#     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
 #     uses: xewe-labs/xewe-os-tools/.github/workflows/xewe-board.yml@main
-#     with: { chip: s3, dotenv: /Users/<you>/xewe/dotenv }
+#     with: { chip: s3, dotenv: /Users/<you>/xewe/dotenv, power_cycle: "uhubctl -l 20-3 -p 2 -a cycle -d 3" }
+#
+# F7 (the board can go silent after a software restart): when the probe after a pass finds the board
+# silent, `power_cycle` (a command on the runner that cuts and restores the board's USB power) runs
+# and the probe is retried once. Without `power_cycle` a silent board fails the job with a clear
+# annotation; the junit files of the passes that ran are still uploaded.
 name: xewe-board
 
 on:
@@ -20,6 +29,18 @@ on:
         description: "absolute path of the dotenv on the runner machine (Wi-Fi, device settings)"
         type: string
         required: true
+      port:
+        description: "serial port of the board (empty: the first /dev/cu.usbmodem* or /dev/ttyACM*)"
+        type: string
+        default: ""
+      power_cycle:
+        description: "command on the runner that power-cycles the board (uhubctl, a relay CLI); empty: none"
+        type: string
+        default: ""
+      test_args:
+        description: "extra pytest arguments for both passes (e.g. -k wifi)"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -33,27 +54,110 @@ jobs:
       cancel-in-progress: false
     env:
       XEWE_REQUIRE_BOARD: "1"
+      CHIP: ${{ inputs.chip }}
+      DOTENV: ${{ inputs.dotenv }}
+      POWER_CYCLE: ${{ inputs.power_cycle }}
+      TEST_ARGS: ${{ inputs.test_args }}
+      PYTHONUNBUFFERED: "1"
     steps:
+      - name: Refuse untrusted events
+        if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
+        run: |
+          echo "::error::board tests run on schedule or workflow_dispatch only (a pull request would run its code on the owner's machine)"
+          exit 1
+
       - uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Find the board
+        id: port
+        shell: bash
+        env:
+          PORT_IN: ${{ inputs.port }}
+        run: |
+          set -euo pipefail
+          [[ -f "$DOTENV" ]] || { echo "::error::no dotenv at the given path on this runner"; exit 1; }
+          port="$PORT_IN"
+          if [[ -z "$port" ]]; then
+            for p in /dev/cu.usbmodem* /dev/cu.usbserial* /dev/ttyACM* /dev/ttyUSB*; do [[ -e "$p" ]] && { port="$p"; break; }; done
+          fi
+          [[ -n "$port" && -e "$port" ]] || { echo "::error::no board port on this runner"; exit 1; }
+          echo "port=$port" >> "$GITHUB_OUTPUT"
+          echo "board on $port"
+
       - name: ./setup.sh
         run: ./setup.sh </dev/null
+
       - name: build, erase and flash
         env:
-          CHIP: ${{ inputs.chip }}
+          PORT: ${{ steps.port.outputs.port }}
         run: |
           build/tools/.venv/bin/python -m xewe build --chip "$CHIP"
-          build/tools/.venv/bin/python -m xewe flash --chip "$CHIP" --erase --no-build
+          build/tools/.venv/bin/python -m xewe flash --chip "$CHIP" --port "$PORT" --erase --no-build
+
+      - name: first boot
+        env:
+          PORT: ${{ steps.port.outputs.port }}
+        run: |
+          build/tools/.venv/bin/python -m xewe serial --port "$PORT" --reset --duration 30 --no-input --timestamps \
+            --log "$RUNNER_TEMP/first-boot.log" | tail -20 || true
+          grep -q "Name your device" "$RUNNER_TEMP/first-boot.log" || echo "::warning::first boot: name prompt not seen"
+
       - name: provision
         env:
-          DOTENV: ${{ inputs.dotenv }}
-        run: build/tools/.venv/bin/python -m xewe provision --env "$DOTENV"
-      - name: board tests
+          PORT: ${{ steps.port.outputs.port }}
+        run: build/tools/.venv/bin/python -m xewe provision --port "$PORT" --env "$DOTENV"
+
+      # pass 1: everything except the restart tests, so a board that goes silent (F7) cannot fail them
+      - name: board tests, pass 1
         env:
-          CHIP: ${{ inputs.chip }}
-          DOTENV: ${{ inputs.dotenv }}
-        run: build/tools/.venv/bin/python -m xewe test --chip "$CHIP" --require-board --env "$DOTENV" -- --junitxml="$RUNNER_TEMP/board-junit.xml"
+          PORT: ${{ steps.port.outputs.port }}
+          XEWE_PORT: ${{ steps.port.outputs.port }}
+        shell: bash
+        run: |
+          # shellcheck disable=SC2086  # TEST_ARGS is a list of pytest arguments
+          build/tools/.venv/bin/python -m xewe test --chip "$CHIP" --port "$PORT" --require-board --env "$DOTENV" -v -- \
+            -k "not survive_restart" $TEST_ARGS --junitxml="$RUNNER_TEMP/board-p1-junit.xml"
+
+      - name: board alive after pass 1
+        if: success() || failure()
+        env:
+          PORT: ${{ steps.port.outputs.port }}
+        shell: bash
+        run: &alive |
+          set -uo pipefail
+          # shellcheck disable=SC2016  # '$system uid' is a device command, not a shell expansion
+          alive() { build/tools/.venv/bin/python -m xewe serial --port "$PORT" --send '$system uid' --expect '^uid64 ' --timeout 15 --no-input >/dev/null 2>&1; }
+          alive && exit 0
+          if [[ -z "$POWER_CYCLE" ]]; then echo "::error::board silent (F7); no power_cycle command configured: power-cycle it by hand"; exit 1; fi
+          echo "::warning::board silent (F7); power-cycling: $POWER_CYCLE"
+          bash -c "$POWER_CYCLE"
+          sleep 8
+          alive || { echo "::error::board still silent after a power-cycle"; exit 1; }
+
+      - name: board tests, pass 2 (restart tests)
+        env:
+          PORT: ${{ steps.port.outputs.port }}
+          XEWE_PORT: ${{ steps.port.outputs.port }}
+        shell: bash
+        run: |
+          # shellcheck disable=SC2086
+          build/tools/.venv/bin/python -m xewe test --chip "$CHIP" --port "$PORT" --require-board --env "$DOTENV" -v -- \
+            -k "survive_restart" $TEST_ARGS --junitxml="$RUNNER_TEMP/board-p2-junit.xml"
+
+      - name: board alive after pass 2
+        if: always() && steps.port.outputs.port != ''
+        env:
+          PORT: ${{ steps.port.outputs.port }}
+        shell: bash
+        run: *alive
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: board-junit-${{ inputs.chip }}
-          path: ${{ runner.temp }}/board-junit.xml
+          name: board-${{ inputs.chip }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/board-p*-junit.xml
+            ${{ runner.temp }}/first-boot.log
+          if-no-files-found: ignore

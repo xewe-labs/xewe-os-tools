@@ -15,14 +15,14 @@ wins), so ``XEWE_TEST_*`` pins, ``XEWE_PORT`` and ``XEWE_CHIP`` reach the tests 
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 from serial import SerialException
 
-from xewe.board import boards
+from xewe.board import boards, serialio
 from xewe.board.boards import Board
 from xewe.board.serialio import BOOT_READY, BOOT_UNPROVISIONED, Console, ExpectTimeout, wait_for_banner
 from xewe.build import flash
@@ -31,7 +31,7 @@ from xewe.env import dotenv
 from xewe.env.project import Paths, find_root
 from xewe.modules import lockfile
 from xewe.modules.lockfile import Lock
-from xewe.report import BOARD_DISABLED, EXIT_NO_BOARD, NO_BOARD, XeWeError, board_disabled, disable_board
+from xewe.report import BOARD_DISABLED, EXIT_NO_BOARD, NO_BOARD, XeWeError, board_disabled, disable_board, log
 
 NOT_RUN = "compiled, not run"
 BOARD_FIXTURES = frozenset({"compiled", "board", "firmware", "serial"})
@@ -39,6 +39,13 @@ BOOT_TIMEOUT_SECONDS = 90.0
 """Longest wait for the end-of-boot banner (Wi-Fi + NTP, plus the one reboot after first boot)."""
 BOOT_WAIT_SECONDS = 0.5
 """Settle after the banner: read until this much silence before the first test."""
+PROBE_TIMEOUT_SECONDS = 15.0
+"""``revive``: how long the probe may take (3 sends of ``$system uid``)."""
+SILENT_MESSAGE = (
+    "board on {port} is silent after a restart (no reply to {probe!r}, even after reopening the port); "
+    "power-cycle it (unplug and replug), then re-run the tests"
+)
+"""``pytest.exit`` reason when ``revive`` fails: the rest of the session would only time out (TV1 F7)."""
 UNPROVISIONED_MESSAGE = (
     "board on {port} is unprovisioned (first-boot prompt 'Name your device'); "
     "provision it once with `xewe provision` (RUNBOOK section 3, first-boot provisioning), then re-run the tests"
@@ -79,6 +86,10 @@ class XeWeContext:
         """Node ids marked ``board`` at collection (the summary counts their passes)."""
         self.no_board = False
         """Set when a board fixture failed because the board was required but missing (exit 4)."""
+        self.console: Console | None = None
+        """The session console once ``firmware`` opened it."""
+        self.suspect = False
+        """Set when a board test failed on a timeout or a vanished port; the next ``serial`` checks the board."""
 
     @property
     def active(self) -> bool:
@@ -187,20 +198,57 @@ def board(xewe: XeWeContext, compiled: Path) -> Board:
     return found
 
 
+def revive(console: Console) -> bool:
+    """After a timeout: is the board still there? Reopen the port once, then probe it.
+
+    A native-USB board that restarted can leave the host with a stale endpoint: the open port reads
+    nothing although the board runs. ``Console.reopen`` binds to the re-enumerated device (the
+    open never resets the board). Then ``$system uid`` is sent (``Console.probe``, 3 tries over
+    15 s); a board sitting at the first-boot prompt (``Name your device`` in the first 3 s) counts
+    as alive and is not probed (the probe would be taken as its name). False when the port does
+    not come back or nothing answers.
+    """
+    try:
+        console.reopen()
+    except XeWeError:
+        return False
+    seen = console.collect(silence=BOOT_WAIT_SECONDS, limit=3)
+    if any(BOOT_UNPROVISIONED in line for line in seen):
+        return True
+    if console.probe(PROBE_TIMEOUT_SECONDS):
+        log.warning("board on %s answered after the port was reopened", console.port)
+        return True
+    return False
+
+
+def require_alive(console: Console) -> None:
+    """``revive`` or end the session with ``pytest.exit`` (exit 1), so one silent board does not
+    turn every later test into a timeout."""
+    if not revive(console):
+        pytest.exit(SILENT_MESSAGE.format(port=console.port, probe=serialio.PROBE_COMMAND),
+                    returncode=pytest.ExitCode.TESTS_FAILED)
+
+
 def wait_for_boot(console: Console, timeout: float = BOOT_TIMEOUT_SECONDS) -> None:
     """Reset the board and wait for ``System Setup Complete``; fail on the provisioning prompt.
 
     The reset makes sure the banner is printed after the port was opened. A first boot prints
     ``Initial Setup Complete`` and ``Rebooting`` and boots again: that is waited through, as is
     the native-USB port dropping and coming back during either reset.
+    No banner in time (or the port still gone): the port is reopened once and the board probed
+    (``require_alive``); a board that answers is used, a silent one ends the session.
     """
     try:
         m = wait_for_banner(console, f"{BOOT_READY}|{BOOT_UNPROVISIONED}", timeout)
-    except ExpectTimeout as exc:
-        pytest.fail(f"board on {console.port} did not finish booting within {timeout:g} s "
-                    f"(no {BOOT_READY!r}); {exc}", pytrace=False)
-    except XeWeError as exc:  # port still gone at the deadline
-        pytest.fail(f"board on {console.port} did not finish booting within {timeout:g} s: {exc}", pytrace=False)
+    except (ExpectTimeout, XeWeError) as exc:  # XeWeError: port still gone at the deadline
+        log.warning("board on %s did not finish booting within %g s (no %r): %s", console.port, timeout,
+                    BOOT_READY, str(exc).splitlines()[0])
+        start = len(console.lines)
+        require_alive(console)
+        if any(BOOT_UNPROVISIONED in line for line in console.lines[start:]):
+            pytest.fail(UNPROVISIONED_MESSAGE.format(port=console.port), pytrace=False)
+        console.collect(silence=BOOT_WAIT_SECONDS)
+        return
     if m.group(0) == BOOT_UNPROVISIONED:
         pytest.fail(UNPROVISIONED_MESSAGE.format(port=console.port), pytrace=False)
     console.collect(silence=BOOT_WAIT_SECONDS)
@@ -223,24 +271,46 @@ def firmware(xewe: XeWeContext, board: Board, compiled: Path) -> Iterator[Firmwa
         console.open()
     except (SerialException, OSError) as exc:
         pytest.fail(f"cannot open {board.port}: {exc}", pytrace=False)
+    xewe.console = console
     try:
         wait_for_boot(console, BOOT_TIMEOUT_SECONDS)
         yield Firmware(compiled, xewe.lock.version, xewe.chip, console)
     finally:
+        xewe.console = None
         console.close()
 
 
 @pytest.fixture
-def serial(firmware: Firmware) -> Console:
+def serial(xewe: XeWeContext, firmware: Firmware) -> Console:
     """The session console, drained (pending output dropped) and with ``lines`` emptied.
 
-    ``send``, ``expect``, ``command``, ``lines`` (captured since this test started), ``drain``,
-    ``reset``. The port is never opened or closed here.
+    ``send``, ``expect``, ``command``, ``write``, ``lines`` (captured since this test started),
+    ``drain``, ``reset``. The port is normally never opened or closed here; after a board test
+    failed on a timeout or a vanished port (``pytest_runtest_makereport``) the port is reopened
+    once and the board probed first, and a silent board ends the session (``require_alive``).
     """
     console = firmware.console
+    if xewe.suspect:
+        xewe.suspect = False
+        require_alive(console)
     console.drain()
     console.clear()
     return console
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo[None]
+) -> Generator[None, pytest.TestReport, pytest.TestReport]:
+    """Mark the session suspect when a test using the board failed on ``ExpectTimeout`` or a
+    vanished port (``XeWeError``); the next ``serial`` fixture then checks the board."""
+    rep = yield
+    if (call.excinfo is not None and rep.failed and "serial" in getattr(item, "fixturenames", ())
+            and call.excinfo.errisinstance((ExpectTimeout, XeWeError, SerialException, OSError))):
+        ctx = item.config.stash.get(_KEY, None)
+        if ctx is not None and ctx.console is not None:
+            ctx.suspect = True
+    return rep
 
 
 def _not_run(reports: list[pytest.TestReport]) -> list[pytest.TestReport]:

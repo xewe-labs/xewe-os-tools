@@ -22,7 +22,7 @@ def no_git_writes(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
 
     def guarded(argv, *a, **k):  # type: ignore[no-untyped-def]
         seen.append(list(argv))
-        assert argv[0] != "git" or argv[1] == "status", f"release ran {argv}"
+        assert argv[0] != "git" or argv[1] in ("status", "rev-parse"), f"release ran {argv}"
         return real(argv, *a, **k)
 
     monkeypatch.setattr(release.subprocess, "run", guarded)
@@ -47,6 +47,15 @@ def test_default_matrix_release(project: Paths, notes: Path, no_git_writes: list
         assert meta["version"] == "2.1.0"
         assert meta["artifacts"]["path_rel_binary"] == f"xewe-os/{REL}/2.1.0/{chip}/2.1.0-{chip}-xewe-os.bin"
         assert not any(k.startswith("path_abs") for k in meta["artifacts"])
+        # the resolved commits from build_config.toml [installed], each next to its ref
+        assert meta["core_ref"] == "1.0.0" and meta["core_commit"] == "abc"
+        assert meta["modules_ref"] == "v1.0.0" and meta["modules_commit"] == "def"
+        assert meta["tools_ref"] == "v0.1.1" and meta["tools_commit"] == "-"
+        assert meta["project_commit"] == "-"  # tmp project is not a git checkout
+        assert meta["libraries"] == {}
+        keys = list(meta)
+        assert keys[keys.index("core_ref") - 1:keys.index("tools_commit") + 1] == [
+            "project_commit", "core_ref", "core_commit", "modules_ref", "modules_commit", "tools_ref", "tools_commit"]
     assert (base / "firmware_map.csv").read_text() == "CHIP\n"
     assert (base / "release_notes.txt").read_text() == "Faster boot.\n"
     assert lockfile.load(project.lock).version == "2.1.0"
@@ -106,3 +115,35 @@ def test_editor_notes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     editor.chmod(0o755)
     monkeypatch.setenv("EDITOR", str(editor))
     assert release._edit_notes("3.0.0") == "\nLine one.\n"
+
+
+def test_provenance_records_library_and_project_commits(project: Paths, notes: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from xewe.env import config
+
+    cfg = config.load(project)
+    assert cfg is not None
+    cfg.installed["libraries"] = {
+        "ArduinoJson": {"ref": "v7.4.3", "commit": "77771d3", "source": "https://github.com/bblanchon/ArduinoJson",
+                        "origin": "xewe.toml"},
+        "Broken": {"ref": "main"},
+    }
+    del cfg.installed["tools"]
+    config.save(project, cfg)
+    monkeypatch.setattr(release.fetch, "head_commit", lambda path: "f00d" if path == project.root else "-")
+    assert main(["release", "--version", "2.1.0", "--notes", str(notes), ]) == 0
+    meta = json.loads((project.root / REL / "2.1.0" / "c6" / "meta.json").read_text())
+    assert meta["project_commit"] == "f00d"
+    assert meta["libraries"] == {"ArduinoJson": {"ref": "v7.4.3", "commit": "77771d3"},
+                                 "Broken": {"ref": "main", "commit": "-"}}
+    assert meta["tools_ref"] == "" and meta["tools_commit"] == "-"
+    assert meta["core_commit"] == "abc"
+
+
+def test_with_provenance_keeps_ref_fallback() -> None:
+    prov = {"project_commit": "-", "core_ref": "", "core_commit": "-", "modules_ref": "latest",
+            "modules_commit": "c337b20", "tools_ref": "latest", "tools_commit": "1762", "libraries": {}}
+    meta = {"version": "2.1.0", "core_ref": "1.2.0", "modules_ref": "x", "modules_version": "0.0.0+c337b20"}
+    out = release._with_provenance(meta, prov)
+    assert list(out) == ["version", "project_commit", "core_ref", "core_commit", "modules_ref", "modules_commit",
+                         "tools_ref", "tools_commit", "modules_version", "libraries"]
+    assert out["core_ref"] == "1.2.0" and out["modules_ref"] == "latest"

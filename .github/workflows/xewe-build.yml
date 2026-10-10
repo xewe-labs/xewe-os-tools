@@ -17,6 +17,10 @@ on:
       python-version:
         type: string
         default: "3.12"
+      strict_lint:
+        description: "make the lint job (xewe format --check, brand-lint) blocking; flip to true once the whitespace/format commits have landed"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -107,12 +111,13 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # NON-BLOCKING until the whitespace/format commits land: failures show as annotations, the run
-  # stays green. Flip continue-on-error to false (or delete the line) to enforce.
+  # Non-blocking by default (strict_lint: false) until the whitespace/format commits land: failures
+  # show as annotations and the run stays green. A caller passes `strict_lint: true` to make lint
+  # fail the run; the check is then named "lint" (require it in branch protection if you like).
   lint:
-    name: lint (non-blocking)
+    name: ${{ inputs.strict_lint && 'lint' || 'lint (non-blocking)' }}
     runs-on: ubuntu-latest
-    continue-on-error: true
+    continue-on-error: ${{ !inputs.strict_lint }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -132,7 +137,7 @@ jobs:
             git clone -q --depth 1 ${track:+--branch "$track"} "$repo" "$dest"
           fi
           python3 -m venv "$RUNNER_TEMP/venv"
-          "$RUNNER_TEMP/venv/bin/pip" install -q "$dest"
+          "$RUNNER_TEMP/venv/bin/pip" install -q "${dest}[dev]"  # [dev]: ruff, for the Python half of xewe format
       - name: xewe format --check
         shell: bash
         run: |

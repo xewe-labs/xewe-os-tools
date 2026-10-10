@@ -137,3 +137,29 @@ def test_cli_boards_lists_and_sets(project: Paths, ports: list[Port], capsys: py
     assert "/dev/ttyACM0" in capsys.readouterr().out
     assert main(["boards", "--set-port", "/dev/ttyACM0", "--set-chip", "c3"]) == 0
     assert main(["boards", "--set-chip", "c3"]) == 2
+
+
+def test_renamed_port_matches_the_usb_serial_number(ports: list[Port]) -> None:
+    board = boards.Board("/dev/cu.usbmodem101", serial_number="F0:F5")
+    assert boards.renamed_port(board) is None
+    ports.append(Port("/dev/cu.usbmodem2101", 0x303A, 0x1001, "AA:BB"))  # another board
+    assert boards.renamed_port(board) is None
+    ports.append(Port("/dev/cu.usbmodem1101", 0x303A, 0x1001, "F0:F5"))
+    assert boards.renamed_port(board) == "/dev/cu.usbmodem1101"
+    assert boards.renamed_port(boards.Board("/dev/cu.usbmodem101")) is None  # no serial number: no guess
+
+
+def test_probe_waits_for_the_port_and_follows_a_rename(p: Paths, ports: list[Port],
+                                                      monkeypatch: pytest.MonkeyPatch) -> None:
+    ports.append(Port("/dev/cu.usbmodem101", 0x303A, 0x1001, "F0:F5"))
+    waits: list[tuple[str, float | None]] = []
+
+    def wait(port: str, exists, settle=None, renamed=None, **kw) -> str:
+        waits.append((port, settle))
+        return "/dev/cu.usbmodem1101"
+
+    monkeypatch.setattr(boards, "wait_for_port", wait)
+    monkeypatch.setattr(esptool, "chip_id", lambda cmd, port: "s3")
+    found = boards.scan(p, esptool_cmd=lambda: ["esptool"], settle=1.5)
+    assert waits == [("/dev/cu.usbmodem101", 1.5)]
+    assert found[0].port == "/dev/cu.usbmodem1101" and found[0].chip == "s3"

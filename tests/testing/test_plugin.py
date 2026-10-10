@@ -199,14 +199,96 @@ def test_boot_unprovisioned_fails_with_runbook_hint(pytester: pytest.Pytester, p
     assert not FakeSerial.instances[0].is_open
 
 
-def test_boot_silence_times_out(pytester: pytest.Pytester, project: Paths, board_attached,
-                                monkeypatch: pytest.MonkeyPatch) -> None:
+def uid_answerer(extra: Callable[[bytes], bytes] | None = None) -> Callable[[bytes], bytes]:
+    """Answers the liveness probe ``$system uid`` (and whatever ``extra`` answers)."""
+    def script(data: bytes) -> bytes:
+        if data == b"$system uid\n":
+            return b"uid64 0123456789abcdef\n"
+        return extra(data) if extra else b""
+    return script
+
+
+def test_boot_silence_reopens_then_ends_session(pytester: pytest.Pytester, project: Paths, board_attached,
+                                                monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(plugin, "BOOT_TIMEOUT_SECONDS", 0.3)
+    monkeypatch.setattr(plugin, "PROBE_TIMEOUT_SECONDS", 0.3)
     write_tests(project.root, SESSION_TESTS, unit=None)
     board_attached(lambda: FakeSerial(chunks=[b"ESP-ROM:esp32c3\r\n"]))
     res = _run(pytester, project)
+    res.assert_outcomes()  # pytest.exit: no test ran, none of them waits out its own timeout
+    assert res.ret == pytest.ExitCode.TESTS_FAILED
+    res.stdout.fnmatch_lines(["*board on /dev/ttyFAKE is silent after a restart*'$system uid'*power-cycle it*"])
+    assert len(FakeSerial.instances) == 2  # the port was closed and opened again once
+    assert bytes(FakeSerial.instances[1].written).count(b"$system uid\n") == 3
+
+
+def test_boot_silence_but_board_answers_after_reopen(pytester: pytest.Pytester, project: Paths, board_attached,
+                                                     monkeypatch: pytest.MonkeyPatch) -> None:
+    """A stale endpoint: the first open reads nothing, the reopened port talks."""
+    monkeypatch.setattr(plugin, "BOOT_TIMEOUT_SECONDS", 0.3)
+    write_tests(project.root, SESSION_TESTS, unit=None)
+    stale, fresh = FakeSerial(), FakeSerial(script=uid_answerer(pinger()))
+    fakes = iter([stale, fresh])
+    board_attached(lambda: next(fakes))
+    res = _run(pytester, project)
+    res.assert_outcomes(passed=2)
+    assert not stale.is_open and bytes(fresh.written) == b"$system uid\nping\nping\n"
+
+
+def test_boot_silence_then_first_boot_prompt_after_reopen_fails(pytester: pytest.Pytester, project: Paths,
+                                                                 board_attached,
+                                                                 monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(plugin, "BOOT_TIMEOUT_SECONDS", 0.3)
+    write_tests(project.root, SESSION_TESTS, unit=None)
+    fakes = iter([FakeSerial(), FakeSerial(incoming=b"Name your device (ex: Kitchen Lights):\r\n")])
+    board_attached(lambda: next(fakes))
+    res = _run(pytester, project)
     res.assert_outcomes(errors=2)
-    res.stdout.fnmatch_lines(["*did not finish booting within 0.3 s (no 'System Setup Complete')*"])
+    res.stdout.fnmatch_lines(["*board on /dev/ttyFAKE is unprovisioned*"])
+
+
+RESTART_TESTS = """
+def test_restart(serial):
+    serial.send("restart")
+    serial.expect("System Setup Complete", timeout=0.3)
+
+
+def test_after(serial):
+    serial.command("ping", expect="pong", timeout=1)
+
+
+def test_after_2(serial):
+    serial.command("ping", expect="pong", timeout=1)
+"""
+
+
+def test_silent_board_after_a_test_timeout_ends_session(pytester: pytest.Pytester, project: Paths, board_attached,
+                                                        monkeypatch: pytest.MonkeyPatch) -> None:
+    """TV1 F7: a restart that never prints again fails one test, not every later one."""
+    monkeypatch.setattr(plugin, "PROBE_TIMEOUT_SECONDS", 0.3)
+    write_tests(project.root, RESTART_TESTS, unit=None)
+    alive = [True]
+
+    def board(data: bytes) -> bytes:
+        if data == b"restart\n":
+            alive[0] = False
+        return uid_answerer(pinger())(data) if alive[0] else b""
+
+    board_attached(lambda: FakeSerial(chunks=[BOOTED], script=board))
+    res = _run(pytester, project)
+    res.assert_outcomes(failed=1)
+    assert res.ret == pytest.ExitCode.TESTS_FAILED
+    res.stdout.fnmatch_lines(["*silent after a restart*power-cycle*"])
+
+
+def test_timeout_on_a_live_board_continues(pytester: pytest.Pytester, project: Paths, board_attached,
+                                           monkeypatch: pytest.MonkeyPatch) -> None:
+    """A test that waited for the wrong text: the probe answers, the next tests run."""
+    write_tests(project.root, RESTART_TESTS, unit=None)
+    board_attached(lambda: FakeSerial(chunks=[BOOTED], script=uid_answerer(pinger())))
+    res = _run(pytester, project)
+    res.assert_outcomes(passed=2, failed=1)
+    assert len(FakeSerial.instances) == 2  # reopened once, after test_restart only
 
 
 def test_port_not_back_after_flash_maps_to_exit_4(project: Paths, board_attached,

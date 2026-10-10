@@ -12,6 +12,7 @@ from typing import Any
 
 from serial.tools import list_ports
 
+from xewe.board.serialio import wait_for_port
 from xewe.build.chips import CHIPS, DEFAULT_CHIP
 from xewe.env import esptool
 from xewe.env.project import Paths, write_atomic
@@ -97,10 +98,31 @@ def port_exists(port: str) -> bool:
     return any(info.device == port for info in list_ports.comports()) or Path(port).exists()
 
 
+def renamed_port(board: Board) -> str | None:
+    """The port the same board (same USB serial number) has now, when it is not ``board.port``.
+
+    macOS names a native-USB board ``/dev/cu.usbmodem<N>``; after a reset re-enumerates it the
+    number can change (another USB location, or the old node still held open). Linux reuses
+    ``/dev/ttyACM0`` when nothing holds the old node, else takes ``ttyACM1``. None when the board
+    has no serial number, board access is disabled, or no other port carries it.
+    """
+    if not board.serial_number or board_disabled():
+        return None
+    for info in list_ports.comports():
+        if info.serial_number == board.serial_number and info.device != board.port:
+            return str(info.device)
+    return None
+
+
 def scan(
-    p: Paths, probe: bool = True, esptool_cmd: Callable[[], list[str]] | None = None, port: str | None = None
+    p: Paths, probe: bool = True, esptool_cmd: Callable[[], list[str]] | None = None, port: str | None = None,
+    settle: float | None = None,
 ) -> list[Board]:
     """Candidate boards: known VID:PID ports (or just ``port``), chip from cache or esptool probe.
+
+    The esptool probe hard-resets the board, which re-enumerates a native-USB port; after each
+    probe the port is waited for (``wait_for_port`` with ``settle``) and a rename is followed, so
+    the next command opens a stable port. A port that stays away only gives a warning here.
 
     With board access disabled (``XEWE_NO_BOARD``) nothing is listed, probed or written.
     """
@@ -132,11 +154,23 @@ def scan(
                 log.warning("cannot probe %s: %s", board.port, exc)
                 chip = None
             if chip:
+                _after_probe(board, settle)
                 board.chip, board.detected_by = chip, "esptool"
                 if chip not in CHIPS:
                     log.warning("%s: ESP32-%s is not supported (c3, c6, s3 only)", board.port, chip.upper())
     write_toml(p, boards)
     return boards
+
+
+def _after_probe(board: Board, settle: float | None) -> None:
+    try:
+        port = wait_for_port(board.port, port_exists, settle=settle, renamed=lambda: renamed_port(board))
+    except XeWeError as exc:
+        log.warning("%s", exc)
+        return
+    if port != board.port:
+        log.warning("%s came back as %s after the probe reset (same USB serial number)", board.port, port)
+        board.port = port
 
 
 def select(

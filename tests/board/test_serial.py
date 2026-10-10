@@ -307,3 +307,74 @@ def test_cli_serial_no_board(project: Paths, capsys: pytest.CaptureFixture[str])
     assert capsys.readouterr().out.strip() == "no board attached; nothing to listen to"
     assert main(["serial", "--require-board"]) == 4
     assert main(["serial", "--port", "/dev/does-not-exist"]) == 4
+
+
+def test_wait_for_port_follows_a_renamed_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    """macOS: the board re-enumerates as another cu.usbmodem<N> (same USB serial number)."""
+    clock = FakeClock()
+    monkeypatch.setattr(serialio, "time", clock)
+    port = wait_for_port("/dev/cu.usbmodem101", lambda p: p == "/dev/cu.usbmodem1101" and clock.now > 1.0,
+                         timeout=10.0, settle=0.5, renamed=lambda: "/dev/cu.usbmodem1101")
+    assert port == "/dev/cu.usbmodem1101" and 1.5 <= clock.now < 1.7
+
+
+def test_wait_for_port_names_the_new_port_when_it_never_settles(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = FakeClock()
+    monkeypatch.setattr(serialio, "time", clock)
+    with pytest.raises(XeWeError) as exc:
+        wait_for_port("/dev/cu.usbmodem101", lambda p: False, timeout=2.0, renamed=lambda: "/dev/cu.usbmodem1101")
+    assert exc.value.code == EXIT_NO_BOARD
+    assert "came back as /dev/cu.usbmodem1101" in str(exc.value) and "--port /dev/cu.usbmodem1101" in str(exc.value)
+
+
+def test_settle_from_flag_env_or_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("XEWE_SETTLE", raising=False)
+    assert serialio.settle_seconds() == serialio.PORT_SETTLE_SECONDS == 0.5
+    monkeypatch.setenv("XEWE_SETTLE", "2.5")
+    assert serialio.settle_seconds() == 2.5
+    assert serialio.settle_seconds(1.0) == 1.0  # --settle wins
+    monkeypatch.setenv("XEWE_SETTLE", "slow")
+    with pytest.raises(XeWeError):
+        serialio.settle_seconds()
+
+
+def test_settle_from_env_is_used(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = FakeClock()
+    monkeypatch.setattr(serialio, "time", clock)
+    monkeypatch.setenv("XEWE_SETTLE", "2")
+    wait_for_port("/dev/x", lambda p: True, timeout=10.0)
+    assert 2.0 <= clock.now < 2.1
+
+
+def test_send_splits_long_writes(no_sleep) -> None:
+    """The board's USB RX queue holds 1024 bytes and has no flow control: no write is longer than 900."""
+    writes: list[bytes] = []
+    fake = FakeSerial()
+    fake.write = lambda data: writes.append(bytes(data)) or len(data)  # type: ignore[method-assign]
+    c = Console("/dev/x", factory=lambda: fake).open()
+    c.send("x" * 2000)
+    assert [len(w) for w in writes] == [900, 900, 201]
+    assert b"".join(writes) == b"x" * 2000 + b"\n"
+    writes.clear()
+    c.send("$system uid")
+    assert writes == [b"$system uid\n"]  # short commands stay one write
+    writes.clear()
+    c.write(b"y" * 1500, chunk=0)  # overflow tests can still send one burst
+    assert [len(w) for w in writes] == [1500]
+
+
+def test_reopen_closes_and_opens_again(no_sleep) -> None:
+    fakes = [FakeSerial(), FakeSerial()]
+    it = iter(fakes)
+    c = Console("/dev/x", factory=lambda: next(it)).open()
+    c.reopen()
+    assert not fakes[0].is_open and fakes[1].is_open and fakes[1].port == "/dev/x"
+    assert fakes[1].line_history[-1] == (False, False)  # opened without a reset, like the first open
+
+
+def test_probe(clock: FakeClock) -> None:
+    alive = FakeSerial(script=lambda d: b"uid64 0123456789abcdef\n" if d == b"$system uid\n" else b"")
+    assert Console("/dev/x", factory=lambda: alive).open().probe(timeout=1.5)
+    silent = FakeSerial()
+    assert not Console("/dev/x", factory=lambda: silent).open().probe(timeout=1.5, tries=3)
+    assert bytes(silent.written) == b"$system uid\n" * 3

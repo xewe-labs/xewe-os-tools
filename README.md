@@ -39,18 +39,18 @@ Runtime dependencies: `pyserial`, `pytest`. esptool comes from the pinned esp32 
 |---|---|
 | `xewe setup [--modules LIST\|all\|none] [--latest] [--force] [--core-source DIR] [--modules-source DIR] [--arduino-data DIR]` | arduino-cli, esp32 core and the modules repo (`sources/xewe-os-modules/<ref>/`, or `XEWE_MODULES_SOURCE` as is) into the shared `~/.xewe-os/build-tools` (once per machine and ref; a branch ref is followed), core library and libraries into `build/`; generates `build/modules/` (the `XeWeModules` library, the selected modules' tests, `modules.lock`) and `src/Modules.h` (zero modules is valid: `--modules none`, or no selection); installs the selected modules' `depends_libraries` from the modules repo's `libraries.toml` unless `xewe.toml` `[libraries]` pins that name (the manifest wins) |
 | `xewe build [--chip C \| --all-chips] [--define K=V]... [--clean] [--dry-run]` | compile into `build/builds/<chip>/out/`; prints `Sketch uses N bytes (NN%)` (`--dry-run` prints the arduino-cli command only) |
-| `xewe flash [--chip C] [--port P] [--erase] [--no-build] [--require-board]` | build if stale (sources, version or `--define` values changed), then write the merged image at 0x0; NVS (name, Wi-Fi, module choices) is kept unless `--erase` |
+| `xewe flash [--chip C] [--port P] [--erase] [--no-build] [--settle S] [--require-board]` | build if stale (sources, version or `--define` values changed), then write the merged image at 0x0; NVS (name, Wi-Fi, module choices) is kept unless `--erase`. After esptool's reset the port must stay present `--settle` seconds (default 0.5, `XEWE_SETTLE`); a board that comes back under another name (macOS `cu.usbmodem<N>`, same USB serial number) is followed |
 | `xewe serial [--port P] [--send CMD [--expect RE] [--boot-timeout S]] [--duration S] [--no-input] [--timestamps] [--log FILE]` | timestamped console; the tools open the port without resetting the board (`--reset` or flashing resets it); `--send` waits out a boot in progress (see below); without `--send` on a terminal it is interactive: keys typed during flash/boot are discarded, board lines are shown raw (`--timestamps` adds the time; `--log` always has it), each typed line is sent on Enter, Ctrl-C or Ctrl-D exits (`--no-input` or non-terminal stdin: listen only) |
 | `xewe provision [--port P] [--name NAME] [--modules all\|none\|LIST] [--timezone GMT+HH:MM] [--env FILE] [--no-reset] [--log FILE]` | answer the first-boot prompts of a flashed board (settings from `.env`) |
 | `xewe test [--chip C \| --all-chips] [--module SLUG]... [--unit-only] [--no-board] [-- PYTEST_ARGS]` | pytest over `tests/` (`tests/unit/`, `tests/board/`) and the selected modules' tests in `build/modules/tests/<slug>/` |
-| `xewe run [--chip C] [--define K=V]... [--keep-nvs] [--no-serial] [--no-input] [--timestamps]` | build, erase the whole flash (NVS too, so every run is a true first boot; `--keep-nvs` skips the erase), flash, then the console (interactive on a terminal, like `xewe serial`). The `flashed` line ends with `(flash erased: first boot)` or `(nvs kept)` |
-| `xewe boards [--no-probe] [--json] [--set-port P [--set-chip C]] [--clear]` | list boards, set an override |
+| `xewe run [--chip C] [--define K=V]... [--keep-nvs] [--no-serial] [--no-input] [--timestamps] [--settle S]` | build, erase the whole flash (NVS too, so every run is a true first boot; `--keep-nvs` skips the erase), flash, then the console (interactive on a terminal, like `xewe serial`). The `flashed` line ends with `(flash erased: first boot)` or `(nvs kept)` |
+| `xewe boards [--no-probe] [--json] [--set-port P [--set-chip C]] [--clear] [--settle S]` | list boards, set an override (the esptool probe resets each board; its port is waited for, `--settle`) |
 | `xewe modules list\|select\|validate\|generate` | the modules repo checkout, `build/modules/` and `src/Modules.h` |
 | `xewe manifest show\|update` | `xewe.toml` refs vs installed refs; move refs to new tags. `ref = "latest"` tracks the newest commit of the repo's default branch (development, re-fetched on every setup); a tag freezes it (`xewe manifest update` replaces `latest` with the newest tag, `--to latest` sets it back) |
 | `xewe clean [--all] [--modules]` | delete generated output (`build/builds`, `build/tmp`; `--all`: all of `build/` but `tools/`; `--modules`: also `build/modules` and `src/Modules.h`; never `~/.xewe-os/build-tools`) |
 | `xewe format [--check] [PATH...]` | clang-format `*.h *.hpp *.c *.cpp *.ino` (sketch, `src/`, `examples/`, `tests/unit/`; never `build/`) with the project's `.clang-format` (no column alignment: it costs tokens and turns one-line changes into realigned blocks), and `ruff format` the Python when ruff is installed; `--check` exits 1 listing files that would change. clang-format: `PATH`, the tools venv (`pip install clang-format`) or `XEWE_CLANG_FORMAT` |
 | `xewe doctor` | check the environment (on Apple silicon also Rosetta 2, which the esp32 core's `ctags` needs) |
-| `xewe release --version X.Y.Z [--matrix FILE] [--notes FILE]` | release matrix into `static/firmware/releases/<version>/`; prints the git/gh commands |
+| `xewe release --version X.Y.Z [--matrix FILE] [--notes FILE]` | release matrix into `static/firmware/releases/<version>/`, each `meta.json` recording the resolved core, modules, tools and library commits; prints the git/gh commands (CI runs it on a version tag: `ci/README.md`) |
 
 Global flags (before the command): `--project DIR`, `--verbose`/`-v`, `--version`. `-v`/`--verbose` is also
 accepted after the command (`xewe test --unit-only -v`); pytest's own flags go after `--`
@@ -70,6 +70,14 @@ the boot log. With `--send`, the command is sent right away when nothing boot-li
 2 s of opening (the normal case), or, if a boot is in progress, after `System Setup Complete` (up to
 `--boot-timeout`, default 90 s: Wi-Fi + NTP can take ~30 s). An unprovisioned board (`Name your device`) exits 1 without sending: run
 `xewe provision`. A `boot: ...` line records which case happened.
+
+The board's USB console queues at most 1024 received bytes and has no flow control, so the tools
+split any write longer than 900 bytes into pieces 50 ms apart. During `xewe test`, a board test
+that fails on a timeout makes the next test reopen the port once and send `$system uid`; a board
+that still does not answer ends the session (`board on <port> is silent after a restart …;
+power-cycle it`, exit 1) instead of failing every later test. After a flash or an esptool probe
+the port must stay present `--settle` seconds (default 0.5, `XEWE_SETTLE`); a board that comes
+back under another name with the same USB serial number (macOS `cu.usbmodem<N>`) is followed.
 
 ## Provision
 

@@ -16,9 +16,11 @@ import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from xewe.build import chips
 from xewe.build import compile as build
+from xewe.env import config, fetch
 from xewe.env.project import Paths
 from xewe.modules import lockfile
 from xewe.modules.lockfile import Lock
@@ -111,6 +113,48 @@ def publish_commands(version: str) -> list[str]:
     ]
 
 
+def _commit(record: Any) -> str:
+    """The commit of an ``[installed]`` record (``-`` when setup did not record one)."""
+    return str(record.get("commit") or "-") if isinstance(record, dict) else "-"
+
+
+def provenance(p: Paths, cfg: config.BuildConfig | None) -> dict[str, Any]:
+    """What a release was built from: the project commit, and the commit each ``latest`` (or tag)
+    ref of core, modules, tools and every library resolved to at setup time (``[installed]`` of
+    build_config.toml). ``-`` marks an unknown commit (not a git checkout, or not recorded)."""
+    installed = cfg.installed if cfg else {}
+    out: dict[str, Any] = {"project_commit": fetch.head_commit(p.root)}
+    for name in ("core", "modules", "tools"):
+        record = installed.get(name, {})
+        out[f"{name}_ref"] = str(record.get("ref", "")) if isinstance(record, dict) else ""
+        out[f"{name}_commit"] = _commit(record)
+    libs = installed.get("libraries", {})
+    out["libraries"] = {
+        lib: {"ref": str(rec.get("ref", "")), "commit": _commit(rec)}
+        for lib, rec in sorted(libs.items()) if isinstance(rec, dict)
+    }
+    return out
+
+
+def _with_provenance(meta: dict[str, Any], prov: dict[str, Any]) -> dict[str, Any]:
+    """``meta`` plus ``prov``, each ``*_commit`` right after its ``*_ref`` (key order is what people
+    read): ``project_commit, core_ref, core_commit, modules_ref, modules_commit, tools_ref,
+    tools_commit`` where ``core_ref`` was; ``libraries`` at the end."""
+    group = {
+        "core_ref": ("project_commit", "core_ref", "core_commit"),
+        "modules_ref": ("modules_ref", "modules_commit", "tools_ref", "tools_commit"),
+    }
+    merged: dict[str, Any] = {}
+    for key, value in meta.items():
+        if key in group:
+            merged.update((k, prov[k] or meta.get(k, "")) for k in group[key])
+        elif key not in prov:
+            merged[key] = value
+    for key, value in prov.items():
+        merged.setdefault(key, value)
+    return merged
+
+
 def _check_tree(p: Paths) -> None:
     """Warn about uncommitted changes other than xewe.toml (read-only ``git status``)."""
     if shutil.which("git") is None or not (p.root / ".git").exists():
@@ -163,6 +207,7 @@ def release(
     (version_dir / "release_notes.txt").write_text(notes, encoding="utf-8")
     (version_dir / "firmware_map.csv").write_text(",".join(matrix.map_header) + "\n", encoding="utf-8")
 
+    prov: dict[str, Any] | None = None
     for row in matrix.rows:
         dest = version_dir.joinpath(*row.folders)
         result(f"release  {row.chip}  {p.rel(dest)}")
@@ -179,6 +224,9 @@ def release(
             (dest / "build_notes.txt").write_text(row.notes + "\n", encoding="utf-8")
         meta_path = dest / "meta.json"
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        if prov is None:
+            prov = provenance(p, config.load(p))
+        meta = _with_provenance(meta, prov)
         rel_dir = f"{p.root.name}/{p.rel(dest)}"
         artifacts = meta.setdefault("artifacts", {})
         artifacts["path_rel_binary"] = f"{rel_dir}/{bin_name}"

@@ -1,7 +1,8 @@
 # xewe-release.yml: reusable release for a XeWe OS firmware project, run on a version tag.
 # Mirrors the old build/scripts/release.sh and today's `xewe release`: build the release matrix into
 # static/firmware/releases/<version>/, then publish it twice:
-#   1. a GitHub Release with the binaries and firmware-<version>.tar.gz (canonical, permanent)
+#   1. a GitHub Release with the binaries and firmware-<version>.tar.gz (canonical, permanent);
+#      every meta.json records the resolved commits of core, modules, tools and libraries
 #   2. a commit of the same folder to the `releases` branch (static files for the web flasher)
 # Tags: vX.Y.Z (release) or vX.Y.Z-<suffix> (pre-release, e.g. v2.0.0-rc1). X.Y.Z must equal
 # [project] version in xewe.toml at the tagged commit. See ci/README.md.
@@ -113,8 +114,11 @@ jobs:
         run: build/tools/.venv/bin/python -m xewe release --version "$BASE" --notes "$RUNNER_TEMP/notes.txt"
 
       # Pre-release tags: the folder is renamed to the full tag version (X.Y.Z-rc1) so it never
-      # claims X.Y.Z; the binaries inside still report X.Y.Z. Every release also gets resolved.json:
-      # the commits that `latest` resolved to (meta.json only records the ref names).
+      # claims X.Y.Z; the binaries inside still report X.Y.Z. meta.json already records what the
+      # release was built from (project_commit, core/modules/tools *_ref + *_commit, libraries:
+      # SPEC §11); this step adds release_tag and, for a tools ref older than that change, fills the
+      # commits in from build_config.toml [installed]. The first meta.json's provenance also goes
+      # into the release notes.
       - name: Finish the release folder
         id: dir
         shell: bash
@@ -132,29 +136,36 @@ jobs:
           python3 - "$rel/$VERSION" "$BASE" "$VERSION" <<'PY'
           import json, os, pathlib, sys, tomllib
           root, base, version = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
-          for meta in root.rglob("meta.json"):
+          with open("build/config/build_config.toml", "rb") as f:
+              installed = tomllib.load(f).get("installed", {})
+          metas = sorted(root.rglob("meta.json"))
+          for meta in metas:
               data = json.loads(meta.read_text())
               for k, v in data.get("artifacts", {}).items():
                   if k.startswith("path_rel_"):
                       data["artifacts"][k] = v.replace(f"/releases/{base}/", f"/releases/{version}/")
               data["release_tag"] = os.environ["GITHUB_REF_NAME"]
+              if "core_commit" not in data:  # tools before meta.json provenance
+                  data["project_commit"] = os.environ["GITHUB_SHA"]
+                  for name in ("core", "modules", "tools"):
+                      rec = installed.get(name, {})
+                      data[f"{name}_ref"] = rec.get("ref", data.get(f"{name}_ref", ""))
+                      data[f"{name}_commit"] = rec.get("commit", "-")
+                  data["libraries"] = {k: {"ref": v.get("ref", ""), "commit": v.get("commit", "-")}
+                                       for k, v in installed.get("libraries", {}).items()}
               meta.write_text(json.dumps(data, indent=2) + "\n")
-          with open("build/config/build_config.toml", "rb") as f:
-              installed = tomllib.load(f).get("installed", {})
-          resolved = {
-              "tag": os.environ["GITHUB_REF_NAME"],
-              "project_commit": os.environ["GITHUB_SHA"],
-              "arduino_cli": installed.get("arduino_cli"),
-              "esp32_core": installed.get("esp32"),
-              **{k: {"ref": v.get("ref"), "commit": v.get("commit"), "source": v.get("source")}
-                 for k, v in installed.items() if isinstance(v, dict) and "commit" in v},
-              "libraries": installed.get("libraries", {}),
-          }
-          (root / "resolved.json").write_text(json.dumps(resolved, indent=2) + "\n")
+          m = json.loads(metas[0].read_text())
+          lines = ["", "", "Built from:", f"- project {m['project_commit']}",
+                   *(f"- {n} {m[n + '_ref']} @ {m[n + '_commit']}" for n in ("core", "modules", "tools")),
+                   *(f"- {k} {v['ref']} @ {v['commit']}" for k, v in m["libraries"].items()),
+                   f"- arduino-cli {m.get('arduino_cli', '')}, esp32 core {m.get('esp32_core', '')}"]
+          notes = root / "release_notes.txt"
+          notes.write_text(notes.read_text().rstrip("\n") + "\n".join(lines) + "\n")
           PY
           tar -C "$rel" -czf "$rel/firmware-$VERSION.tar.gz" "$VERSION"
           echo "path=$rel/$VERSION" >> "$GITHUB_OUTPUT"
           find "$rel/$VERSION" -type f | sort
+          cat "$rel/$VERSION/release_notes.txt"
 
       - name: GitHub Release
         shell: bash
@@ -167,7 +178,7 @@ jobs:
         run: |
           set -euo pipefail
           assets="$RUNNER_TEMP/assets"; mkdir -p "$assets"
-          cp "static/firmware/releases/firmware-$VERSION.tar.gz" "$DIR/resolved.json" "$assets/"
+          cp "static/firmware/releases/firmware-$VERSION.tar.gz" "$assets/"
           # one flat file per binary; rows below a nested matrix folder keep that path in the name
           while IFS= read -r bin; do
             sub="$(dirname "${bin#"$DIR"/}")"
@@ -216,15 +227,15 @@ jobs:
           for d in root.iterdir():
               if not d.is_dir():
                   continue
-              res = d / "resolved.json"
-              builds = []
+              builds, tag = [], None
               for meta in sorted(d.rglob("meta.json")):
                   m = json.loads(meta.read_text())
+                  tag = tag or m.get("release_tag")
                   builds.append({"chip": m.get("type"), "path": str(meta.parent.relative_to(root)),
                                  "binary": m.get("artifacts", {}).get("binary_filename"),
                                  "config": m.get("config", {})})
               entries.append({"version": d.name, "prerelease": "-" in d.name,
-                              "tag": json.loads(res.read_text()).get("tag") if res.is_file() else None,
+                              "tag": tag,
                               "builds": builds})
           def key(e):
               base, _, pre = e["version"].partition("-")

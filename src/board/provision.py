@@ -75,6 +75,14 @@ EVENTS: list[tuple[str, re.Pattern[str]]] = [
     ("error", re.compile(r"^! ")),
     ("progress", re.compile(r"Joined |Detecting Timezone|Timezone set|\w Setup\b")),
 ]
+MODULE_RE = dict(EVENTS)["module"]
+BOX_RULE_RE = re.compile(r"^[\s+\-=_*#\u2500-\u257f]*$")
+"""A box border line (``+----+`` or box-drawing characters): no text of its own."""
+BOX_EDGE = " \t|\u2502\u2503\u2551"
+"""Stripped from both ends of a boxed line (``|  text  |``)."""
+WRAP_LOOKBACK = 40
+"""At most this many lines before an unexpected ``(y/n) > `` are joined to look for a wrapped
+module question (``Driver._wrapped_module``)."""
 NETWORK_RE = re.compile(r"^(\d+)\. (.*)$")
 """One entry of ``Wifi::scan``'s list (``0. My Network``); only looked for inside a list."""
 ANY_EVENT = "|".join(f"(?:{rx.pattern})" for rx in [*(rx for _, rx in EVENTS), NETWORK_RE])
@@ -219,6 +227,8 @@ class Driver:
         self.networks: dict[int, str] = {}
         self.rescans = 0
         self.seen: dict[str, int] = {}
+        self.mark = 0
+        """``console.lines`` index just after the last answer sent: a wrapped question starts here."""
         self.module = ""
         """Display name of the module whose "enable?" question came last (for the auto-answer log)."""
 
@@ -289,10 +299,15 @@ class Driver:
         s = self.s
         if kind == "input":
             if self.pending is None:
-                self._auto(m[0])
-                return
+                wrapped = self._wrapped_module()
+                if wrapped is None:
+                    self._auto(m[0])
+                    return
+                self._handle("module", wrapped)
+                assert self.pending is not None
             self.last, self.pending = self.pending, None
             self.console.send(self.last[1])
+            self.mark = len(self.console.lines)
         elif kind == "name":
             if self.seen["name"] > 2:
                 raise ProvisionFailed("the board keeps asking for the device name")
@@ -382,6 +397,28 @@ class Driver:
         self.out.auto.append(prompt)
         self.last = (AUTO, answer)
         self.console.send(answer)
+        self.mark = len(self.console.lines)
+
+    def _wrapped_module(self) -> re.Match[str] | None:
+        """The module question of a boxed header wrapped over several lines, or None.
+
+        ``Serial::print_header`` word-wraps at the box width, so a long question such as ``Would you
+        like to enable Home Assistant module?`` arrives as ``|  …enable Home Assistant  |`` and
+        ``|  module?  |``, and the per-line pattern never matches. Here the lines printed since the
+        last answer are joined: border lines dropped, edges stripped,
+        whitespace collapsed; then the same pattern is searched once more.
+        """
+        lines = self.console.lines
+        start = max(min(self.mark, len(lines)), len(lines) - WRAP_LOOKBACK)
+        parts = [ln.strip(BOX_EDGE) for ln in lines[start:] if not BOX_RULE_RE.match(ln)]
+        text = " ".join(" ".join(parts).split())
+        found = None
+        for found in MODULE_RE.finditer(text):
+            pass
+        if found is not None:
+            self.seen["module"] = self.seen.get("module", 0) + 1
+            log.info("module question wrapped over several lines: %r", found[0])
+        return found
 
     def _before(self) -> str:
         lines = self.console.lines

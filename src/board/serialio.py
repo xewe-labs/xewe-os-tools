@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 import queue
 import re
 import sys
@@ -19,7 +20,7 @@ try:
 except ImportError:  # Windows
     termios = None  # type: ignore[assignment]
 
-from xewe.report import BOARD_DISABLED, EXIT_FAIL, EXIT_NO_BOARD, EXIT_OK, NO_BOARD, XeWeError, board_disabled, log, result
+from xewe.report import BOARD_DISABLED, EXIT_FAIL, EXIT_NO_BOARD, EXIT_OK, EXIT_USAGE, NO_BOARD, XeWeError, board_disabled, log, result
 
 RECONNECT_SECONDS = 5.0
 SILENCE_SECONDS = 0.5
@@ -36,6 +37,19 @@ BOOT_GRACE_SECONDS = 2.0
 BOOT_TIMEOUT_SECONDS = 90.0
 """``--send``: default ``--boot-timeout`` (Wi-Fi + NTP can take ~30 s before the banner)."""
 INTERACTIVE_HINT = "interactive: type a command and press Enter; Ctrl-C to exit"
+SEND_CHUNK_BYTES = 900
+"""Largest single write. The S3/C3/C6 USB console (HWCDC, USB-Serial/JTAG) has a 1024-byte RX queue
+(``SerialPortConfig::rx_buffer_size``) and no flow control: bytes that arrive while it is full are
+dropped before the firmware sees them (a 1037-byte write lost its last command on an S3). Longer
+writes are split into pieces of at most this size with ``SEND_CHUNK_PAUSE`` between them."""
+SEND_CHUNK_PAUSE = 0.05
+"""Seconds between two pieces of a long write: time for the firmware's ``loop()`` to drain the queue."""
+PROBE_COMMAND = "$system uid"
+"""Liveness probe: every XeWe OS image answers it with a ``uid64 ...`` line."""
+PROBE_REPLY = r"^uid64 "
+PORT_SETTLE_SECONDS = 0.5
+"""Default for ``wait_for_port``: a re-enumerated port must stay present this long (``--settle``,
+``XEWE_SETTLE``)."""
 
 
 class ExpectTimeout(AssertionError):
@@ -161,6 +175,39 @@ class Console:
         """Keep the captured lines; the next ``expect`` looks only at lines read after this."""
         self._cursor = len(self.lines)
 
+    def reopen(self, pause: float = 0.2) -> None:
+        """Close the port, wait ``pause`` seconds, open it again (retrying for ``RECONNECT_SECONDS``).
+
+        A host can keep a stale endpoint after a native-USB board restarts (the open port then
+        reads nothing although the board runs); a fresh open binds to the re-enumerated device.
+        The open does not reset the board (see ``open``). Raises ``XeWeError`` when the port does
+        not come back.
+        """
+        if self._ser is not None:
+            try:
+                self._ser.close()
+            except (serial.SerialException, OSError):
+                pass
+            self._ser = None
+        time.sleep(pause)
+        self._reconnect()
+
+    def probe(self, timeout: float = 15.0, tries: int = 3) -> bool:
+        """True when the board answers ``PROBE_COMMAND`` within ``timeout`` seconds.
+
+        The probe is sent up to ``tries`` times, evenly spread over ``timeout`` (a board that is
+        still finishing a boot discards input typed before its prompt). Lines read stay in ``lines``.
+        """
+        for _ in range(max(1, tries)):
+            try:
+                self.command(PROBE_COMMAND, PROBE_REPLY, timeout / max(1, tries))
+                return True
+            except ExpectTimeout:
+                continue
+            except (serial.SerialException, OSError, XeWeError):
+                return False
+        return False
+
     def _reconnect(self) -> None:
         if self._ser is not None:
             try:
@@ -217,11 +264,22 @@ class Console:
 
         The ``> cmd`` line goes to the log always and to ``out`` only with ``show`` (the interactive
         console passes False: the terminal shows the typed text and the firmware echoes it).
+        Writes longer than ``SEND_CHUNK_BYTES`` are split (see ``write``).
         """
-        self._ser.write((cmd + "\n").encode("utf-8"))
-        self._ser.flush()
+        self.write((cmd + "\n").encode("utf-8"))
         self._cursor = len(self.lines)
         self._emit(f"> {self.mask(cmd)}", show)
+
+    def write(self, data: bytes, chunk: int = SEND_CHUNK_BYTES, pause: float = SEND_CHUNK_PAUSE) -> None:
+        """Write raw ``data`` (nothing logged), in pieces of at most ``chunk`` bytes with ``pause``
+        seconds between them, so one burst never overruns the board's 1024-byte USB RX queue
+        (``SEND_CHUNK_BYTES``). ``chunk=0`` writes everything at once (for overflow tests)."""
+        step = chunk if chunk > 0 else max(1, len(data))
+        for i in range(0, len(data), step):
+            if i:
+                time.sleep(pause)
+            self._ser.write(data[i:i + step])
+            self._ser.flush()
 
     def expect(self, pattern: str, timeout: float = 10) -> re.Match[str]:
         """Wait for a line matching ``pattern`` (searched) after the last send/expect."""
@@ -369,28 +427,63 @@ def wait_for_banner(console: Console, pattern: str, timeout: float, reset: bool 
                 raise
 
 
-def wait_for_port(port: str, exists: Callable[[str], bool], timeout: float = 10.0, settle: float = 0.5) -> None:
-    """Wait until ``exists(port)`` has held for ``settle`` seconds in a row.
+def settle_seconds(value: float | None = None) -> float:
+    """``value`` (``--settle``), else ``XEWE_SETTLE``, else ``PORT_SETTLE_SECONDS``."""
+    if value is not None:
+        return value
+    env = os.environ.get("XEWE_SETTLE")
+    if env:
+        try:
+            return float(env)
+        except ValueError:
+            raise XeWeError(f"XEWE_SETTLE must be a number of seconds, got {env!r}", EXIT_USAGE) from None
+    return PORT_SETTLE_SECONDS
+
+
+def wait_for_port(
+    port: str,
+    exists: Callable[[str], bool],
+    timeout: float = 10.0,
+    settle: float | None = None,
+    renamed: Callable[[], str | None] | None = None,
+) -> str:
+    """Wait until ``exists(port)`` has held for ``settle`` seconds in a row; return the port name.
 
     A native-USB board re-enumerates after esptool resets it: the port can still be there for a
-    moment, vanish, then come back. Only a port that stayed present for ``settle`` counts. Raises
-    ``XeWeError`` (exit 4) when that does not happen within ``timeout`` seconds.
+    moment, vanish, then come back. Only a port that stayed present for ``settle`` counts
+    (``settle_seconds``: ``--settle``, ``XEWE_SETTLE``, default 0.5 s).
+
+    ``renamed`` returns the name the same board has now when it differs (macOS can give a
+    re-enumerated board another ``/dev/cu.usbmodem<N>``; ``boards.renamed_port`` matches it by USB
+    serial number). When ``port`` stays away but ``renamed()`` names a port that is present,
+    that name is returned (after the same settle). Raises ``XeWeError`` (exit 4) when neither
+    happens within ``timeout`` seconds; the message names the new port when one was seen.
     """
+    settle = settle_seconds(settle)
     deadline = time.monotonic() + timeout
     present_since: float | None = None
+    current = port
     while True:
         now = time.monotonic()
-        if exists(port):
+        if exists(current):
             if present_since is None:
                 present_since = now
             if now - present_since >= settle:
-                return
+                return current
         else:
             present_since = None
+            other = renamed() if renamed is not None else None
+            if other and other != current and exists(other):
+                current, present_since = other, now
         if now >= deadline:
+            hint = "unplug and replug the board"
+            other = renamed() if renamed is not None else None
+            if other and other != port:
+                hint = (f"the board came back as {other} (the host gave it a new name); "
+                        f"pass --port {other}, or replug it")
             raise XeWeError(
                 f"{port} did not come back (present for {settle:g} s) within {timeout:.0f} s after esptool reset it; "
-                "unplug and replug the board",
+                f"{hint}",
                 EXIT_NO_BOARD,
             )
         time.sleep(0.05)

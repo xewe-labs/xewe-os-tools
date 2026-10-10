@@ -1,0 +1,128 @@
+# xewe-pages.yml: a GitHub Pages web flasher fed from the GitHub Releases (proposal P4c; nothing
+# calls it yet). Stateless: every run rebuilds the whole site from the releases' firmware-<v>.tar.gz
+# assets, so there is no branch with binaries. The site, at https://<org>.github.io/<repo>/:
+#   index.html                       ESP Web Tools install button + version picker
+#   index.json                       every version, newest first (same shape as the releases branch)
+#   firmware/<v>/manifest.json       one ESP Web Tools manifest with a build per chip (c3, c6, s3)
+#   firmware/<v>/<path>/...          the release folder as `xewe release` laid it out
+# Enable: Settings -> Pages -> Source "GitHub Actions"; then in the project's ci.yml:
+#   pages:
+#     needs: release
+#     permissions: { contents: read, pages: write, id-token: write }
+#     uses: xewe-labs/xewe-os-tools/.github/workflows/xewe-pages.yml@main
+# Releases with a matrix (more than one build per chip) get one manifest per matrix folder; the
+# picker lists them as "<version> <folder>". Pre-releases are listed, marked, below the finals.
+name: xewe-pages
+
+on:
+  workflow_call:
+    inputs:
+      title:
+        description: "page title (default: the repository name)"
+        type: string
+        default: ""
+      include_prereleases:
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  site:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Download every release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRE: ${{ inputs.include_prereleases }}
+        run: |
+          set -euo pipefail
+          mkdir -p site/firmware dl
+          gh release list -R "$GITHUB_REPOSITORY" --limit 200 --json tagName,isPrerelease,isDraft \
+            --jq '.[] | select(.isDraft | not) | "\(.tagName) \(.isPrerelease)"' > releases.txt
+          while read -r tag pre; do
+            [[ "$pre" == true && "$PRE" != true ]] && continue
+            v="${tag#v}"
+            if gh release download "$tag" -R "$GITHUB_REPOSITORY" -p "firmware-$v.tar.gz" -D dl 2>/dev/null; then
+              tar -xzf "dl/firmware-$v.tar.gz" -C site/firmware
+            else
+              echo "::notice::$tag has no firmware-$v.tar.gz; skipped"
+            fi
+          done < releases.txt
+          ls site/firmware
+
+      - name: Manifests, index.json and the page
+        shell: bash
+        env:
+          TITLE: ${{ inputs.title || github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          python3 - site "$TITLE" <<'PY'
+          import html, json, pathlib, sys
+          site, title = pathlib.Path(sys.argv[1]), sys.argv[2]
+          fw = site / "firmware"
+          entries = []
+          for vdir in (d for d in fw.iterdir() if d.is_dir()):
+              groups = {}  # matrix folder below the chip ("" for the default matrix) -> builds
+              tag = None
+              for meta in sorted(vdir.rglob("meta.json")):
+                  m = json.loads(meta.read_text())
+                  tag = tag or m.get("release_tag")
+                  rel = meta.parent.relative_to(vdir)
+                  chip_dir, rest = rel.parts[0], "/".join(rel.parts[1:])
+                  binary = m["artifacts"]["binary_filename"]
+                  groups.setdefault(rest, []).append(
+                      {"chipFamily": m["chip_family"], "parts": [{"path": f"{rel}/{binary}", "offset": 0}]})
+                  name = m.get("project_name", title)
+              for rest, builds in sorted(groups.items()):
+                  suffix = f"-{rest.replace('/', '_')}" if rest else ""
+                  manifest = vdir / f"manifest{suffix}.json"
+                  manifest.write_text(json.dumps({"name": name, "version": vdir.name,
+                                                  "new_install_improv_wait_time": 0, "builds": builds}, indent=2) + "\n")
+                  entries.append({"version": vdir.name, "variant": rest, "prerelease": "-" in vdir.name,
+                                  "tag": tag, "manifest": f"firmware/{vdir.name}/{manifest.name}",
+                                  "chips": [b["chipFamily"] for b in builds]})
+          def key(e):
+              base, _, pre = e["version"].partition("-")
+              return (tuple(int(x) for x in base.split(".") if x.isdigit()), pre == "", pre, e["variant"])
+          entries.sort(key=key, reverse=True)
+          (site / "index.json").write_text(json.dumps({"releases": entries}, indent=2) + "\n")
+          options = "\n".join(
+              f'<option value="{html.escape(e["manifest"])}">{html.escape(e["version"])}'
+              f'{" " + html.escape(e["variant"]) if e["variant"] else ""}{" (pre-release)" if e["prerelease"] else ""}'
+              f' - {", ".join(e["chips"])}</option>' for e in entries)
+          first = html.escape(entries[0]["manifest"]) if entries else ""
+          (site / "index.html").write_text(f"""<!doctype html>
+          <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>{html.escape(title)} flasher</title>
+          <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+          <style>body{{font-family:system-ui,sans-serif;max-width:40rem;margin:2rem auto;padding:0 1rem}}select{{font-size:1rem}}</style>
+          </head><body>
+          <h1>{html.escape(title)}</h1>
+          <p>Connect the board over USB, pick a version, then press Install (Chrome or Edge on a desktop).</p>
+          <p><select id="v">{options}</select></p>
+          <esp-web-install-button id="b" manifest="{first}"></esp-web-install-button>
+          <script>document.getElementById("v").onchange=e=>document.getElementById("b").manifest=e.target.value;</script>
+          </body></html>
+          """)
+          PY
+          find site -maxdepth 3 | sort | head -50
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4
