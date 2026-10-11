@@ -32,7 +32,9 @@ def _installs(calls: list[dict[str, Any]]) -> list[list[str]]:
     return [c["argv"] for c in calls if c["argv"][:2] == ["core", "install"]]
 
 
-def test_full_setup_with_local_sources(fresh: Paths, fake_cli, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+def test_full_setup_with_local_sources(
+    fresh: Paths, fake_cli, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
     assert main(["setup", "--modules", "scheduler"]) == 0
     assert "setup complete" in capsys.readouterr().out
     argvs = [c["argv"][:2] for c in fake_cli()]
@@ -124,8 +126,9 @@ def test_reuse_arduino_data(fresh: Paths, tmp_path: Path, fake_cli, monkeypatch:
     assert _installs(fake_cli()) == [["core", "install", "esp32:esp32@3.3.12"]]
 
 
-def test_no_selection_without_tty_means_zero_modules(fresh: Paths, monkeypatch: pytest.MonkeyPatch,
-                                                     caplog: pytest.LogCaptureFixture) -> None:
+def test_no_selection_without_tty_means_zero_modules(
+    fresh: Paths, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
     monkeypatch.setattr("builtins.input", lambda *a: pytest.fail("prompted without a TTY"))
     assert main(["setup"]) == 0
@@ -135,8 +138,9 @@ def test_no_selection_without_tty_means_zero_modules(fresh: Paths, monkeypatch: 
     assert main(["build", "--chip", "c3"]) == 0
 
 
-def test_tty_empty_answer_means_zero_modules(fresh: Paths, monkeypatch: pytest.MonkeyPatch,
-                                             caplog: pytest.LogCaptureFixture) -> None:
+def test_tty_empty_answer_means_zero_modules(
+    fresh: Paths, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
     monkeypatch.setattr("builtins.input", lambda *a: "")
     assert main(["setup"]) == 0
@@ -146,13 +150,16 @@ def test_tty_empty_answer_means_zero_modules(fresh: Paths, monkeypatch: pytest.M
 
 
 def _no_module_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
-    return [r.getMessage() for r in caplog.records
-            if r.levelname == "WARNING" and r.getMessage().startswith("no modules selected")]
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelname == "WARNING" and r.getMessage().startswith("no modules selected")
+    ]
 
 
-def test_no_modules_warning_names_both_fixes(fresh: Paths, monkeypatch: pytest.MonkeyPatch,
-                                            caplog: pytest.LogCaptureFixture,
-                                            capsys: pytest.CaptureFixture[str]) -> None:
+def test_no_modules_warning_names_both_fixes(
+    fresh: Paths, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Enter at the menu keeps "none", but setup, build and run each print one warning line."""
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
     monkeypatch.setattr("builtins.input", lambda *a: "")
@@ -183,15 +190,18 @@ def test_modules_flag_none(fresh: Paths, value: str) -> None:
     assert "(os" not in fresh.src_modules_h.read_text()
 
 
-def test_modules_source_without_modules_warns(fresh: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-                                              caplog: pytest.LogCaptureFixture) -> None:
+def test_modules_source_without_modules_warns(
+    fresh: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     registry_only = tmp_path / "old-registry"
     registry_only.mkdir()
     (registry_only / "repositories.txt").write_text("xewe-os-module-wifi\n")
     monkeypatch.setenv("XEWE_MODULES_SOURCE", str(registry_only))
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
     assert main(["setup"]) == 0
-    warning = next(r.getMessage() for r in caplog.records if r.levelname == "WARNING" and "no modules found" in r.getMessage())
+    warning = next(
+        r.getMessage() for r in caplog.records if r.levelname == "WARNING" and "no modules found" in r.getMessage()
+    )
     assert str(registry_only) in warning
     assert "modules/<slug>/module.properties" in warning and "xewe-os-module-<slug>" in warning
     assert main(["setup", "--modules", "wifi"]) == 2
@@ -239,17 +249,25 @@ def git_sources(fresh: Paths, monkeypatch: pytest.MonkeyPatch) -> list[tuple[str
 
 def test_git_sources_and_skip_when_recorded(fresh: Paths, git_sources: list[tuple[str, str]], tmp_path: Path) -> None:
     assert main(["setup", "--modules", "wifi"]) == 0
-    assert git_sources == [("https://github.com/xewe-labs/xewe-os-core", "1.0.0"),
-                           ("https://github.com/xewe-labs/xewe-os-modules", "v1.0.0")]
+    assert git_sources == [
+        ("https://github.com/xewe-labs/xewe-os-core", "1.0.0"),
+        ("https://github.com/xewe-labs/xewe-os-modules", "v1.0.0"),
+    ]
     cfg = config.load(fresh)
     assert cfg is not None and cfg.installed["core"] == {
-        "ref": "1.0.0", "commit": "c0ffee", "source": "https://github.com/xewe-labs/xewe-os-core"}
+        "ref": "1.0.0",
+        "commit": "c0ffee",
+        "source": "https://github.com/xewe-labs/xewe-os-core",
+    }
     # the modules repo is a shared checkout per ref outside the project
     shared = tmp_path / "xewe-home" / "build-tools" / "sources" / "xewe-os-modules" / "v1.0.0"
     assert fresh.modules_checkout("v1.0.0") == shared and (shared / "modules" / "wifi").is_dir()
     assert cfg.paths["modules"] == str(shared)
     assert cfg.installed["modules"] == {
-        "ref": "v1.0.0", "commit": "c0ffee", "source": "https://github.com/xewe-labs/xewe-os-modules"}
+        "ref": "v1.0.0",
+        "commit": "c0ffee",
+        "source": "https://github.com/xewe-labs/xewe-os-modules",
+    }
     assert sorted(d.name for d in fresh.build.iterdir()) == [".gitignore", "config", "libraries", "modules"]
     git_sources.clear()
     assert main(["setup"]) == 0
@@ -264,8 +282,9 @@ def test_git_sources_and_skip_when_recorded(fresh: Paths, git_sources: list[tupl
     assert len(git_sources) == 2
 
 
-def test_modules_branch_follows_remote_head(fresh: Paths, git_sources: list[tuple[str, str]],
-                                            monkeypatch: pytest.MonkeyPatch) -> None:
+def test_modules_branch_follows_remote_head(
+    fresh: Paths, git_sources: list[tuple[str, str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
     fresh.lock.write_text(fresh.lock.read_text().replace('ref = "v1.0.0"', 'ref = "feature/x"'))
     followed: list[tuple[Path, str]] = []
     monkeypatch.setattr(fetch, "current_branch", lambda path: "feature/x")
@@ -279,8 +298,9 @@ def test_modules_branch_follows_remote_head(fresh: Paths, git_sources: list[tupl
     assert config.load(fresh).installed["modules"]["commit"] == "beef"
 
 
-def test_modules_checkout_of_another_repo_is_recloned(fresh: Paths, git_sources: list[tuple[str, str]],
-                                                      monkeypatch: pytest.MonkeyPatch) -> None:
+def test_modules_checkout_of_another_repo_is_recloned(
+    fresh: Paths, git_sources: list[tuple[str, str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
     assert main(["setup", "--modules", "wifi"]) == 0
     git_sources.clear()
     monkeypatch.setattr(fetch, "remote_url", lambda path: "https://github.com/example/fork")
@@ -312,8 +332,12 @@ def led_source(fresh: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     (d / "src" / "Led").mkdir(parents=True)
     (d / "src" / "Led" / "Led.h").write_text("#pragma once\nclass Led {};\n")
     props = (src / "xewe-os-module-pins" / "module.properties").read_text()
-    props = (props.replace("slug=pins", "slug=led-strip").replace("id=pins", "id=led").replace("Pins", "Led")
-             .replace("depends_libraries=XeWeOS (>=0.1.0)", "depends_libraries=FastLED, XeWeOS (>=0.1.0)"))
+    props = (
+        props.replace("slug=pins", "slug=led-strip")
+        .replace("id=pins", "id=led")
+        .replace("Pins", "Led")
+        .replace("depends_libraries=XeWeOS (>=0.1.0)", "depends_libraries=FastLED, XeWeOS (>=0.1.0)")
+    )
     (d / "module.properties").write_text(props)
     (src / "libraries.toml").write_text(f'[FastLED]\nrepo = "{FASTLED}"\nref = "3.10.3"\n')
     clones: list[tuple[str, str]] = []
@@ -328,8 +352,12 @@ def led_source(fresh: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     return clones
 
 
-def test_module_library_from_catalogue(fresh: Paths, led_source: list[tuple[str, str]],
-                                       caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]) -> None:
+def test_module_library_from_catalogue(
+    fresh: Paths,
+    led_source: list[tuple[str, str]],
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     assert main(["setup", "--modules", "led-strip"]) == 0
     assert led_source == [(FASTLED, "3.10.3")]
     assert "library FastLED: from modules catalogue (3.10.3)" in caplog.text
@@ -349,8 +377,12 @@ def test_module_library_from_catalogue(fresh: Paths, led_source: list[tuple[str,
     assert led_source == []
 
 
-def test_lock_pin_wins_over_catalogue(fresh: Paths, led_source: list[tuple[str, str]],
-                                      caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]) -> None:
+def test_lock_pin_wins_over_catalogue(
+    fresh: Paths,
+    led_source: list[tuple[str, str]],
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     fork = "https://github.com/example/FastLED"
     fresh.lock.write_text(fresh.lock.read_text() + f'FastLED = {{ repo = "{fork}", ref = "3.9.0" }}\n')
     assert main(["setup", "--modules", "led-strip"]) == 0
@@ -372,13 +404,16 @@ def test_unselected_module_libraries_are_not_installed(fresh: Paths, led_source:
     assert config.load(fresh).installed["libraries"] == {}
 
 
-def test_library_missing_from_catalogue_warns(fresh: Paths, led_source: list[tuple[str, str]], tmp_path: Path,
-                                             caplog: pytest.LogCaptureFixture) -> None:
+def test_library_missing_from_catalogue_warns(
+    fresh: Paths, led_source: list[tuple[str, str]], tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     (tmp_path / "modules-src" / "libraries.toml").unlink()
     assert main(["setup", "--modules", "led-strip"]) == 0
     assert led_source == []
-    assert "library FastLED (needed by module led-strip) is neither in xewe.toml [libraries] nor in the " \
-           "modules libraries.toml; not installed" in caplog.text
+    assert (
+        "library FastLED (needed by module led-strip) is neither in xewe.toml [libraries] nor in the "
+        "modules libraries.toml; not installed" in caplog.text
+    )
 
 
 def test_bad_catalogue_fails(fresh: Paths, led_source: list[tuple[str, str]], tmp_path: Path) -> None:
@@ -420,14 +455,18 @@ def cli_release(fresh: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     return downloads
 
 
-def test_second_project_reuses_shared_toolchain(fresh: Paths, tmp_path: Path, fake_cli,
-                                                cli_release: list[tuple[str, Path]]) -> None:
+def test_second_project_reuses_shared_toolchain(
+    fresh: Paths, tmp_path: Path, fake_cli, cli_release: list[tuple[str, Path]]
+) -> None:
     tools = tmp_path / "xewe-home" / "build-tools"
     assert main(["setup", "--modules", "wifi"]) == 0
     cli = tools / "bin" / "arduino-cli-1.5.1"
     assert cli.is_file() and cli_release == [
-        ("https://github.com/arduino/arduino-cli/releases/download/v1.5.1/arduino-cli_1.5.1_Linux_64bit.tar.gz",
-         tools / "downloads" / "arduino-cli" / "arduino-cli_1.5.1_Linux_64bit.tar.gz")]
+        (
+            "https://github.com/arduino/arduino-cli/releases/download/v1.5.1/arduino-cli_1.5.1_Linux_64bit.tar.gz",
+            tools / "downloads" / "arduino-cli" / "arduino-cli_1.5.1_Linux_64bit.tar.gz",
+        )
+    ]
     assert len(_installs(fake_cli())) == 1
     assert config.load(fresh).paths["arduino_cli"] == str(cli)
 
@@ -441,12 +480,15 @@ def test_second_project_reuses_shared_toolchain(fresh: Paths, tmp_path: Path, fa
     assert not (second.build / "arduino15").exists() and not (second.build / "bin").exists()
     assert main(["--project", str(second.root), "build", "--chip", "c3"]) == 0
     compile_call = fake_cli()[-1]
-    assert compile_call["argv"][0] == "compile" and compile_call["env"]["ARDUINO_DIRECTORIES_DATA"] == str(tools / "arduino15")
+    assert compile_call["argv"][0] == "compile" and compile_call["env"]["ARDUINO_DIRECTORIES_DATA"] == str(
+        tools / "arduino15"
+    )
     assert (second.out_dir("c3") / "2.0.15-c3-second.bin").is_file()
 
 
-def test_xewe_home_override(fresh: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_cli,
-                            cli_release: list[tuple[str, Path]]) -> None:
+def test_xewe_home_override(
+    fresh: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_cli, cli_release: list[tuple[str, Path]]
+) -> None:
     home = tmp_path / "ci-home"
     monkeypatch.setenv("XEWE_HOME", str(home))
     assert fresh.build_tools == home / "build-tools"
@@ -492,11 +534,18 @@ def test_tools_branch_ref_is_recorded(fresh: Paths, monkeypatch: pytest.MonkeyPa
     fresh.tools_checkout.mkdir(parents=True)
     commits: list[Path] = []
     real = fetch.head_commit
-    monkeypatch.setattr(fetch, "head_commit", lambda path: commits.append(path) or ("b4a2c" if path == fresh.tools_checkout else real(path)))
+    monkeypatch.setattr(
+        fetch,
+        "head_commit",
+        lambda path: commits.append(path) or ("b4a2c" if path == fresh.tools_checkout else real(path)),
+    )
     assert main(["setup", "--modules", "wifi"]) == 0
     cfg = config.load(fresh)
     assert cfg is not None and cfg.installed["tools"] == {
-        "ref": "main", "commit": "b4a2c", "source": "https://github.com/xewe-labs/xewe-os-tools"}
+        "ref": "main",
+        "commit": "b4a2c",
+        "source": "https://github.com/xewe-labs/xewe-os-tools",
+    }
     assert fresh.tools_checkout in commits and fresh.venv == fresh.root / "build" / "tools" / ".venv"
 
 
@@ -529,7 +578,9 @@ def latest_remote(fresh: Paths, monkeypatch: pytest.MonkeyPatch) -> dict[str, An
     monkeypatch.delenv("XEWE_CORE_SOURCE")
     monkeypatch.delenv("XEWE_MODULES_SOURCE")
     fresh.lock.write_text(
-        fresh.lock.read_text().replace('ref = "1.0.0"', 'ref = "latest"').replace('ref = "v1.0.0"', 'ref = "latest"')
+        fresh.lock.read_text()
+        .replace('ref = "1.0.0"', 'ref = "latest"')
+        .replace('ref = "v1.0.0"', 'ref = "latest"')
         .replace('ref = "v0.1.1"', 'ref = "latest"')
         + 'FastLED = { repo = "https://github.com/FastLED/FastLED", ref = "latest" }\n'
     )
@@ -567,9 +618,9 @@ def latest_remote(fresh: Paths, monkeypatch: pytest.MonkeyPatch) -> dict[str, An
     return state
 
 
-def test_latest_refs_follow_the_default_branch(fresh: Paths, latest_remote: dict[str, Any],
-                                               caplog: pytest.LogCaptureFixture,
-                                               capsys: pytest.CaptureFixture[str]) -> None:
+def test_latest_refs_follow_the_default_branch(
+    fresh: Paths, latest_remote: dict[str, Any], caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]
+) -> None:
     fresh.tools_checkout.mkdir(parents=True)
     latest_remote["heads"][fresh.tools_checkout] = HEAD_SHA  # setup.sh checked out the tools head
     caplog.set_level("INFO", logger="xewe")
@@ -602,8 +653,9 @@ def test_latest_refs_follow_the_default_branch(fresh: Paths, latest_remote: dict
     assert cfg.installed["modules"]["commit"] == MOVED_SHA
 
 
-def test_latest_local_source_wins(fresh: Paths, latest_remote: dict[str, Any], tmp_path: Path,
-                                  monkeypatch: pytest.MonkeyPatch) -> None:
+def test_latest_local_source_wins(
+    fresh: Paths, latest_remote: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("XEWE_CORE_SOURCE", str(tmp_path / "core-src"))
     monkeypatch.setenv("XEWE_MODULES_SOURCE", str(tmp_path / "modules-src"))
     assert main(["setup", "--modules", "wifi"]) == 0
@@ -614,9 +666,9 @@ def test_latest_local_source_wins(fresh: Paths, latest_remote: dict[str, Any], t
     assert cfg.installed["core"]["ref"] == "latest" and cfg.installed["modules"]["source"].startswith("local:")
 
 
-def test_latest_offline_keeps_installed_checkout(fresh: Paths, latest_remote: dict[str, Any],
-                                                 monkeypatch: pytest.MonkeyPatch,
-                                                 caplog: pytest.LogCaptureFixture) -> None:
+def test_latest_offline_keeps_installed_checkout(
+    fresh: Paths, latest_remote: dict[str, Any], monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     assert main(["setup", "--modules", "wifi"]) == 0
     latest_remote["clones"].clear()
     offline_git = fetch.git
@@ -644,7 +696,8 @@ def test_setup_generates_run_sh(fresh: Paths) -> None:
 
 
 def test_setup_writes_no_dotenv_and_tools_checkout_file_is_used(
-        fresh: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    fresh: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     tools = tmp_path / "tools-checkout"
     tools.mkdir()
     monkeypatch.setattr(dotenv, "package_checkout", lambda module_file=None: tools)
@@ -659,4 +712,3 @@ def test_setup_writes_no_dotenv_and_tools_checkout_file_is_used(
     env: dict[str, str] = {}
     assert dotenv.load_settings(fresh.root, None, env) == tools / dotenv.FILENAME
     assert env == {"XEWE_WIFI_SSID": "Net", "XEWE_WIFI_PASSWORD": "pw"}
-

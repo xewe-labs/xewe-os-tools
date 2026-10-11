@@ -18,7 +18,17 @@ from xewe.build import compile as build
 from xewe.env import config, esptool
 from xewe.env.project import Paths
 from xewe.modules.lockfile import Lock
-from xewe.report import EXIT_FAIL, EXIT_OK, EXIT_USAGE, XeWeError, board_disabled, board_disabled_exit, log, no_board, result
+from xewe.report import (
+    EXIT_FAIL,
+    EXIT_OK,
+    EXIT_USAGE,
+    XeWeError,
+    board_disabled,
+    board_disabled_exit,
+    log,
+    no_board,
+    result,
+)
 
 DEFAULT_BAUD = 921600
 FALLBACK_BAUD = 460800
@@ -47,7 +57,7 @@ def flash_segments(image: bytes) -> list[tuple[int, bytes]]:
     """
     spans: list[tuple[int, int]] = []
     for i in range(PARTITION_TABLE_OFFSET, min(len(image), PARTITION_TABLE_OFFSET + 0xC00), PARTITION_ENTRY.size):
-        entry = image[i:i + PARTITION_ENTRY.size]
+        entry = image[i : i + PARTITION_ENTRY.size]
         if len(entry) < PARTITION_ENTRY.size or entry[:2] != PARTITION_MAGIC:
             break
         _, ptype, _, offset, size, _, _ = PARTITION_ENTRY.unpack(entry)
@@ -94,7 +104,12 @@ def ensure_built(
 
 
 def write_image(
-    cmd: list[str], board: Board, chip: str, binary: Path, baud: int = DEFAULT_BAUD, erase: bool = False,
+    cmd: list[str],
+    board: Board,
+    chip: str,
+    binary: Path,
+    baud: int = DEFAULT_BAUD,
+    erase: bool = False,
     settle: float | None = None,
 ) -> None:
     """erase (optional) + write-flash of the merged image, retrying once at 460800 baud.
@@ -130,8 +145,17 @@ def write_image(
                 files += [f"{offset:#x}", str(part)]
             log.debug("writing %s; data partitions left as they are (NVS kept)", " ".join(files[::2]))
         for i, rate in enumerate(bauds):
-            args = [*base, "--baud", str(rate), "--before", "default-reset", "--after", "hard-reset",
-                    "write-flash", *files]
+            args = [
+                *base,
+                "--baud",
+                str(rate),
+                "--before",
+                "default-reset",
+                "--after",
+                "hard-reset",
+                "write-flash",
+                *files,
+            ]
             proc = esptool.run(cmd, args)
             if proc.returncode == 0:
                 break
@@ -179,8 +203,17 @@ def flash_with_board(
 
 
 def run(
-    p: Paths, lock: Lock, chip_flag: str | None, port: str | None, defines: dict[str, str], no_serial: bool, baud: int = 115200,
-    no_input: bool = False, timestamps: bool = False, erase: bool = True, settle: float | None = None,
+    p: Paths,
+    lock: Lock,
+    chip_flag: str | None,
+    port: str | None,
+    defines: dict[str, str],
+    no_serial: bool,
+    baud: int = 115200,
+    no_input: bool = False,
+    timestamps: bool = False,
+    erase: bool = True,
+    settle: float | None = None,
 ) -> int:
     """build (when stale for these ``defines``) -> erase (unless ``erase`` is False, i.e. ``--keep-nvs``)
     -> flash -> serial console, interactive on a terminal (what run.sh calls)."""

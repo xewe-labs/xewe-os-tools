@@ -8,6 +8,7 @@ from xewe.build import flash
 from xewe.cli import main
 from xewe.env.project import Paths
 
+
 @pytest.fixture
 def one_board(ports: list[Port], port_node: str) -> str:
     """One Espressif board at a port that exists as a file."""
@@ -37,13 +38,27 @@ def test_esptool_argv(project: Paths, one_board: str, fake_esptool, capsys: pyte
     project.boards_toml.write_text('schema = 1\n[[board]]\nport = "x"\nserial_number = "SN"\nchip = "c3"\n')
     assert main(["flash"]) == 0
     calls = fake_esptool()
-    assert calls[-1] == ["--chip", "esp32c3", "--port", one_board, "--baud", "921600", "--before", "default-reset",
-                         "--after", "hard-reset", "write-flash", "0x0", str(project.root / BIN)]
+    assert calls[-1] == [
+        "--chip",
+        "esp32c3",
+        "--port",
+        one_board,
+        "--baud",
+        "921600",
+        "--before",
+        "default-reset",
+        "--after",
+        "hard-reset",
+        "write-flash",
+        "0x0",
+        str(project.root / BIN),
+    ]
     assert "flashed  c3" in capsys.readouterr().out
 
 
-def test_erase_and_probe(project: Paths, one_board: str, fake_esptool, monkeypatch: pytest.MonkeyPatch,
-                         tmp_path: Path) -> None:
+def test_erase_and_probe(
+    project: Paths, one_board: str, fake_esptool, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     real_wait = flash.wait_for_port
 
     def wait(port: str, exists, **kw) -> str:  # log into the esptool call log to see the order
@@ -62,8 +77,9 @@ def test_erase_and_probe(project: Paths, one_board: str, fake_esptool, monkeypat
     assert len(calls) == 5
 
 
-def test_flash_keeps_nvs_by_default(project: Paths, one_board: str, fake_esptool,
-                                    capsys: pytest.CaptureFixture[str]) -> None:
+def test_flash_keeps_nvs_by_default(
+    project: Paths, one_board: str, fake_esptool, capsys: pytest.CaptureFixture[str]
+) -> None:
     assert main(["flash"]) == 0
     assert not any("erase-flash" in c for c in fake_esptool())
     assert "(nvs kept)" in capsys.readouterr().out
@@ -71,8 +87,9 @@ def test_flash_keeps_nvs_by_default(project: Paths, one_board: str, fake_esptool
         main(["flash", "--keep-nvs"])  # run only
 
 
-def test_run_erases_by_default(project: Paths, one_board: str, fake_esptool,
-                               capsys: pytest.CaptureFixture[str]) -> None:
+def test_run_erases_by_default(
+    project: Paths, one_board: str, fake_esptool, capsys: pytest.CaptureFixture[str]
+) -> None:
     assert main(["run", "--no-serial"]) == 0
     calls = [c for c in fake_esptool() if "chip-id" not in c]
     assert calls[0] == ["--chip", "esp32c3", "--port", one_board, "erase-flash"]
@@ -80,8 +97,9 @@ def test_run_erases_by_default(project: Paths, one_board: str, fake_esptool,
     assert "(flash erased: first boot)" in capsys.readouterr().out
 
 
-def test_run_keep_nvs_does_not_erase(project: Paths, one_board: str, fake_esptool,
-                                     capsys: pytest.CaptureFixture[str]) -> None:
+def test_run_keep_nvs_does_not_erase(
+    project: Paths, one_board: str, fake_esptool, capsys: pytest.CaptureFixture[str]
+) -> None:
     assert main(["run", "--no-serial", "--keep-nvs"]) == 0
     calls = fake_esptool()
     assert not any("erase-flash" in c for c in calls) and any("write-flash" in c for c in calls)
@@ -95,8 +113,9 @@ def test_run_help_says_it_erases(capsys: pytest.CaptureFixture[str]) -> None:
     assert "--keep-nvs" in out and "erase" in out
 
 
-def test_port_not_back_after_flash_exit_4(project: Paths, one_board: str, fake_esptool,
-                                          monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_port_not_back_after_flash_exit_4(
+    project: Paths, one_board: str, fake_esptool, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     real = serialio.wait_for_port
     monkeypatch.setattr(flash, "wait_for_port", lambda port, exists, **kw: real(port, lambda p: False, timeout=0.2))
     assert main(["flash"]) == 4
@@ -161,11 +180,17 @@ def _merged_image() -> bytes:
 
     img = bytearray(b"\xff" * 0x400000)
     img[0:4] = b"\xe9BOOT"[:4]
-    table = [(1, 2, 0x9000, 0x5000, b"nvs"), (1, 0, 0xE000, 0x2000, b"otadata"),
-             (0, 16, 0x10000, 0x200000, b"app0"), (1, 130, 0x210000, 0x1E0000, b"spiffs"),
-             (1, 3, 0x3F0000, 0x10000, b"coredump")]
+    table = [
+        (1, 2, 0x9000, 0x5000, b"nvs"),
+        (1, 0, 0xE000, 0x2000, b"otadata"),
+        (0, 16, 0x10000, 0x200000, b"app0"),
+        (1, 130, 0x210000, 0x1E0000, b"spiffs"),
+        (1, 3, 0x3F0000, 0x10000, b"coredump"),
+    ]
     for i, (ptype, sub, off, size, name) in enumerate(table):
-        img[0x8000 + 32 * i:0x8000 + 32 * (i + 1)] = struct.pack("<2sBBII16sI", b"\xaa\x50", ptype, sub, off, size, name, 0)
+        img[0x8000 + 32 * i : 0x8000 + 32 * (i + 1)] = struct.pack(
+            "<2sBBII16sI", b"\xaa\x50", ptype, sub, off, size, name, 0
+        )
     img[0xE000:0xE004] = b"\x00\x00\x00\x00"
     img[0x10000:0x10004] = b"\xe9APP"
     return bytes(img)
@@ -185,16 +210,17 @@ def test_write_image_keeps_nvs(tmp_path: Path, fake_esptool, monkeypatch: pytest
     binary.write_bytes(_merged_image())
     monkeypatch.setattr(flash, "wait_for_port", lambda port, exists, **kw: port)
     from xewe.env import esptool
+
     flash.write_image(esptool.command(Paths(tmp_path)), boards.Board(port="/dev/x"), "s3", binary)
     (call,) = [c for c in fake_esptool() if "write-flash" in c]
-    files = call[call.index("write-flash") + 1:]
+    files = call[call.index("write-flash") + 1 :]
     assert files[::2] == ["0x0", "0xe000"]
     assert "0x9000" not in files and "0x210000" not in files
 
 
-def test_flash_follows_a_renamed_port_and_passes_settle(project: Paths, one_board: str, fake_esptool,
-                                                        monkeypatch: pytest.MonkeyPatch,
-                                                        capsys: pytest.CaptureFixture[str]) -> None:
+def test_flash_follows_a_renamed_port_and_passes_settle(
+    project: Paths, one_board: str, fake_esptool, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     seen: list[float | None] = []
 
     def wait(port: str, exists, settle=None, renamed=None, **kw) -> str:

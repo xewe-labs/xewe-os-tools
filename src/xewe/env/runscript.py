@@ -30,6 +30,7 @@ PY="${{ROOT}}/build/tools/.venv/bin/python"
 exec "${{PY}}" -m xewe --project "${{ROOT}}" run "$@"
 """
 
+
 def render(chip: str, version: str = __version__) -> str:
     """The project ``run.sh`` for a project whose default chip is ``chip``."""
     return RUN_SH.format(mark=GENERATED_MARK, version=version, chip=chip)

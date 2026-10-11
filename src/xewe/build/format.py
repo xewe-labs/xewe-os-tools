@@ -39,8 +39,10 @@ PY_SKIP_DIRS = SKIP_DIRS - {"build"}
 (the tools' ``xewe.build``); the project's own ``build/`` is skipped for both."""
 GENERATED = ("src/Modules.h",)
 
-INSTALL_HINT = ("clang-format not found: install it (apt install clang-format, brew install clang-format, "
-                "or build/tools/.venv/bin/python -m pip install clang-format), or set XEWE_CLANG_FORMAT")
+INSTALL_HINT = (
+    "clang-format not found: install it (apt install clang-format, brew install clang-format, "
+    "or build/tools/.venv/bin/python -m pip install clang-format), or set XEWE_CLANG_FORMAT"
+)
 
 STYLE_FILE = Path(__file__).with_name("clang-format")
 """The XeWe clang-format style (package data), passed as ``--style=file:<path>``."""

@@ -24,6 +24,7 @@ def no_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
 def responder(reply: bytes):
     def script(data: bytes) -> bytes:
         return reply if data == b"$system status\n" else b""
+
     return script
 
 
@@ -178,15 +179,18 @@ def test_wait_for_port_flapping_never_settles(monkeypatch: pytest.MonkeyPatch) -
         wait_for_port("/dev/x", lambda port: int(clock.now * 10) % 4 != 0, timeout=3.0, settle=0.5)
 
 
-ROM = (b"ESP-ROM:esp32s3-20210327\r\nBuild:Mar 27 2021\r\n"
-       b"rst:0x15 (USB_UART_CHIP_RESET),boot:0x28 (SPI_FAST_FLASH_BOOT)\r\n")
+ROM = (
+    b"ESP-ROM:esp32s3-20210327\r\nBuild:Mar 27 2021\r\n"
+    b"rst:0x15 (USB_UART_CHIP_RESET),boot:0x28 (SPI_FAST_FLASH_BOOT)\r\n"
+)
 BANNER = b"XeWe OS 2.0.15\r\n"
 
 
 def test_serial_main_expect(clock: FakeClock, capsys: pytest.CaptureFixture[str]) -> None:
     fake = FakeSerial(script=responder(b"Uptime: 1\n"))
-    code = serialio.serial_main(None, select_board(Board("/dev/x")), send="$system status", expect="Uptime",
-                                timeout=1, factory=lambda: fake)
+    code = serialio.serial_main(
+        None, select_board(Board("/dev/x")), send="$system status", expect="Uptime", timeout=1, factory=lambda: fake
+    )
     out = capsys.readouterr().out
     assert code == 0
     assert re.search(STAMP + r"> \$system status", out) and "match  'Uptime' after" in out
@@ -208,8 +212,9 @@ def test_serial_main_open_error_exit_1(caplog: pytest.LogCaptureFixture) -> None
 
 def test_serial_main_timeout_exit_1(clock: FakeClock, caplog: pytest.LogCaptureFixture) -> None:
     fake = FakeSerial(script=responder(b"something else\n"))
-    code = serialio.serial_main(None, select_board(Board("/dev/x")), send="$system status", expect="Uptime",
-                                timeout=0.2, factory=lambda: fake)
+    code = serialio.serial_main(
+        None, select_board(Board("/dev/x")), send="$system status", expect="Uptime", timeout=0.2, factory=lambda: fake
+    )
     assert code == 1
     assert "  something else" in caplog.text
 
@@ -226,6 +231,7 @@ def _after_boot(fake_ref: list[FakeSerial], reply: bytes):
     def script(data: bytes) -> bytes:
         sent_with_pending.append(bytes(fake_ref[0].rx))
         return reply if data == b"$system status\n" else b""
+
     return script, sent_with_pending
 
 
@@ -235,8 +241,9 @@ def test_serial_main_send_waits_for_boot(expect: str | None, capsys: pytest.Capt
     script, pending = _after_boot(ref, b"Uptime: 00:00:12\r\n")
     fake = FakeSerial(script=script, incoming=ROM + BANNER + b"wifi: connecting\r\nSystem Setup Complete\r\n")
     ref.append(fake)
-    code = serialio.serial_main(None, select_board(Board("/dev/x")), send="$system status", expect=expect,
-                                timeout=1, factory=lambda: fake)
+    code = serialio.serial_main(
+        None, select_board(Board("/dev/x")), send="$system status", expect=expect, timeout=1, factory=lambda: fake
+    )
     out = capsys.readouterr().out
     assert code == 0
     assert bytes(fake.written) == b"$system status\n"
@@ -249,10 +256,12 @@ def test_serial_main_send_waits_for_boot(expect: str | None, capsys: pytest.Capt
 
 
 def test_serial_main_unprovisioned_exit_1(capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture) -> None:
-    fake = FakeSerial(script=responder(b"Uptime: 1\n"),
-                      incoming=ROM + BANNER + b"Name your device (ex: Kitchen Lights):\r\n> ")
-    code = serialio.serial_main(None, select_board(Board("/dev/x")), send="$system status", expect="Uptime",
-                                timeout=1, factory=lambda: fake)
+    fake = FakeSerial(
+        script=responder(b"Uptime: 1\n"), incoming=ROM + BANNER + b"Name your device (ex: Kitchen Lights):\r\n> "
+    )
+    code = serialio.serial_main(
+        None, select_board(Board("/dev/x")), send="$system status", expect="Uptime", timeout=1, factory=lambda: fake
+    )
     assert code == 1
     assert bytes(fake.written) == b""
     assert "board is unprovisioned; run xewe provision" in caplog.text
@@ -265,9 +274,11 @@ def test_serial_main_silent_board_sends_after_grace(clock: FakeClock, capsys: py
     def script(data: bytes) -> bytes:
         sent_at.append(clock.now)
         return b"Uptime: 1\n"
+
     fake = FakeSerial(script=script)
-    code = serialio.serial_main(None, select_board(Board("/dev/x")), send="$system status", expect="Uptime",
-                                timeout=1, factory=lambda: fake)
+    code = serialio.serial_main(
+        None, select_board(Board("/dev/x")), send="$system status", expect="Uptime", timeout=1, factory=lambda: fake
+    )
     assert code == 0
     assert len(sent_at) == 1 and serialio.BOOT_GRACE_SECONDS <= sent_at[0] < serialio.BOOT_GRACE_SECONDS + 0.1
     assert "boot: no boot output within 2 s of opening" in capsys.readouterr().out
@@ -275,8 +286,9 @@ def test_serial_main_silent_board_sends_after_grace(clock: FakeClock, capsys: py
 
 def test_serial_main_boot_never_finishes_exit_1(clock: FakeClock, caplog: pytest.LogCaptureFixture) -> None:
     fake = FakeSerial(script=responder(b"Uptime: 1\n"), incoming=ROM + BANNER)
-    code = serialio.serial_main(None, select_board(Board("/dev/x")), send="$system status", boot_timeout=5,
-                                factory=lambda: fake)
+    code = serialio.serial_main(
+        None, select_board(Board("/dev/x")), send="$system status", boot_timeout=5, factory=lambda: fake
+    )
     assert code == 1 and bytes(fake.written) == b""
     assert "nothing sent" in caplog.text and "  rst:0x15" in caplog.text
     assert 5.0 <= clock.now < 5.5
@@ -326,8 +338,13 @@ def test_wait_for_port_follows_a_renamed_port(monkeypatch: pytest.MonkeyPatch) -
     """macOS: the board re-enumerates as another cu.usbmodem<N> (same USB serial number)."""
     clock = FakeClock()
     monkeypatch.setattr(serialio, "time", clock)
-    port = wait_for_port("/dev/cu.usbmodem101", lambda p: p == "/dev/cu.usbmodem1101" and clock.now > 1.0,
-                         timeout=10.0, settle=0.5, renamed=lambda: "/dev/cu.usbmodem1101")
+    port = wait_for_port(
+        "/dev/cu.usbmodem101",
+        lambda p: p == "/dev/cu.usbmodem1101" and clock.now > 1.0,
+        timeout=10.0,
+        settle=0.5,
+        renamed=lambda: "/dev/cu.usbmodem1101",
+    )
     assert port == "/dev/cu.usbmodem1101" and 1.5 <= clock.now < 1.7
 
 

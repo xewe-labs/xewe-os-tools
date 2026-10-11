@@ -149,8 +149,9 @@ def test_renamed_port_matches_the_usb_serial_number(ports: list[Port]) -> None:
     assert boards.renamed_port(boards.Board("/dev/cu.usbmodem101")) is None  # no serial number: no guess
 
 
-def test_probe_waits_for_the_port_and_follows_a_rename(p: Paths, ports: list[Port],
-                                                      monkeypatch: pytest.MonkeyPatch) -> None:
+def test_probe_waits_for_the_port_and_follows_a_rename(
+    p: Paths, ports: list[Port], monkeypatch: pytest.MonkeyPatch
+) -> None:
     ports.append(Port("/dev/cu.usbmodem101", 0x303A, 0x1001, "F0:F5"))
     waits: list[tuple[str, float | None]] = []
 

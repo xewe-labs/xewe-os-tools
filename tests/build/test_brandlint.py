@@ -27,8 +27,9 @@ def test_banned_spelling_fails(tree: Path, word: str, capsys: pytest.CaptureFixt
     assert main(["brand-lint"]) == 1
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert captured.err == ("brand-lint: banned spellings found (see xewe-os/doc/naming.md):\n"
-                            f"./a.md:2:the {word} name\n")
+    assert captured.err == (
+        f"brand-lint: banned spellings found (see xewe-os/doc/naming.md):\n./a.md:2:the {word} name\n"
+    )
 
 
 def test_allowed_spellings_are_clean(tree: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -39,8 +40,25 @@ def test_allowed_spellings_are_clean(tree: Path, capsys: pytest.CaptureFixture[s
 
 def test_skipped_places(tree: Path, capsys: pytest.CaptureFixture[str]) -> None:
     word = BANNED[0]
-    for rel in (".git/x", "build/x", ".venv/x", "static/x", "__pycache__/x", "history/x", "test_logs/x",
-                ".pytest_cache/x", ".mypy_cache/x", ".ruff_cache/x", "src/pkg.egg-info/x", "sub/build/x", "doc/naming.md", "NAMING.md", "Naming.MD", dotenv.FILENAME, dotenv.FILENAME + ".local"):
+    for rel in (
+        ".git/x",
+        "build/x",
+        ".venv/x",
+        "static/x",
+        "__pycache__/x",
+        "history/x",
+        "test_logs/x",
+        ".pytest_cache/x",
+        ".mypy_cache/x",
+        ".ruff_cache/x",
+        "src/pkg.egg-info/x",
+        "sub/build/x",
+        "doc/naming.md",
+        "NAMING.md",
+        "Naming.MD",
+        dotenv.FILENAME,
+        dotenv.FILENAME + ".local",
+    ):
         (tree / rel).parent.mkdir(parents=True, exist_ok=True)
         (tree / rel).write_text(word + "\n")
     (tree / "bin.dat").write_bytes(word.encode() + b"\0\n")

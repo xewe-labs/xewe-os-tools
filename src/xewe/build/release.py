@@ -131,7 +131,8 @@ def provenance(p: Paths, cfg: config.BuildConfig | None) -> dict[str, Any]:
     libs = installed.get("libraries", {})
     out["libraries"] = {
         lib: {"ref": str(rec.get("ref", "")), "commit": _commit(rec)}
-        for lib, rec in sorted(libs.items()) if isinstance(rec, dict)
+        for lib, rec in sorted(libs.items())
+        if isinstance(rec, dict)
     }
     return out
 

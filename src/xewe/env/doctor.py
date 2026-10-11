@@ -25,8 +25,10 @@ from xewe.modules.lockfile import Lock
 from xewe.report import EXIT_NOT_SETUP, EXIT_OK, NO_BOARD, XeWeError, log, result, verbose
 
 OK, WARN, ERROR = "ok", "warn", "error"
-ROSETTA_MISSING = ("Rosetta 2 is not installed; the esp32 core's ctags binary needs it: "
-                   "softwareupdate --install-rosetta --agree-to-license")
+ROSETTA_MISSING = (
+    "Rosetta 2 is not installed; the esp32 core's ctags binary needs it: "
+    "softwareupdate --install-rosetta --agree-to-license"
+)
 
 
 @dataclass
@@ -87,8 +89,12 @@ def _toolchain(p: Paths, lock: Lock) -> Check:
     have_cli = "present" if cli.is_file() else "missing"
     have_core = "present" if core.is_dir() else "missing"
     level = OK if cli.is_file() and core.is_dir() else WARN
-    return Check(level, "toolchain", f"{p.build_tools}: arduino-cli {lock.arduino_cli_version} {have_cli}, "
-                                     f"esp32 core {lock.esp32_version} {have_core}")
+    return Check(
+        level,
+        "toolchain",
+        f"{p.build_tools}: arduino-cli {lock.arduino_cli_version} {have_cli}, "
+        f"esp32 core {lock.esp32_version} {have_core}",
+    )
 
 
 def checks(p: Paths, lock: Lock) -> list[Check]:
@@ -134,8 +140,11 @@ def checks(p: Paths, lock: Lock) -> list[Check]:
         out.append(Check(WARN, "esptool", str(exc)))
 
     drift = [r.name for r in manifest.rows(p, lock) if r.drift]
-    out.append(Check(WARN, "lock", f"installed differs from xewe.toml: {', '.join(drift)}") if drift
-               else Check(OK, "lock", "installed matches xewe.toml"))
+    out.append(
+        Check(WARN, "lock", f"installed differs from xewe.toml: {', '.join(drift)}")
+        if drift
+        else Check(OK, "lock", "installed matches xewe.toml")
+    )
 
     probe = p.build if p.build.exists() else p.root
     free = shutil.disk_usage(probe).free

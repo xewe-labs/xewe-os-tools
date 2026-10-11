@@ -53,9 +53,7 @@ class Lock:
     version: str = "0.0.0"
     chip: str = DEFAULT_CHIP
     core: Source = field(default_factory=lambda: Source(pins.DEFAULT_CORE_REPO, pins.DEFAULT_CORE_REF))
-    modules: Source = field(
-        default_factory=lambda: Source(pins.DEFAULT_MODULES_REPO, pins.DEFAULT_MODULES_REF)
-    )
+    modules: Source = field(default_factory=lambda: Source(pins.DEFAULT_MODULES_REPO, pins.DEFAULT_MODULES_REF))
     selected: list[str] = field(default_factory=list)
     tools: Source = field(default_factory=lambda: Source(pins.DEFAULT_TOOLS_REPO, pins.DEFAULT_TOOLS_REF))
     libraries: dict[str, Source] = field(default_factory=dict)
@@ -140,7 +138,7 @@ def parse(text: str, path: Path = Path("xewe.toml")) -> Lock:
         raise _err(path, "[libraries] must be a table")
     for lib, spec in libs.items():
         if not isinstance(spec, dict) or set(spec) != {"repo", "ref"}:
-            raise _err(path, f"[libraries] {lib} must be {{ repo = \"...\", ref = \"...\" }}")
+            raise _err(path, f'[libraries] {lib} must be {{ repo = "...", ref = "..." }}')
         lock.libraries[lib] = Source(
             _str(path, "libraries", f"{lib}.repo", spec["repo"]),
             _str(path, "libraries", f"{lib}.ref", spec["ref"]),

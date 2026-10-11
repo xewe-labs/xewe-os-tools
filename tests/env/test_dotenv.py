@@ -69,7 +69,8 @@ def layout(tmp_path: Path) -> tuple[Path, Path, Path]:
     tools.mkdir()
     (project / "build" / "config").mkdir(parents=True)
     (project / "build" / "config" / "build_config.toml").write_text(
-        f'[installed.tools]\nref = "v0.1.1"\ncommit = "-"\nsource = "local:{tools}"\n')
+        f'[installed.tools]\nref = "v0.1.1"\ncommit = "-"\nsource = "local:{tools}"\n'
+    )
     other = tmp_path / "elsewhere.env"
     for d, tag in ((project, "project"), (tools, "tools")):
         (d / ".env").write_text(f"XEWE_DEVICE_NAME={tag}\n")
@@ -109,12 +110,14 @@ def test_tools_checkout_falls_back_to_package_checkout(tmp_path: Path, monkeypat
     assert find(project, None, {}) == checkout / ".env"
 
 
-def test_load_settings_logs_count_never_values(layout: tuple[Path, Path, Path],
-                                               caplog: pytest.LogCaptureFixture) -> None:
+def test_load_settings_logs_count_never_values(
+    layout: tuple[Path, Path, Path], caplog: pytest.LogCaptureFixture
+) -> None:
     project, _, _ = layout
     (project / ".env").write_text(
         f"XEWE_WIFI_PASSWORD={SECRET}\nXEWE_WIFI_SSID=Net\nXEWE_ENV=/ignored\nOTHER_SECRET={SECRET}\n"
-        "XEWE_WIFI_PASWORD=typo\n")
+        "XEWE_WIFI_PASWORD=typo\n"
+    )
     env = {"XEWE_WIFI_SSID": "Real"}
     caplog.set_level("DEBUG", logger="xewe")
     assert load_settings(project, None, env) == project / ".env"

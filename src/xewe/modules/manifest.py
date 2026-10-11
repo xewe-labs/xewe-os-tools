@@ -135,8 +135,11 @@ def update(p: Paths, lock: Lock, names: list[str], to: str | None = None) -> int
         return EXIT_OK
     lockfile.save(lock, p.lock)
     if to is not None and fetch.is_latest(to):
-        log.info("%s now tracks the default branch head (latest); `xewe manifest update %s` freezes it at the "
-                 "newest tag", names[0], names[0])
+        log.info(
+            "%s now tracks the default branch head (latest); `xewe manifest update %s` freezes it at the newest tag",
+            names[0],
+            names[0],
+        )
     for line in difflib.unified_diff(before.splitlines(), after.splitlines(), "xewe.toml", "xewe.toml", lineterm=""):
         result(line)
     log.info("run ./setup.sh to install the new refs")

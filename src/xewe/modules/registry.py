@@ -25,8 +25,16 @@ from xewe.report import EXIT_FAIL, EXIT_USAGE, XeWeError, log, result
 
 LEGACY_PREFIX = "xewe-os-module-"
 REQUIRED_KEYS = (
-    "slug", "id", "name", "version", "description", "folder", "include", "declare",
-    "depends_modules", "requires_core",
+    "slug",
+    "id",
+    "name",
+    "version",
+    "description",
+    "folder",
+    "include",
+    "declare",
+    "depends_modules",
+    "requires_core",
 )
 LEGACY_KEYS = ("repo", "depends_libraries")
 MODULES_H_HEADER = (
@@ -159,7 +167,7 @@ class Registry:
                     found.append(Module.read(d, d.name))
         for d in sorted(root.glob(f"{LEGACY_PREFIX}*")):
             if (d / "module.properties").is_file():
-                found.append(Module.read(d, d.name[len(LEGACY_PREFIX):]))
+                found.append(Module.read(d, d.name[len(LEGACY_PREFIX) :]))
         if (root / "module.properties").is_file():
             found.append(Module.read(root, root.name.removeprefix(LEGACY_PREFIX)))
         return cls(root, found)
@@ -167,8 +175,7 @@ class Registry:
     @staticmethod
     def layout_note() -> str:
         """The layouts discovery looks for, for the "no modules found" warning."""
-        return (f"modules/<slug>/module.properties (new layout) or {LEGACY_PREFIX}<slug>/module.properties "
-                "(old layout)")
+        return f"modules/<slug>/module.properties (new layout) or {LEGACY_PREFIX}<slug>/module.properties (old layout)"
 
     def slugs(self) -> list[str]:
         """Slugs in discovery order."""
@@ -219,8 +226,11 @@ def load_catalogue(root: Path) -> dict[str, tuple[str, str]]:
         raise XeWeError(f"{path}: invalid TOML: {exc}", EXIT_FAIL) from None
     out: dict[str, tuple[str, str]] = {}
     for name, spec in data.items():
-        if (not isinstance(spec, dict) or set(spec) != {"repo", "ref"}
-                or not all(isinstance(v, str) and v for v in spec.values())):
+        if (
+            not isinstance(spec, dict)
+            or set(spec) != {"repo", "ref"}
+            or not all(isinstance(v, str) and v for v in spec.values())
+        ):
             raise XeWeError(f'{path}: [{name}] must have exactly repo = "..." and ref = "..."', EXIT_FAIL)
         out[name] = (spec["repo"], spec["ref"])
     return out
@@ -253,8 +263,10 @@ def library_plan(
         for name in module.libraries:
             if name not in plan:
                 if name not in catalogue:
-                    warnings.append(f"library {name} (needed by module {module.slug}) is neither in xewe.toml "
-                                    f"[libraries] nor in the modules {CATALOGUE}; not installed")
+                    warnings.append(
+                        f"library {name} (needed by module {module.slug}) is neither in xewe.toml "
+                        f"[libraries] nor in the modules {CATALOGUE}; not installed"
+                    )
                     continue
                 repo, ref = catalogue[name]
                 plan[name] = Library(name, repo, ref, FROM_CATALOGUE)
@@ -303,7 +315,9 @@ def library_version(ref: str, commit: str) -> str:
 def render_library_properties(order: list[Module], ref: str, commit: str) -> str:
     """``library.properties`` of the generated ``XeWeModules`` library (version: see ``library_version``)."""
     return LIBRARY_PROPERTIES.format(
-        name=LIBRARY_NAME, version=library_version(ref, commit), header=LIBRARY_HEADER,
+        name=LIBRARY_NAME,
+        version=library_version(ref, commit),
+        header=LIBRARY_HEADER,
         modules=", ".join(m.slug for m in order) or "none",
     )
 
@@ -333,7 +347,7 @@ def config_block(module: Module, text: str) -> str:
     without the file header (everything up to ``#pragma once``, else the SPDX lines)."""
     lines = text.splitlines()
     if "#pragma once" in lines:
-        lines = lines[lines.index("#pragma once") + 1:]
+        lines = lines[lines.index("#pragma once") + 1 :]
     else:
         lines = [ln for ln in lines if not ln.startswith("// SPDX-")]
     while lines and not lines[0].strip():
@@ -584,7 +598,8 @@ def validate(registry: Registry, core_ref: str | None = None) -> list[Problem]:
                 elif counts[("var", var)] > 1:
                     err(f"declare variable '{var}' is not unique")
                 allowed = {"os"} | {
-                    d for dep in _transitive_deps(registry, module)
+                    d
+                    for dep in _transitive_deps(registry, module)
                     if (d := (registry.by_slug[dep].declared() or ("", "", []))[1])
                 }
                 for arg in args:
@@ -647,5 +662,7 @@ def check_tests_layout(registry: Registry) -> list[Problem]:
         for sub in TEST_FOLDERS:
             for name in ("conftest.py", "__init__.py"):
                 if (tests / sub / name).exists():
-                    problems.append(Problem(where, f"tests/{sub}/{name} not allowed (the plugin provides the fixtures)"))
+                    problems.append(
+                        Problem(where, f"tests/{sub}/{name} not allowed (the plugin provides the fixtures)")
+                    )
     return problems

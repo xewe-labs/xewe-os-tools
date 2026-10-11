@@ -18,8 +18,18 @@ UNALIGNED = "int a = 1;\nlong bb = 2;\n"
 def proj(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Paths:
     """A project with C++ in every default place (and in places that must be skipped)."""
     p = write_project(tmp_path / "proj")
-    for rel in ("Config.h", "src/Foo/Foo.h", "src/Foo/Foo.cpp", "tests/unit/test_foo.cpp", "examples/A/A.ino",
-                "build/libraries/X/X.h", "src/Modules.h", ".hidden/h.h", "tests/board/skip.cpp", "src/notes.txt"):
+    for rel in (
+        "Config.h",
+        "src/Foo/Foo.h",
+        "src/Foo/Foo.cpp",
+        "tests/unit/test_foo.cpp",
+        "examples/A/A.ino",
+        "build/libraries/X/X.h",
+        "src/Modules.h",
+        ".hidden/h.h",
+        "tests/board/skip.cpp",
+        "src/notes.txt",
+    ):
         (p.root / rel).parent.mkdir(parents=True, exist_ok=True)
         (p.root / rel).write_text(ALIGNED)
     (p.root / "proj.ino").write_text(UNALIGNED)  # the sketch, already formatted
@@ -37,18 +47,33 @@ def _calls(tmp_path: Path) -> list[list[str]]:
 
 def test_collect_defaults(proj: Paths) -> None:
     files = [proj.rel(f) for f in fmt.collect(proj, [], fmt.CPP_SUFFIXES, fmt.CPP_DIRS)]
-    assert sorted(files) == ["Config.h", "examples/A/A.ino", "proj.ino", "src/Foo/Foo.cpp", "src/Foo/Foo.h",
-                             "tests/unit/test_foo.cpp"]
+    assert sorted(files) == [
+        "Config.h",
+        "examples/A/A.ino",
+        "proj.ino",
+        "src/Foo/Foo.cpp",
+        "src/Foo/Foo.h",
+        "tests/unit/test_foo.cpp",
+    ]
 
 
 def test_collect_python_keeps_nested_build_packages(proj: Paths) -> None:
-    for rel in ("src/pkg/build/mod.py", "tests/build/test_b.py", "examples/A/build/gen.py", "build/tools/x.py",
-                "src/__pycache__/c.py", ".hidden/h.py", "examples/A/build/A.ino.cpp"):
+    for rel in (
+        "src/pkg/build/mod.py",
+        "tests/build/test_b.py",
+        "examples/A/build/gen.py",
+        "build/tools/x.py",
+        "src/__pycache__/c.py",
+        ".hidden/h.py",
+        "examples/A/build/A.ino.cpp",
+    ):
         (proj.root / rel).parent.mkdir(parents=True, exist_ok=True)
         (proj.root / rel).write_text("x = 1\n")
     py = sorted(proj.rel(f) for f in fmt.collect(proj, [], {".py"}, fmt.PY_DIRS))
     assert py == ["examples/A/build/gen.py", "src/pkg/build/mod.py", "tests/build/test_b.py"]
-    assert "examples/A/build/A.ino.cpp" not in [proj.rel(f) for f in fmt.collect(proj, [], fmt.CPP_SUFFIXES, fmt.CPP_DIRS)]
+    assert "examples/A/build/A.ino.cpp" not in [
+        proj.rel(f) for f in fmt.collect(proj, [], fmt.CPP_SUFFIXES, fmt.CPP_DIRS)
+    ]
 
 
 def test_check_lists_and_changes_nothing(proj: Paths, capsys: pytest.CaptureFixture[str]) -> None:
@@ -88,10 +113,18 @@ def test_clang_format_failure(proj: Paths, capsys: pytest.CaptureFixture[str]) -
 
 def test_shipped_style_matches_the_rules() -> None:
     lines = fmt.STYLE_FILE.read_text().splitlines()
-    for rule in ("AlignConsecutiveDeclarations: None", "AlignTrailingComments: false", "AlignOperands: DontAlign",
-                 "AlignAfterOpenBracket: DontAlign", "SortIncludes: false", "PointerAlignment: Left",
-                 "ColumnLimit: 100", "AllowShortFunctionsOnASingleLine: Empty", "BasedOnStyle: LLVM",
-                 "IndentWidth: 4"):
+    for rule in (
+        "AlignConsecutiveDeclarations: None",
+        "AlignTrailingComments: false",
+        "AlignOperands: DontAlign",
+        "AlignAfterOpenBracket: DontAlign",
+        "SortIncludes: false",
+        "PointerAlignment: Left",
+        "ColumnLimit: 100",
+        "AllowShortFunctionsOnASingleLine: Empty",
+        "BasedOnStyle: LLVM",
+        "IndentWidth: 4",
+    ):
         assert rule in lines
 
 
@@ -154,8 +187,9 @@ def shutil_copy(src: Path, dst: Path) -> None:
     os.chmod(dst, 0o755)
 
 
-def test_python_through_ruff(proj: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-                             capsys: pytest.CaptureFixture[str]) -> None:
+def test_python_through_ruff(
+    proj: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     (proj.root / "tests/board/skip.cpp").unlink()
     (proj.root / "tests/board/test_x.py").write_text("x=1\n")
     (proj.root / "build/skip.py").write_text("x=1\n")
@@ -174,17 +208,23 @@ def test_python_through_ruff(proj: Paths, tmp_path: Path, monkeypatch: pytest.Mo
     assert "would reformat tests/board/test_x.py" in capsys.readouterr().out
     assert main(["format", "tests/board"]) == 0
     argvs = [json.loads(ln) for ln in (tmp_path / "ruff.jsonl").read_text().splitlines()]
-    assert argvs == [["format", "--check", str(proj.root / "tests/board/test_x.py")],
-                     ["format", "--quiet", str(proj.root / "tests/board/test_x.py")]]
+    assert argvs == [
+        ["format", "--check", str(proj.root / "tests/board/test_x.py")],
+        ["format", "--quiet", str(proj.root / "tests/board/test_x.py")],
+    ]
 
 
-@pytest.mark.parametrize("out", [
-    "Would reformat: {f}\n1 file would be reformatted\n",
-    "unformatted: File would be reformatted\n   --> {f}:3:1\n    |\n1 file would be reformatted\n",
-    "{f}:3:1: unformatted: File would be reformatted\n1 file would be reformatted\n",
-])
-def test_ruff_check_output_old_and_new(proj: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-                                       capsys: pytest.CaptureFixture[str], out: str) -> None:
+@pytest.mark.parametrize(
+    "out",
+    [
+        "Would reformat: {f}\n1 file would be reformatted\n",
+        "unformatted: File would be reformatted\n   --> {f}:3:1\n    |\n1 file would be reformatted\n",
+        "{f}:3:1: unformatted: File would be reformatted\n1 file would be reformatted\n",
+    ],
+)
+def test_ruff_check_output_old_and_new(
+    proj: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], out: str
+) -> None:
     (proj.root / "tests/board/skip.cpp").unlink()
     (proj.root / "tests/board/test_x.py").write_text("x=1\n")
     fake = tmp_path / "ruff.py"
@@ -192,4 +232,7 @@ def test_ruff_check_output_old_and_new(proj: Paths, tmp_path: Path, monkeypatch:
     monkeypatch.setattr(fmt, "RUFF", [sys.executable, str(fake)])
     monkeypatch.setattr(fmt, "ruff_available", lambda: True)
     assert main(["format", "--check", "tests/board"]) == 1
-    assert "would reformat tests/board/test_x.py\nformat: 0 C++ and 1 Python files, 1 would reformat" in capsys.readouterr().out
+    assert (
+        "would reformat tests/board/test_x.py\nformat: 0 C++ and 1 Python files, 1 would reformat"
+        in capsys.readouterr().out
+    )

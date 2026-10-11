@@ -139,7 +139,7 @@ def parse_ls_remote_tags(output: str) -> list[str]:
     for line in output.splitlines():
         parts = line.split()
         if len(parts) == 2 and parts[1].startswith("refs/tags/"):
-            tags.append(parts[1][len("refs/tags/"):])
+            tags.append(parts[1][len("refs/tags/") :])
     return tags
 
 

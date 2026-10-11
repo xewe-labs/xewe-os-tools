@@ -23,8 +23,7 @@ LIBRARY_PROPERTIES = "library.properties"
 """An Arduino library's metadata file; ``xewe format`` also takes a root with it and no ``xewe.toml``."""
 
 
-def find_root(explicit: str | os.PathLike[str] | None = None, start: Path | None = None,
-              library: bool = False) -> Path:
+def find_root(explicit: str | os.PathLike[str] | None = None, start: Path | None = None, library: bool = False) -> Path:
     """Return the project root: ``explicit`` if given, else the nearest ancestor with xewe.toml.
 
     With ``library`` (``format``) a directory with ``library.properties`` is a root too, and when no

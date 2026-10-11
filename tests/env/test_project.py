@@ -44,8 +44,9 @@ def test_stored_paths_are_relative(project: Paths, tmp_path: Path) -> None:
     assert cfg.path(project, "arduino_data") == tmp_path / "xewe-home" / "build-tools" / "arduino15"
 
 
-def test_project_moved_after_setup_still_works(project: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-                                               capsys: pytest.CaptureFixture[str]) -> None:
+def test_project_moved_after_setup_still_works(
+    project: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     moved = tmp_path / "elsewhere" / "xewe-os"
     moved.parent.mkdir()
     shutil.move(str(project.root), str(moved))
@@ -55,8 +56,9 @@ def test_project_moved_after_setup_still_works(project: Paths, tmp_path: Path, m
     assert str(project.root) not in (moved / "build/builds/c3/out/meta.json").read_text()
 
 
-@pytest.mark.parametrize(("ref", "folder"), [("v0.2.0", "v0.2.0"), ("feature/led-web", "feature_led-web"),
-                                             ("a" * 40, "a" * 40), ("..", "_")])
+@pytest.mark.parametrize(
+    ("ref", "folder"), [("v0.2.0", "v0.2.0"), ("feature/led-web", "feature_led-web"), ("a" * 40, "a" * 40), ("..", "_")]
+)
 def test_modules_checkout_per_ref(tmp_path: Path, ref: str, folder: str) -> None:
     p = Paths(tmp_path / "proj")
     assert p.modules_checkout(ref) == tmp_path / "xewe-home" / "build-tools" / "sources" / "xewe-os-modules" / folder

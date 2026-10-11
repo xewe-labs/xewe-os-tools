@@ -76,7 +76,9 @@ def default_cli(p: Paths, version: str = pins.ARDUINO_CLI_VERSION) -> Path:
     return p.bin / (f"arduino-cli-{version}.exe" if os.name == "nt" else f"arduino-cli-{version}")
 
 
-def run(argv: list[str], env_vars: dict[str, str], cwd: Path | None = None, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
+def run(
+    argv: list[str], env_vars: dict[str, str], cwd: Path | None = None, timeout: float | None = None
+) -> subprocess.CompletedProcess[str]:
     """Run a command, merging stderr into stdout; ``--verbose`` echoes the command and output."""
     log.debug("$ %s", " ".join(argv))
     try:

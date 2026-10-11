@@ -74,9 +74,9 @@ class XeWeContext:
     def __init__(self, config: pytest.Config) -> None:
         self.config = config
         self.port: str | None = config.getoption("xewe_port")
-        self.require_board: bool = bool(config.getoption("xewe_require_board")) or os.environ.get(
-            "XEWE_REQUIRE_BOARD"
-        ) == "1"
+        self.require_board: bool = (
+            bool(config.getoption("xewe_require_board")) or os.environ.get("XEWE_REQUIRE_BOARD") == "1"
+        )
         if config.getoption("xewe_no_board"):
             disable_board()
         explicit = config.getoption("xewe_project")
@@ -135,15 +135,21 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     group.addoption("--xewe-chip", default=None, help="chip to build and test (c3, c6, s3)")
     group.addoption("--xewe-port", default=None, help="serial port of the board")
     group.addoption("--xewe-require-board", action="store_true", help="fail board tests when no board is attached")
-    group.addoption("--xewe-no-board", action="store_true",
-                    help="never look for or open a board (also XEWE_NO_BOARD=1); board tests are compiled, not run")
+    group.addoption(
+        "--xewe-no-board",
+        action="store_true",
+        help="never look for or open a board (also XEWE_NO_BOARD=1); board tests are compiled, not run",
+    )
     group.addoption("--xewe-project", default=None, help="project root (default: nearest xewe.toml)")
-    group.addoption("--xewe-no-flash", action="store_true",
-                    help="do not write the image; test the firmware already on the board")
+    group.addoption(
+        "--xewe-no-flash", action="store_true", help="do not write the image; test the firmware already on the board"
+    )
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    config.addinivalue_line("markers", "unit: pure logic; runs on the developer machine, never needs a board or a build")
+    config.addinivalue_line(
+        "markers", "unit: pure logic; runs on the developer machine, never needs a board or a build"
+    )
     config.addinivalue_line("markers", "board: needs firmware on a board")
     ctx = XeWeContext(config)
     config.stash[_KEY] = ctx
@@ -235,8 +241,9 @@ def require_alive(console: Console) -> None:
     does not turn every later test into a timeout."""
     if not revive(console):
         message = SILENT_MESSAGE if console.connected else GONE_MESSAGE
-        pytest.exit(message.format(port=console.port, probe=serialio.PROBE_COMMAND),
-                    returncode=pytest.ExitCode.TESTS_FAILED)
+        pytest.exit(
+            message.format(port=console.port, probe=serialio.PROBE_COMMAND), returncode=pytest.ExitCode.TESTS_FAILED
+        )
 
 
 def wait_for_boot(console: Console, timeout: float = BOOT_TIMEOUT_SECONDS) -> None:
@@ -252,8 +259,13 @@ def wait_for_boot(console: Console, timeout: float = BOOT_TIMEOUT_SECONDS) -> No
         m = wait_for_banner(console, f"{BOOT_READY}|{BOOT_UNPROVISIONED}", timeout)
     # XeWeError: port still gone at the deadline; the others: a handle closed under the read
     except (ExpectTimeout, XeWeError, SerialException, OSError, TypeError) as exc:
-        log.warning("board on %s did not finish booting within %g s (no %r): %s", console.port, timeout,
-                    BOOT_READY, str(exc).partition("\n")[0])
+        log.warning(
+            "board on %s did not finish booting within %g s (no %r): %s",
+            console.port,
+            timeout,
+            BOOT_READY,
+            str(exc).partition("\n")[0],
+        )
         start = len(console.lines)
         require_alive(console)
         if any(BOOT_UNPROVISIONED in line for line in console.lines[start:]):
@@ -320,8 +332,12 @@ def pytest_runtest_makereport(
     """Mark the session suspect when a test using the board failed on ``ExpectTimeout`` or a
     vanished port (``XeWeError``); the next ``serial`` fixture then checks the board."""
     rep = yield
-    if (call.excinfo is not None and rep.failed and "serial" in getattr(item, "fixturenames", ())
-            and call.excinfo.errisinstance((ExpectTimeout, XeWeError, SerialException, OSError))):
+    if (
+        call.excinfo is not None
+        and rep.failed
+        and "serial" in getattr(item, "fixturenames", ())
+        and call.excinfo.errisinstance((ExpectTimeout, XeWeError, SerialException, OSError))
+    ):
         ctx = item.config.stash.get(_KEY, None)
         if ctx is not None and ctx.console is not None:
             ctx.suspect = True

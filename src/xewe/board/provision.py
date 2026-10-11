@@ -187,7 +187,9 @@ def resolve(
             raise XeWeError(
                 f"wifi is enabled but {' and '.join(missing)} {'is' if len(missing) == 1 else 'are'} not set "
                 "(run ./setup.sh and fill in the dotenv file, or set them in the environment, or --env FILE); "
-                "set them, or leave wifi out of --modules", EXIT_USAGE)
+                "set them, or leave wifi out of --modules",
+                EXIT_USAGE,
+            )
     else:
         for dep in ("time", "web-interface", "scheduler"):
             if s.modules and dep in s.modules:
@@ -326,8 +328,12 @@ class Driver:
             yes = s.enables(mod)
             (self.out.enabled if yes else self.out.declined).append(mod)
             if not yes:
-                log.info("auto-answer n (the default) to 'Would you like to enable %s module?': "
-                         "%s is not in XEWE_PROVISION_MODULES/--modules", m[1], mod)
+                log.info(
+                    "auto-answer n (the default) to 'Would you like to enable %s module?': "
+                    "%s is not in XEWE_PROVISION_MODULES/--modules",
+                    m[1],
+                    mod,
+                )
             self._answer(kind, "y" if yes else "n")
         elif kind == "scan":
             self.networks = {}
@@ -345,8 +351,11 @@ class Driver:
         elif kind == "join_failed":
             if m[0] == "Unable to join" and self.out.join_failures < JOIN_RETRIES:
                 self.out.join_failures += 1
-                log.warning("Wi-Fi join failed; answering the network list again (retry %d of %d)",
-                            self.out.join_failures, JOIN_RETRIES)
+                log.warning(
+                    "Wi-Fi join failed; answering the network list again (retry %d of %d)",
+                    self.out.join_failures,
+                    JOIN_RETRIES,
+                )
                 return
             raise ProvisionFailed(f"Wi-Fi setup failed ({m[0]}); check XEWE_WIFI_SSID and XEWE_WIFI_PASSWORD")
         elif kind == "time":
@@ -358,8 +367,10 @@ class Driver:
                 self._answer(kind, "y")
         elif kind == "tz":
             if not s.timezone:
-                raise ProvisionFailed("the board could not detect the timezone and asks for it; "
-                                      "set XEWE_TIMEZONE or --timezone GMT+HH:MM and run again")
+                raise ProvisionFailed(
+                    "the board could not detect the timezone and asks for it; "
+                    "set XEWE_TIMEZONE or --timezone GMT+HH:MM and run again"
+                )
             if self.seen["tz"] > 1:
                 raise ProvisionFailed(f"the board rejected the timezone {s.timezone}")
             if self.out.timezone == "not asked":
@@ -383,8 +394,10 @@ class Driver:
             if self.last is not None and self.last[0] == AUTO and self.seen["error"] <= MAX_INVALID:
                 return  # e.g. "! Timeout." or "! Out of range" after an auto-answer: the prompt goes on
             if self.last is None:
-                raise ProvisionFailed(f"the board was waiting at a prompt printed before the port was opened "
-                                      f"({m.string.strip()}); run again without --no-reset")
+                raise ProvisionFailed(
+                    f"the board was waiting at a prompt printed before the port was opened "
+                    f"({m.string.strip()}); run again without --no-reset"
+                )
             raise ProvisionFailed(f"the board rejected an answer: {m.string.strip()}")
         elif kind == "ready":
             raise ProvisionFailed("the board finished booting without 'Initial Setup Complete'")
@@ -397,8 +410,12 @@ class Driver:
         answer = "n" if input_line.startswith("(y/n)") else ""
         prompt = self._before().strip()
         where = f" (module {self.module})" if self.module else ""
-        log.info("auto-answer %s (the prompt's default) to %r%s: not a prompt this tool knows",
-                 "n" if answer else "Enter", prompt, where)
+        log.info(
+            "auto-answer %s (the prompt's default) to %r%s: not a prompt this tool knows",
+            "n" if answer else "Enter",
+            prompt,
+            where,
+        )
         self.out.auto.append(prompt)
         self.last = (AUTO, answer)
         self.console.send(answer)
@@ -513,8 +530,13 @@ def provision_main(
             if m[0] == BOOT_UNPROVISIONED:
                 raise ProvisionFailed("the board asked for its name again after the reboot (settings not saved?)")
         except ExpectTimeout:
-            log.error("board on %s printed no first-boot prompt (e.g. %r) and no %r within %g s", board.port,
-                      BOOT_UNPROVISIONED, BOOT_READY, timeout)
+            log.error(
+                "board on %s printed no first-boot prompt (e.g. %r) and no %r within %g s",
+                board.port,
+                BOOT_UNPROVISIONED,
+                BOOT_READY,
+                timeout,
+            )
             _tail(console)
             return EXIT_FAIL
         except ProvisionFailed as exc:

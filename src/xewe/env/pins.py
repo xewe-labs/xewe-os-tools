@@ -5,8 +5,7 @@ ESP32_CORE_VERSION = "3.3.12"
 
 ESP32_INDEX_URL = "https://espressif.github.io/arduino-esp32/package_esp32_index.json"
 ARDUINO_CLI_URL = (
-    "https://github.com/arduino/arduino-cli/releases/download/v{version}/"
-    "arduino-cli_{version}_{platform}.{ext}"
+    "https://github.com/arduino/arduino-cli/releases/download/v{version}/arduino-cli_{version}_{platform}.{ext}"
 )
 ARDUINO_CLI_CHECKSUMS_URL = (
     "https://github.com/arduino/arduino-cli/releases/download/v{version}/{version}-checksums.txt"

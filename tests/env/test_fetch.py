@@ -39,12 +39,15 @@ def server() -> Iterator[str]:
     httpd.shutdown()
 
 
-@pytest.mark.parametrize(("system", "machine", "asset"), [
-    ("Linux", "x86_64", "Linux_64bit"),
-    ("Linux", "aarch64", "Linux_ARM64"),
-    ("Darwin", "arm64", "macOS_ARM64"),
-    ("Darwin", "x86_64", "macOS_64bit"),
-])
+@pytest.mark.parametrize(
+    ("system", "machine", "asset"),
+    [
+        ("Linux", "x86_64", "Linux_64bit"),
+        ("Linux", "aarch64", "Linux_ARM64"),
+        ("Darwin", "arm64", "macOS_ARM64"),
+        ("Darwin", "x86_64", "macOS_64bit"),
+    ],
+)
 def test_asset_name(system: str, machine: str, asset: str) -> None:
     assert fetch.arduino_cli_platform(system, machine) == (asset, "tar.gz")
 

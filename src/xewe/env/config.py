@@ -63,7 +63,9 @@ def require(p: Paths) -> BuildConfig:
     """Like :func:`load`, but a missing file is exit 3."""
     cfg = load(p)
     if cfg is None:
-        raise XeWeError("not set up (build/config/build_config.toml missing or incomplete); run ./setup.sh", EXIT_NOT_SETUP)
+        raise XeWeError(
+            "not set up (build/config/build_config.toml missing or incomplete); run ./setup.sh", EXIT_NOT_SETUP
+        )
     return cfg
 
 

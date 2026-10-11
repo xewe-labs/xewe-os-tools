@@ -50,6 +50,7 @@ def stdin(monkeypatch: pytest.MonkeyPatch):
         made.append(s)
         monkeypatch.setattr(sys, "stdin", s)
         return s
+
     yield make
     for s in made:
         s.release.set()
@@ -77,6 +78,7 @@ def test_ctrl_c_exit_0(stdin) -> None:
     class InterruptSerial(FakeSerial):
         def read(self, n: int = 1) -> bytes:
             raise KeyboardInterrupt
+
     fake = InterruptSerial()
     assert serialio.serial_main(None, select_board(Board("/dev/x")), factory=lambda: fake) == 0
 
@@ -84,8 +86,10 @@ def test_ctrl_c_exit_0(stdin) -> None:
 def test_no_input_sends_nothing(stdin, capsys: pytest.CaptureFixture[str]) -> None:
     s = stdin(["$system status\n"])
     fake = FakeSerial()
-    assert serialio.serial_main(None, select_board(Board("/dev/x")), duration=0.2, factory=lambda: fake,
-                                no_input=True) == 0
+    assert (
+        serialio.serial_main(None, select_board(Board("/dev/x")), duration=0.2, factory=lambda: fake, no_input=True)
+        == 0
+    )
     assert bytes(fake.written) == b"" and s.reads == 0
     assert HINT not in capsys.readouterr().out
 
@@ -127,6 +131,7 @@ def test_send_retries_after_port_drop() -> None:
                 self.__dict__["drop"] = False
                 raise OSError(6, "Device not configured")
             return super().write(data)
+
     fake = WriteDropSerial()
     fake.__dict__["drop"] = True
     console = Console("/dev/x", factory=lambda: fake, echo=True, out=io.StringIO()).open()
@@ -183,14 +188,17 @@ def test_interactive_prints_raw_lines(stdin, fake_termios: FakeTermios, capsys: 
 def test_interactive_timestamps_flag(stdin, fake_termios: FakeTermios, capsys: pytest.CaptureFixture[str]) -> None:
     stdin([], eof=False)
     fake = FakeSerial(incoming=BANNER)
-    assert serialio.serial_main(None, select_board(Board("/dev/x")), duration=0.3, factory=lambda: fake,
-                                timestamps=True) == 0
+    assert (
+        serialio.serial_main(None, select_board(Board("/dev/x")), duration=0.3, factory=lambda: fake, timestamps=True)
+        == 0
+    )
     [line] = _board_lines(capsys.readouterr().out)
     assert STAMPED.match(line) and line.endswith("  | System Setup Complete |")
 
 
-def test_interactive_log_stays_timestamped(stdin, fake_termios: FakeTermios, tmp_path: Path,
-                                           capsys: pytest.CaptureFixture[str]) -> None:
+def test_interactive_log_stays_timestamped(
+    stdin, fake_termios: FakeTermios, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     stdin(["$system status\n"])
     fake = FakeSerial(incoming=BANNER)
     logf = tmp_path / "serial.log"
@@ -202,12 +210,17 @@ def test_interactive_log_stays_timestamped(stdin, fake_termios: FakeTermios, tmp
     assert "> $system status" not in capsys.readouterr().out
 
 
-def test_send_mode_keeps_echo_and_timestamps(stdin, fake_termios: FakeTermios,
-                                             capsys: pytest.CaptureFixture[str]) -> None:
+def test_send_mode_keeps_echo_and_timestamps(
+    stdin, fake_termios: FakeTermios, capsys: pytest.CaptureFixture[str]
+) -> None:
     stdin([])
     fake = FakeSerial(script=lambda data: b"ok\n" if data == b"$system status\n" else b"")
-    assert serialio.serial_main(None, select_board(Board("/dev/x")), send="$system status", expect="ok",
-                                factory=lambda: fake) == 0
+    assert (
+        serialio.serial_main(
+            None, select_board(Board("/dev/x")), send="$system status", expect="ok", factory=lambda: fake
+        )
+        == 0
+    )
     out = capsys.readouterr().out.splitlines()
     echo = [line for line in out if line.endswith("  > $system status")]
     assert len(echo) == 1 and STAMPED.match(echo[0])
@@ -243,8 +256,12 @@ def test_flush_on_interactive_start(stdin, fake_termios: FakeTermios, capsys: py
 def test_no_flush_with_no_input_or_non_tty(stdin, fake_termios: FakeTermios) -> None:
     s = stdin([])
     s.fileno = lambda: 7  # type: ignore[method-assign]
-    assert serialio.serial_main(None, select_board(Board("/dev/x")), duration=0.1, factory=lambda: FakeSerial(),
-                                no_input=True) == 0
+    assert (
+        serialio.serial_main(
+            None, select_board(Board("/dev/x")), duration=0.1, factory=lambda: FakeSerial(), no_input=True
+        )
+        == 0
+    )
     assert serialio.flush_input(FakeStdin([], tty=False)) is False  # type: ignore[arg-type]
     assert fake_termios.calls == []
 

@@ -25,38 +25,48 @@ def test_compile_argv_per_chip(chip: str, tmp_path: Path) -> None:
     p = Paths(tmp_path / "xewe-os")
     argv = arduino.compile_argv("/x/bin/arduino-cli-1.5.1", chips.get(chip), p, p.root)
     assert argv == [
-        "/x/bin/arduino-cli-1.5.1", "compile",
-        "--fqbn", GOLDEN_FQBN[chip],
-        "--build-path", f"build/builds/{chip}/cache",
-        "--libraries", "build/libraries",
-        "--library", "build/modules",
-        "--library", f"build/builds/{chip}/gen/XeWeBuildInfo",
+        "/x/bin/arduino-cli-1.5.1",
+        "compile",
+        "--fqbn",
+        GOLDEN_FQBN[chip],
+        "--build-path",
+        f"build/builds/{chip}/cache",
+        "--libraries",
+        "build/libraries",
+        "--library",
+        "build/modules",
+        "--library",
+        f"build/builds/{chip}/gen/XeWeBuildInfo",
         "--build-property",
         f'compiler.cpp.extra_flags=-I "{p.root}/build/builds/{chip}/gen/XeWeBuildInfo/src" -include "{p.root}/Config.h"',
-        "--warnings", "default",
-        "--jobs", "0",
+        "--warnings",
+        "default",
+        "--jobs",
+        "0",
         ".",
     ]
 
 
 @pytest.mark.parametrize("chip", ["c3", "c6", "s3"])
-def test_dry_run_prints_exact_command(project: Paths, chip: str, capsys: pytest.CaptureFixture[str],
-                                      fake_cli: object) -> None:
+def test_dry_run_prints_exact_command(
+    project: Paths, chip: str, capsys: pytest.CaptureFixture[str], fake_cli: object
+) -> None:
     assert main(["build", "--chip", chip, "--dry-run"]) == 0
     out = capsys.readouterr().out.strip()
     root = project.root
     assert out.endswith(
         f"compile --fqbn {GOLDEN_FQBN[chip]} --build-path build/builds/{chip}/cache --libraries build/libraries "
         f"--library build/modules --library build/builds/{chip}/gen/XeWeBuildInfo --build-property "
-        f"'compiler.cpp.extra_flags=-I \"{root}/build/builds/{chip}/gen/XeWeBuildInfo/src\" "
-        f"-include \"{root}/Config.h\"' --warnings default --jobs 0 ."
+        f'\'compiler.cpp.extra_flags=-I "{root}/build/builds/{chip}/gen/XeWeBuildInfo/src" '
+        f'-include "{root}/Config.h"\' --warnings default --jobs 0 .'
     )
     assert fake_cli() == []  # nothing ran
     assert not project.out_dir(chip).exists()
 
 
-def test_dry_run_all_chips_without_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-                                         capsys: pytest.CaptureFixture[str], no_ports: None) -> None:
+def test_dry_run_all_chips_without_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], no_ports: None
+) -> None:
     from conftest import write_project
 
     p = write_project(tmp_path / "renamed-repo", ino="xewe-os")

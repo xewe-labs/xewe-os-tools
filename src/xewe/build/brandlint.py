@@ -24,10 +24,20 @@ from xewe.report import EXIT_FAIL, EXIT_OK, EXIT_USAGE, XeWeError
 
 PATTERN = re.compile(r"Xe" r"we[A-Za-z]|\bxe" r"we os\b|Xe" r"we OS")
 """The banned spellings (split so this file does not match itself)."""
-EXCLUDE_DIRS = frozenset({
-    ".git", "build", ".venv", "static", "__pycache__", "history", "test_logs", ".pytest_cache", ".mypy_cache",
-    ".ruff_cache",
-})
+EXCLUDE_DIRS = frozenset(
+    {
+        ".git",
+        "build",
+        ".venv",
+        "static",
+        "__pycache__",
+        "history",
+        "test_logs",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+    }
+)
 NAMING_PAGE = "naming.md"
 
 
@@ -61,8 +71,12 @@ def _files(top: str) -> Iterator[str]:
         for rel in tracked:
             *dirs, name = rel.split("/")
             path = os.path.join(top, rel)
-            if not any(map(_skipped_dir, dirs)) and not _skipped_file(name) and os.path.isfile(path) \
-                    and not os.path.islink(path):
+            if (
+                not any(map(_skipped_dir, dirs))
+                and not _skipped_file(name)
+                and os.path.isfile(path)
+                and not os.path.islink(path)
+            ):
                 yield path
         return
     for dirpath, dirnames, filenames in os.walk(top):

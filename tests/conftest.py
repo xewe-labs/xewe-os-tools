@@ -38,7 +38,11 @@ def make_modules_checkout(dest: Path, layout: str = "modules", board_tests: bool
     ``board_tests`` also an empty ``tests/board/test_<slug>.py`` each)."""
     for props in sorted(PROPERTIES.glob("*.properties")):
         slug = props.stem
-        d = dest / ("modules" if layout == "modules" else "") / (slug if layout == "modules" else f"xewe-os-module-{slug}")
+        d = (
+            dest
+            / ("modules" if layout == "modules" else "")
+            / (slug if layout == "modules" else f"xewe-os-module-{slug}")
+        )
         d.mkdir(parents=True)
         shutil.copy(props, d / "module.properties")
         text = props.read_text()
@@ -51,18 +55,18 @@ def make_modules_checkout(dest: Path, layout: str = "modules", board_tests: bool
     return dest
 
 
-UNIT_TESTS = '''
+UNIT_TESTS = """
 import pytest
 
 
 @pytest.mark.unit
 def test_logic():
     assert 1 + 1 == 2
-'''
-BOARD_TESTS = '''
+"""
+BOARD_TESTS = """
 def test_status(serial):
     serial.command("$system status", expect="Uptime", timeout=1)
-'''
+"""
 
 
 def write_tests(root: Path, board: str = BOARD_TESTS, unit: str | None = UNIT_TESTS) -> None:
@@ -112,9 +116,21 @@ def write_project(root: Path, selected: str = '["wifi", "web-interface"]', ino: 
 
 @pytest.fixture(autouse=True)
 def _isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
-    for var in ("XEWE_PORT", "XEWE_CHIP", "XEWE_REQUIRE_BOARD", "XEWE_ARDUINO_CLI", "XEWE_ESPTOOL",
-                "XEWE_NO_BOARD", "XEWE_ARDUINO_DATA", "XEWE_CORE_SOURCE", "XEWE_MODULES_SOURCE", "XEWE_TOOLS_SOURCE",
-                "XEWE_CACHE", *dotenv.KEYS, dotenv.ENV_VAR):
+    for var in (
+        "XEWE_PORT",
+        "XEWE_CHIP",
+        "XEWE_REQUIRE_BOARD",
+        "XEWE_ARDUINO_CLI",
+        "XEWE_ESPTOOL",
+        "XEWE_NO_BOARD",
+        "XEWE_ARDUINO_DATA",
+        "XEWE_CORE_SOURCE",
+        "XEWE_MODULES_SOURCE",
+        "XEWE_TOOLS_SOURCE",
+        "XEWE_CACHE",
+        *dotenv.KEYS,
+        dotenv.ENV_VAR,
+    ):
         monkeypatch.delenv(var, raising=False)
     # Never touch the real ~/.xewe-os: the shared toolchain of every test lives in its tmp dir.
     monkeypatch.setenv("XEWE_HOME", str(tmp_path / "xewe-home"))
@@ -199,17 +215,27 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_cli: Any, no_p
     p = write_project(tmp_path / "xewe-os")
     checkout = make_modules_checkout(tmp_path / "modules-src")  # as XEWE_MODULES_SOURCE
     registry = Registry.load(checkout)
-    modules.generate(p, registry, ["wifi", "web-interface"], "https://github.com/xewe-labs/xewe-os-modules", "v1.0.0", "-")
+    modules.generate(
+        p, registry, ["wifi", "web-interface"], "https://github.com/xewe-labs/xewe-os-modules", "v1.0.0", "-"
+    )
     p.libraries.mkdir(parents=True)
     cfg = config.BuildConfig(
         setup_completed="2026-10-08T12:00:00Z",
-        paths={"arduino_cli": str(p.bin / "arduino-cli-1.5.1"), "arduino_data": str(p.default_arduino_data),
-               "arduino_user": str(p.arduino_user), "libraries": "libraries", "modules": str(checkout)},
-        installed={"arduino_cli": "1.5.1", "esp32": "3.3.12",
-                   "core": {"ref": "1.0.0", "commit": "abc", "source": "https://github.com/xewe-labs/xewe-os-core"},
-                   "modules": {"ref": "v1.0.0", "commit": "def", "source": "https://github.com/xewe-labs/xewe-os-modules"},
-                   "tools": {"ref": "v0.1.1", "commit": "-", "source": "https://github.com/xewe-labs/xewe-os-tools"},
-                   "libraries": {}},
+        paths={
+            "arduino_cli": str(p.bin / "arduino-cli-1.5.1"),
+            "arduino_data": str(p.default_arduino_data),
+            "arduino_user": str(p.arduino_user),
+            "libraries": "libraries",
+            "modules": str(checkout),
+        },
+        installed={
+            "arduino_cli": "1.5.1",
+            "esp32": "3.3.12",
+            "core": {"ref": "1.0.0", "commit": "abc", "source": "https://github.com/xewe-labs/xewe-os-core"},
+            "modules": {"ref": "v1.0.0", "commit": "def", "source": "https://github.com/xewe-labs/xewe-os-modules"},
+            "tools": {"ref": "v0.1.1", "commit": "-", "source": "https://github.com/xewe-labs/xewe-os-tools"},
+            "libraries": {},
+        },
     )
     config.save(p, cfg)
     monkeypatch.chdir(p.root)
@@ -255,8 +281,9 @@ class FakeSerial:
 
     instances: list[FakeSerial] = []
 
-    def __init__(self, script: Callable[[bytes], bytes] | None = None, incoming: bytes = b"",
-                 chunks: list[Any] | None = None) -> None:
+    def __init__(
+        self, script: Callable[[bytes], bytes] | None = None, incoming: bytes = b"", chunks: list[Any] | None = None
+    ) -> None:
         self.port: str | None = None
         self.baudrate = 9600
         self.timeout: float | None = None

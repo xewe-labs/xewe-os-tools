@@ -27,9 +27,22 @@ class Pause:
 
 
 # The S3's Wi-Fi prompt as printed on a real board, verbatim.
-REAL_NETWORKS = ("!user", "fuck villa torino", "wifihigh5", "VillaTorinoSucks", "XeWe Laptop Chiller",
-                 "Emerald Sky", "XFSETUP-7148", "NoWiFi", "The Return of Pings-2.4", "NETGEAR",
-                 "smitty werbenyagermanjensen", "notyomamaswifi", "Benidorm", "ATTuhhDXCb")
+REAL_NETWORKS = (
+    "!user",
+    "fuck villa torino",
+    "wifihigh5",
+    "VillaTorinoSucks",
+    "XeWe Laptop Chiller",
+    "Emerald Sky",
+    "XFSETUP-7148",
+    "NoWiFi",
+    "The Return of Pings-2.4",
+    "NETGEAR",
+    "smitty werbenyagermanjensen",
+    "notyomamaswifi",
+    "Benidorm",
+    "ATTuhhDXCb",
+)
 INVALID = "! Invalid number. Please enter a base-10 integer."
 SEP = "+------------------------------------------------+"
 
@@ -39,27 +52,55 @@ def header(*lines: str) -> list[str]:
 
 
 def name_block(name: str) -> list[Any]:
-    return [*header("XeWe OS", "Version 2.0.0"), *header("System Setup"),
-            "Name your device (ex: Kitchen Lights):", "> ", IN,
-            f'Confirm "{name}"?', "(y/n) > ", IN]
+    return [
+        *header("XeWe OS", "Version 2.0.0"),
+        *header("System Setup"),
+        "Name your device (ex: Kitchen Lights):",
+        "> ",
+        IN,
+        f'Confirm "{name}"?',
+        "(y/n) > ",
+        IN,
+    ]
 
 
 def module_block(name: str) -> list[Any]:
-    return [*header(f"{name} Setup"), *header(f"Would you like to enable {name} module?", "", "description"),
-            "(y/n) > ", IN]
+    return [
+        *header(f"{name} Setup"),
+        *header(f"Would you like to enable {name} module?", "", "description"),
+        "(y/n) > ",
+        IN,
+    ]
 
 
 def scan_block(networks: tuple[str, ...]) -> list[Any]:
     """``Wifi::scan`` + ``prompt_credentials`` up to the board waiting for the selection."""
     out: list[Any] = ["Scanning WiFi networks..."]
     out += [f"{i}. {ssid}" for i, ssid in enumerate(networks)]
-    return out + ["", "Select network by number; or enter", "-1 to exit", "-2 to rescan",
-                  "-3 to enter custom SSID", "Selection: ", "> ", IN]
+    return out + [
+        "",
+        "Select network by number; or enter",
+        "-1 to exit",
+        "-2 to rescan",
+        "-3 to enter custom SSID",
+        "Selection: ",
+        "> ",
+        IN,
+    ]
 
 
 def join_block(ssid: str = "HomeNet") -> list[Any]:
-    return [f"Selected: '{ssid}'", "Password: ", "> ", IN, f"Joining {ssid}.....", "", f"Joined {ssid}",
-            "Local ip: 192.168.1.20", "Mac: AA:BB:CC:DD:EE:FF"]
+    return [
+        f"Selected: '{ssid}'",
+        "Password: ",
+        "> ",
+        IN,
+        f"Joining {ssid}.....",
+        "",
+        f"Joined {ssid}",
+        "Local ip: 192.168.1.20",
+        "Mac: AA:BB:CC:DD:EE:FF",
+    ]
 
 
 def wifi_block(networks: tuple[str, ...], custom: bool = False, ssid: str = "HomeNet") -> list[Any]:
@@ -76,23 +117,39 @@ def time_block(detected: str | None = "GMT+02:00", asks_offset: bool = False) ->
     else:
         out += [f"Is your time: 2026-10-08 12:00:00 ({detected})?", "(y/n) > ", IN]
     if asks_offset or detected is None:
-        out += ["Enter your timezone offset (e.g. GMT-08:00)", "For support visit:",
-                "https://webbrowsertools.com/timezone/", "> ", IN, "Timezone set to GMT-08:00"]
+        out += [
+            "Enter your timezone offset (e.g. GMT-08:00)",
+            "For support visit:",
+            "https://webbrowsertools.com/timezone/",
+            "> ",
+            IN,
+            "Timezone set to GMT-08:00",
+        ]
     else:
         out += ["Timezone set"]
     return out
 
 
 def finish_block(drop: bool = False) -> list[Any]:
-    out: list[Any] = [*header("Scheduler Setup"), *header("Web Interface Setup"),
-                      *header("Initial Setup Complete"), *header("Rebooting")]
+    out: list[Any] = [
+        *header("Scheduler Setup"),
+        *header("Web Interface Setup"),
+        *header("Initial Setup Complete"),
+        *header("Rebooting"),
+    ]
     if drop:
         out += [DROP, DROP]
     return out + ["ESP-ROM:esp32s3-20210327", *header("System Setup Complete")]
 
 
-def full(name: str = "Kitchen Lights", networks: tuple[str, ...] = ("Neighbour", "HomeNet"), custom: bool = False,
-         tz_offset: bool = False, drop: bool = False, wifi: bool = True) -> list[Any]:
+def full(
+    name: str = "Kitchen Lights",
+    networks: tuple[str, ...] = ("Neighbour", "HomeNet"),
+    custom: bool = False,
+    tz_offset: bool = False,
+    drop: bool = False,
+    wifi: bool = True,
+) -> list[Any]:
     out = [*name_block(name), *module_block("Buttons"), *module_block("Pins"), *module_block("Wifi")]
     if wifi:
         out += [*wifi_block(networks, custom), *module_block("Time"), *time_block(asks_offset=tz_offset)]
@@ -164,8 +221,10 @@ def test_happy_path_wifi_and_time(tmp_path: Path, capsys: pytest.CaptureFixture[
     assert fake.rts_history[-2:] == [True, False]  # reset first
     out = capsys.readouterr().out
     assert re.search(r"provisioned in \d+ s: ", out)
-    assert ("name \"Kitchen Lights\"; modules buttons, pins, wifi, time; "
-            "wifi \"HomeNet\" (network 1 of 2); timezone y, board detected GMT+02:00") in out
+    assert (
+        'name "Kitchen Lights"; modules buttons, pins, wifi, time; '
+        'wifi "HomeNet" (network 1 of 2); timezone y, board detected GMT+02:00'
+    ) in out
     assert PASSWORD not in out and PASSWORD not in log.read_text()
     assert out.count("********") == 2  # the typed line and the firmware's echo
     assert "> 1" in out and "Joined HomeNet" in out
@@ -186,18 +245,32 @@ def test_timezone_configured_answers_n_and_offset(capsys: pytest.CaptureFixture[
 
 
 def test_timezone_not_detected_and_not_configured_fails(caplog: pytest.LogCaptureFixture) -> None:
-    transcript = [*name_block("Kitchen Lights"), *module_block("Buttons"), *module_block("Pins"),
-                  *module_block("Wifi"), *wifi_block(("HomeNet",)), *module_block("Time"),
-                  *time_block(detected=None), *finish_block()]
+    transcript = [
+        *name_block("Kitchen Lights"),
+        *module_block("Buttons"),
+        *module_block("Pins"),
+        *module_block("Wifi"),
+        *wifi_block(("HomeNet",)),
+        *module_block("Time"),
+        *time_block(detected=None),
+        *finish_block(),
+    ]
     fake = FakeBoard(transcript)
     assert run(fake, settings()) == 1
     assert "could not detect the timezone" in caplog.text
 
 
 def test_timezone_not_detected_uses_configured(capsys: pytest.CaptureFixture[str]) -> None:
-    transcript = [*name_block("Kitchen Lights"), *module_block("Buttons"), *module_block("Pins"),
-                  *module_block("Wifi"), *wifi_block(("HomeNet",)), *module_block("Time"),
-                  *time_block(detected=None), *finish_block()]
+    transcript = [
+        *name_block("Kitchen Lights"),
+        *module_block("Buttons"),
+        *module_block("Pins"),
+        *module_block("Wifi"),
+        *wifi_block(("HomeNet",)),
+        *module_block("Time"),
+        *time_block(detected=None),
+        *finish_block(),
+    ]
     fake = FakeBoard(transcript)
     assert run(fake, settings(timezone="GMT-08:00")) == 0
     assert fake.answers[-1] == "GMT-08:00"
@@ -216,11 +289,18 @@ def test_already_provisioned_sends_nothing(capsys: pytest.CaptureFixture[str]) -
     assert "already provisioned" in capsys.readouterr().out
 
 
-def test_prompt_timeout_exit_1_with_masked_tail(monkeypatch: pytest.MonkeyPatch,
-                                                caplog: pytest.LogCaptureFixture) -> None:
+def test_prompt_timeout_exit_1_with_masked_tail(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     monkeypatch.setattr(provision, "PROMPT_TIMEOUT", 0.3)
-    transcript = [*name_block("Kitchen Lights"), *module_block("Buttons"), *module_block("Pins"),
-                  *module_block("Wifi"), *wifi_block(("HomeNet",))[:-5], "Joining HomeNet....."]
+    transcript = [
+        *name_block("Kitchen Lights"),
+        *module_block("Buttons"),
+        *module_block("Pins"),
+        *module_block("Wifi"),
+        *wifi_block(("HomeNet",))[:-5],
+        "Joining HomeNet.....",
+    ]
     fake = FakeBoard(transcript)
     assert run(fake, settings()) == 1
     assert "no prompt from the board within 0.3 s" in caplog.text
@@ -232,15 +312,31 @@ def test_start_timeout_exit_1(monkeypatch: pytest.MonkeyPatch, caplog: pytest.Lo
     monkeypatch.setattr(provision, "NUDGE_SECONDS", 0.1)
     fake = FakeBoard(["ESP-ROM:esp32s3-20210327"])
     assert run(fake, settings(), timeout=0.3) == 1
-    assert "printed no first-boot prompt (e.g. 'Name your device') and no 'System Setup Complete' within 0.3 s" in caplog.text
+    assert (
+        "printed no first-boot prompt (e.g. 'Name your device') and no 'System Setup Complete' within 0.3 s"
+        in caplog.text
+    )
     assert bytes(fake.written) == b"\n"  # the one nudge
 
 
 def test_nudge_reprints_the_name_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
     """Prompt printed before the port opened (--no-reset): an empty line, 'n', then the real answers."""
     monkeypatch.setattr(provision, "NUDGE_SECONDS", 0.2)
-    fake = FakeBoard([IN, 'Confirm ""?', "(y/n) > ", IN, "Name your device (ex: Kitchen Lights):", "> ", IN,
-                      'Confirm "Kitchen Lights"?', "(y/n) > ", IN, *full()[len(name_block("x")):]])
+    fake = FakeBoard(
+        [
+            IN,
+            'Confirm ""?',
+            "(y/n) > ",
+            IN,
+            "Name your device (ex: Kitchen Lights):",
+            "> ",
+            IN,
+            'Confirm "Kitchen Lights"?',
+            "(y/n) > ",
+            IN,
+            *full()[len(name_block("x")) :],
+        ]
+    )
     assert run(fake, settings(), reset=False) == 0
     assert fake.answers[:4] == ["", "n", "Kitchen Lights", "y"]
     assert True not in fake.rts_history  # --no-reset: RTS only ever set low (at open)
@@ -254,15 +350,34 @@ def test_port_drop_at_reboot() -> None:
 
 def failed_join(ssid: str = "HomeNet") -> list[Any]:
     """``Wifi::join`` timing out once with user credentials; ``connect`` then scans again."""
-    return [f"Selected: '{ssid}'", "Password: ", "> ", IN, f"Joining {ssid}.....", "", f"Unable to join {ssid}",
-            "Check the password", "try moving closer to router", "and restarting the router", "Retrying"]
+    return [
+        f"Selected: '{ssid}'",
+        "Password: ",
+        "> ",
+        IN,
+        f"Joining {ssid}.....",
+        "",
+        f"Unable to join {ssid}",
+        "Check the password",
+        "try moving closer to router",
+        "and restarting the router",
+        "Retrying",
+    ]
 
 
 def test_wrong_password_fails_after_one_retry(caplog: pytest.LogCaptureFixture) -> None:
-    transcript = [*name_block("Kitchen Lights"), *module_block("Buttons"), *module_block("Pins"),
-                  *module_block("Wifi"), "Stored WiFi credentials not found",
-                  *scan_block(("HomeNet",)), *failed_join(), *scan_block(("HomeNet",)), *failed_join(),
-                  *scan_block(("HomeNet",))]
+    transcript = [
+        *name_block("Kitchen Lights"),
+        *module_block("Buttons"),
+        *module_block("Pins"),
+        *module_block("Wifi"),
+        "Stored WiFi credentials not found",
+        *scan_block(("HomeNet",)),
+        *failed_join(),
+        *scan_block(("HomeNet",)),
+        *failed_join(),
+        *scan_block(("HomeNet",)),
+    ]
     fake = FakeBoard(transcript)
     assert run(fake, settings()) == 1
     assert fake.answers[-4:] == ["0", PASSWORD, "0", PASSWORD]  # answered twice, then gave up
@@ -271,10 +386,20 @@ def test_wrong_password_fails_after_one_retry(caplog: pytest.LogCaptureFixture) 
 
 def test_failed_join_is_retried_once(capsys: pytest.CaptureFixture[str]) -> None:
     networks = ("Neighbour", "HomeNet")
-    transcript = [*name_block("Kitchen Lights"), *module_block("Buttons"), *module_block("Pins"),
-                  *module_block("Wifi"), "Stored WiFi credentials not found", *scan_block(networks),
-                  *failed_join(), *scan_block(("HomeNet", "Neighbour")), *join_block(),
-                  *module_block("Time"), *time_block(), *finish_block()]
+    transcript = [
+        *name_block("Kitchen Lights"),
+        *module_block("Buttons"),
+        *module_block("Pins"),
+        *module_block("Wifi"),
+        "Stored WiFi credentials not found",
+        *scan_block(networks),
+        *failed_join(),
+        *scan_block(("HomeNet", "Neighbour")),
+        *join_block(),
+        *module_block("Time"),
+        *time_block(),
+        *finish_block(),
+    ]
     fake = FakeBoard(transcript)
     assert run(fake, settings()) == 0
     assert fake.answers == ["Kitchen Lights", "y", "y", "y", "y", "1", PASSWORD, "0", PASSWORD, "y", "y"]
@@ -284,8 +409,7 @@ def test_failed_join_is_retried_once(capsys: pytest.CaptureFixture[str]) -> None
 
 
 def test_summary_name_kept_from_board(capsys: pytest.CaptureFixture[str]) -> None:
-    transcript = [*resumed(), *join_block("XeWe Laptop Chiller"), *module_block("Time"), *time_block(),
-                  *finish_block()]
+    transcript = [*resumed(), *join_block("XeWe Laptop Chiller"), *module_block("Time"), *time_block(), *finish_block()]
     assert run(FakeBoard(transcript), settings(ssid="XeWe Laptop Chiller")) == 0
     out = capsys.readouterr().out
     assert "name: kept from board; modules time;" in out and 'name "Kitchen Lights"' not in out
@@ -302,12 +426,17 @@ def template_first_boot(full_enabled: bool) -> list[Any]:
     out = [*name_block("Kitchen Lights"), *module_block("Your Module"), *module_block("Your Module Full")]
     if full_enabled:
         out += level_block()
-    return out + [*header("Initial Setup Complete"), *header("Rebooting"), "ESP-ROM:esp32s3-20210327",
-                  *header("System Setup Complete")]
+    return out + [
+        *header("Initial Setup Complete"),
+        *header("Rebooting"),
+        "ESP-ROM:esp32s3-20210327",
+        *header("System Setup Complete"),
+    ]
 
 
-def test_unlisted_module_gets_n_and_is_logged(caplog: pytest.LogCaptureFixture,
-                                              capsys: pytest.CaptureFixture[str]) -> None:
+def test_unlisted_module_gets_n_and_is_logged(
+    caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]
+) -> None:
     fake = FakeBoard(template_first_boot(full_enabled=False))
     s = settings(modules=frozenset({"your-module"}), ssid=None, password=None)
     with caplog.at_level("INFO", logger="xewe"):
@@ -317,8 +446,9 @@ def test_unlisted_module_gets_n_and_is_logged(caplog: pytest.LogCaptureFixture,
     assert "declined your-module-full" in capsys.readouterr().out
 
 
-def test_unknown_value_prompt_gets_enter_until_default(caplog: pytest.LogCaptureFixture,
-                                                       capsys: pytest.CaptureFixture[str]) -> None:
+def test_unknown_value_prompt_gets_enter_until_default(
+    caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]
+) -> None:
     """XEWE_PROVISION_MODULES unset (all): Your Module Full is enabled, its level prompt gets Enter."""
     fake = FakeBoard(template_first_boot(full_enabled=True))
     with caplog.at_level("INFO", logger="xewe"):
@@ -347,8 +477,13 @@ def test_unknown_prompt_that_never_ends_fails(caplog: pytest.LogCaptureFixture) 
 
 def wrapped_module_block(name: str, *rows: str, sep: str = SEP, edge: str = "|") -> list[Any]:
     """``print_header`` with a question wider than the 48-character box: word-wrapped into ``rows``."""
-    box = [sep, *(f"{edge}{row:^48}{edge}" for row in rows), f"{edge}{'':^48}{edge}",
-           f"{edge}{'description':^48}{edge}", sep]
+    box = [
+        sep,
+        *(f"{edge}{row:^48}{edge}" for row in rows),
+        f"{edge}{'':^48}{edge}",
+        f"{edge}{'description':^48}{edge}",
+        sep,
+    ]
     return [*header(f"{name} Setup"), *box, "(y/n) > ", IN]
 
 
@@ -360,8 +495,9 @@ def ha_first_boot(*block: Any) -> list[Any]:
     return [*name_block("Kitchen Lights"), *module_block("Alexa"), *block, *finish_block()]
 
 
-def test_wrapped_module_question_is_enabled(caplog: pytest.LogCaptureFixture,
-                                            capsys: pytest.CaptureFixture[str]) -> None:
+def test_wrapped_module_question_is_enabled(
+    caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]
+) -> None:
     fake = FakeBoard(ha_first_boot(*wrapped_module_block("Home Assistant", *HA_ROWS)))
     with caplog.at_level("INFO", logger="xewe"):
         assert run(fake, settings(modules=frozenset({"alexa", "home-assistant"}))) == 0
@@ -378,10 +514,14 @@ def test_wrapped_module_question_not_listed_gets_n() -> None:
     assert fake.answers == ["Kitchen Lights", "y", "y", "n"]
 
 
-def test_wrapped_module_question_split_inside_the_name_with_box_drawing(
-        capsys: pytest.CaptureFixture[str]) -> None:
-    block = wrapped_module_block("Home Assistant", "Would you like to enable Home", "Assistant   module?",
-                                 sep="\u250c" + "\u2500" * 48 + "\u2510", edge="\u2502")
+def test_wrapped_module_question_split_inside_the_name_with_box_drawing(capsys: pytest.CaptureFixture[str]) -> None:
+    block = wrapped_module_block(
+        "Home Assistant",
+        "Would you like to enable Home",
+        "Assistant   module?",
+        sep="\u250c" + "\u2500" * 48 + "\u2510",
+        edge="\u2502",
+    )
     fake = FakeBoard(ha_first_boot(*block))
     assert run(fake, settings(modules=None)) == 0
     assert fake.answers[-1] == "y"
@@ -390,8 +530,14 @@ def test_wrapped_module_question_split_inside_the_name_with_box_drawing(
 
 def test_answered_module_question_is_not_reused_for_a_later_yn_prompt() -> None:
     """Only lines after the last answer are joined: an unknown (y/n) after a module still gets n."""
-    transcript = [*name_block("Kitchen Lights"), *module_block("Alexa"), "Reset the counter?", "(y/n) > ", IN,
-                  *finish_block()]
+    transcript = [
+        *name_block("Kitchen Lights"),
+        *module_block("Alexa"),
+        "Reset the counter?",
+        "(y/n) > ",
+        IN,
+        *finish_block(),
+    ]
     fake = FakeBoard(transcript)
     assert run(fake, settings(modules=None, ssid=None, password=None)) == 0
     assert fake.answers == ["Kitchen Lights", "y", "y", "n"]
@@ -401,9 +547,16 @@ def test_answered_module_question_is_not_reused_for_a_later_yn_prompt() -> None:
 
 
 def test_real_network_list_selects_by_number(capsys: pytest.CaptureFixture[str]) -> None:
-    transcript = [*name_block("Kitchen Lights"), *module_block("Buttons"), *module_block("Pins"),
-                  *module_block("Wifi"), *wifi_block(REAL_NETWORKS, ssid="XeWe Laptop Chiller"),
-                  *module_block("Time"), *time_block(), *finish_block()]
+    transcript = [
+        *name_block("Kitchen Lights"),
+        *module_block("Buttons"),
+        *module_block("Pins"),
+        *module_block("Wifi"),
+        *wifi_block(REAL_NETWORKS, ssid="XeWe Laptop Chiller"),
+        *module_block("Time"),
+        *time_block(),
+        *finish_block(),
+    ]
     fake = FakeBoard(transcript)
     assert run(fake, settings(ssid="XeWe Laptop Chiller")) == 0
     assert fake.answers == ["Kitchen Lights", "y", "y", "y", "y", "4", PASSWORD, "y", "y"]
@@ -413,22 +566,37 @@ def test_real_network_list_selects_by_number(capsys: pytest.CaptureFixture[str])
 def resumed(networks: tuple[str, ...] = REAL_NETWORKS) -> list[Any]:
     """A board whose earlier provisioning stopped at Wi-Fi: after the reset it skips the name and
     module prompts (stored) and goes straight to the network list (the stall seen on the S3)."""
-    return ["ESP-ROM:esp32s3-20210327", *header("XeWe OS", "Version 2.0.0"), *header("System Setup"),
-            *header("Buttons Setup"), *header("Pins Setup"), *header("Wifi Setup"),
-            "Stored WiFi credentials not found", *scan_block(networks)]
+    return [
+        "ESP-ROM:esp32s3-20210327",
+        *header("XeWe OS", "Version 2.0.0"),
+        *header("System Setup"),
+        *header("Buttons Setup"),
+        *header("Pins Setup"),
+        *header("Wifi Setup"),
+        "Stored WiFi credentials not found",
+        *scan_block(networks),
+    ]
 
 
 def test_resumed_board_at_network_list_is_answered_without_nudge(clock: FakeClock) -> None:
-    transcript = [*resumed(), *join_block("XeWe Laptop Chiller"), *module_block("Time"), *time_block(),
-                  *finish_block()]
+    transcript = [*resumed(), *join_block("XeWe Laptop Chiller"), *module_block("Time"), *time_block(), *finish_block()]
     fake = FakeBoard(transcript, clock)
     assert run(fake, settings(ssid="XeWe Laptop Chiller")) == 0
     assert fake.answers == ["4", PASSWORD, "y", "y"]  # no empty nudge line
 
 
 def test_unlisted_ssid_rescans_once_then_custom(capsys: pytest.CaptureFixture[str]) -> None:
-    transcript = [*resumed(), *scan_block(REAL_NETWORKS[:5]), "Enter custom SSID: ", "> ", IN,
-                  *join_block("Hidden Net"), *module_block("Time"), *time_block(), *finish_block()]
+    transcript = [
+        *resumed(),
+        *scan_block(REAL_NETWORKS[:5]),
+        "Enter custom SSID: ",
+        "> ",
+        IN,
+        *join_block("Hidden Net"),
+        *module_block("Time"),
+        *time_block(),
+        *finish_block(),
+    ]
     fake = FakeBoard(transcript)
     assert run(fake, settings(ssid="Hidden Net")) == 0
     assert fake.answers[:4] == ["-2", "-3", "Hidden Net", PASSWORD]
@@ -436,8 +604,17 @@ def test_unlisted_ssid_rescans_once_then_custom(capsys: pytest.CaptureFixture[st
 
 
 def test_rescan_log_masks_the_ssid(caplog: pytest.LogCaptureFixture) -> None:
-    transcript = [*resumed(), *scan_block(REAL_NETWORKS[:5]), "Enter custom SSID: ", "> ", IN,
-                  *join_block("Hidden Net"), *module_block("Time"), *time_block(), *finish_block()]
+    transcript = [
+        *resumed(),
+        *scan_block(REAL_NETWORKS[:5]),
+        "Enter custom SSID: ",
+        "> ",
+        IN,
+        *join_block("Hidden Net"),
+        *module_block("Time"),
+        *time_block(),
+        *finish_block(),
+    ]
     caplog.set_level("INFO", logger="xewe")
     assert run(FakeBoard(transcript), settings(ssid="Hidden Net")) == 0
     assert "network 'H***' is not in the scan (14 networks); rescanning" in caplog.text
@@ -446,16 +623,30 @@ def test_rescan_log_masks_the_ssid(caplog: pytest.LogCaptureFixture) -> None:
 
 
 def test_ssid_found_after_rescan() -> None:
-    transcript = [*resumed(REAL_NETWORKS[:3]), *scan_block(REAL_NETWORKS), *join_block("XeWe Laptop Chiller"),
-                  *module_block("Time"), *time_block(), *finish_block()]
+    transcript = [
+        *resumed(REAL_NETWORKS[:3]),
+        *scan_block(REAL_NETWORKS),
+        *join_block("XeWe Laptop Chiller"),
+        *module_block("Time"),
+        *time_block(),
+        *finish_block(),
+    ]
     fake = FakeBoard(transcript)
     assert run(fake, settings(ssid="XeWe Laptop Chiller")) == 0
     assert fake.answers[:3] == ["-2", "4", PASSWORD]
 
 
 def test_invalid_number_answers_again() -> None:
-    transcript = [*resumed(), INVALID, "> ", IN, *join_block("XeWe Laptop Chiller"), *module_block("Time"),
-                  *time_block(), *finish_block()]
+    transcript = [
+        *resumed(),
+        INVALID,
+        "> ",
+        IN,
+        *join_block("XeWe Laptop Chiller"),
+        *module_block("Time"),
+        *time_block(),
+        *finish_block(),
+    ]
     fake = FakeBoard(transcript)
     assert run(fake, settings(ssid="XeWe Laptop Chiller")) == 0
     assert fake.answers[:3] == ["4", "4", PASSWORD]
@@ -465,8 +656,17 @@ def test_nudge_into_unseen_network_list_rescans(monkeypatch: pytest.MonkeyPatch)
     """--no-reset with the list printed before the port opened: the nudge's empty line gets
     '! Invalid number'; the tool cannot know the numbers, so it rescans (-2)."""
     monkeypatch.setattr(provision, "NUDGE_SECONDS", 0.2)
-    transcript = [IN, INVALID, "> ", IN, *scan_block(REAL_NETWORKS), *join_block("XeWe Laptop Chiller"),
-                  *module_block("Time"), *time_block(), *finish_block()]
+    transcript = [
+        IN,
+        INVALID,
+        "> ",
+        IN,
+        *scan_block(REAL_NETWORKS),
+        *join_block("XeWe Laptop Chiller"),
+        *module_block("Time"),
+        *time_block(),
+        *finish_block(),
+    ]
     fake = FakeBoard(transcript)
     assert run(fake, settings(ssid="XeWe Laptop Chiller"), reset=False) == 0
     assert fake.answers[:4] == ["", "-2", "4", PASSWORD]
@@ -474,10 +674,19 @@ def test_nudge_into_unseen_network_list_rescans(monkeypatch: pytest.MonkeyPatch)
 
 def test_nudge_never_fires_after_the_first_prompt(clock: FakeClock) -> None:
     """A quiet board after the first answered prompt (a slow Wi-Fi scan here) gets no empty line."""
-    transcript = [*name_block("Kitchen Lights"), *module_block("Buttons"), *module_block("Pins"),
-                  *module_block("Wifi"), "Stored WiFi credentials not found", Pause(provision.NUDGE_SECONDS + 5),
-                  *scan_block(REAL_NETWORKS), *join_block("XeWe Laptop Chiller"), *module_block("Time"),
-                  *time_block(), *finish_block()]
+    transcript = [
+        *name_block("Kitchen Lights"),
+        *module_block("Buttons"),
+        *module_block("Pins"),
+        *module_block("Wifi"),
+        "Stored WiFi credentials not found",
+        Pause(provision.NUDGE_SECONDS + 5),
+        *scan_block(REAL_NETWORKS),
+        *join_block("XeWe Laptop Chiller"),
+        *module_block("Time"),
+        *time_block(),
+        *finish_block(),
+    ]
     fake = FakeBoard(transcript, clock)
     assert run(fake, settings(ssid="XeWe Laptop Chiller")) == 0
     assert "" not in fake.answers
@@ -486,8 +695,14 @@ def test_nudge_never_fires_after_the_first_prompt(clock: FakeClock) -> None:
 
 def test_resumed_board_quiet_before_first_prompt_gets_no_nudge_after_it(clock: FakeClock) -> None:
     """The first prompt after the reset is the network list; a later silence never nudges."""
-    transcript = [*resumed(), Pause(provision.NUDGE_SECONDS + 5), *join_block("XeWe Laptop Chiller"),
-                  *module_block("Time"), *time_block(), *finish_block()]
+    transcript = [
+        *resumed(),
+        Pause(provision.NUDGE_SECONDS + 5),
+        *join_block("XeWe Laptop Chiller"),
+        *module_block("Time"),
+        *time_block(),
+        *finish_block(),
+    ]
     fake = FakeBoard(transcript, clock)
     assert run(fake, settings(ssid="XeWe Laptop Chiller")) == 0
     assert fake.answers == ["4", PASSWORD, "y", "y"]
@@ -497,11 +712,21 @@ def test_resumed_board_quiet_before_first_prompt_gets_no_nudge_after_it(clock: F
 
 
 def test_resolve_precedence() -> None:
-    env = {"XEWE_DEVICE_NAME": "From Env", "XEWE_WIFI_SSID": "EnvNet", "XEWE_WIFI_PASSWORD": "env pw",
-           "XEWE_TIMEZONE": "GMT-03:00", "XEWE_PROVISION_MODULES": "wifi,time"}
+    env = {
+        "XEWE_DEVICE_NAME": "From Env",
+        "XEWE_WIFI_SSID": "EnvNet",
+        "XEWE_WIFI_PASSWORD": "env pw",
+        "XEWE_TIMEZONE": "GMT-03:00",
+        "XEWE_PROVISION_MODULES": "wifi,time",
+    }
     s = resolve("default", env=env)
     assert (s.name, s.ssid, s.password, s.timezone, s.modules) == (
-        "From Env", "EnvNet", "env pw", "GMT-03:00", frozenset({"wifi", "time"}))
+        "From Env",
+        "EnvNet",
+        "env pw",
+        "GMT-03:00",
+        frozenset({"wifi", "time"}),
+    )
     s = resolve("default", name="From Flag", modules="buttons, Web Interface", timezone="gmt+05:30", env=env)
     assert (s.name, s.timezone, s.modules) == ("From Flag", "GMT+05:30", frozenset({"buttons", "web-interface"}))
     s = resolve("default", modules="none", env={})
@@ -515,8 +740,9 @@ def test_bad_timezone_exit_2(tz: str) -> None:
     assert exc.value.code == 2
 
 
-def test_cli_missing_password_exit_2_before_port(project: Paths, monkeypatch: pytest.MonkeyPatch,
-                                                 caplog: pytest.LogCaptureFixture) -> None:
+def test_cli_missing_password_exit_2_before_port(
+    project: Paths, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     def no_select(*a: Any, **k: Any) -> None:
         raise AssertionError("board selected despite bad configuration")
 
@@ -543,16 +769,29 @@ def _fake_board_cli(monkeypatch: pytest.MonkeyPatch, fake: FakeBoard) -> list[st
     return ports
 
 
-def test_cli_settings_from_project_dotenv_without_flags(project: Paths, monkeypatch: pytest.MonkeyPatch,
-                                                         capsys: pytest.CaptureFixture[str],
-                                                         caplog: pytest.LogCaptureFixture) -> None:
+def test_cli_settings_from_project_dotenv_without_flags(
+    project: Paths,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Credentials only in <project>/.env: `xewe provision` with no flags (board auto-selected)."""
     (project.root / ".env").write_text(
         f"XEWE_DEVICE_NAME='Kitchen Lights'\nXEWE_WIFI_SSID=\"XeWe Laptop Chiller\"\n"
-        f"export XEWE_WIFI_PASSWORD={PASSWORD}\nXEWE_PROVISION_MODULES=all\n")
-    fake = FakeBoard([*name_block("Kitchen Lights"), *module_block("Buttons"), *module_block("Pins"),
-                      *module_block("Wifi"), *wifi_block(REAL_NETWORKS, ssid="XeWe Laptop Chiller"),
-                      *module_block("Time"), *time_block(), *finish_block()])
+        f"export XEWE_WIFI_PASSWORD={PASSWORD}\nXEWE_PROVISION_MODULES=all\n"
+    )
+    fake = FakeBoard(
+        [
+            *name_block("Kitchen Lights"),
+            *module_block("Buttons"),
+            *module_block("Pins"),
+            *module_block("Wifi"),
+            *wifi_block(REAL_NETWORKS, ssid="XeWe Laptop Chiller"),
+            *module_block("Time"),
+            *time_block(),
+            *finish_block(),
+        ]
+    )
     ports = _fake_board_cli(monkeypatch, fake)
     caplog.set_level("INFO", logger="xewe")
     assert main(["provision"]) == 0
@@ -572,8 +811,9 @@ def test_cli_port_flag_with_dotenv(project: Paths, monkeypatch: pytest.MonkeyPat
 
 
 @pytest.mark.parametrize("flag", ["--env", "--from"])
-def test_cli_env_flag_wins_over_project_dotenv(project: Paths, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-                                               flag: str) -> None:
+def test_cli_env_flag_wins_over_project_dotenv(
+    project: Paths, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, flag: str
+) -> None:
     (project.root / ".env").write_text("XEWE_WIFI_SSID=Wrong\nXEWE_WIFI_PASSWORD=wrong\n")
     f = tmp_path / "outside-repo.env"
     f.write_text(f"XEWE_WIFI_SSID=HomeNet\nXEWE_WIFI_PASSWORD={PASSWORD}\nXEWE_DEVICE_NAME=File Name\n")

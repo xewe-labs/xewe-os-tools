@@ -8,8 +8,30 @@ from xewe import __version__
 from xewe.cli import main
 from xewe.env.project import Paths
 
-COMMANDS = ["setup", "brand-lint", "build", "flash", "serial", "provision", "test", "run", "boards", "modules", "manifest", "clean", "doctor", "release"]
-SUBCOMMANDS = ["modules list", "modules select", "modules validate", "modules generate", "manifest show", "manifest update"]
+COMMANDS = [
+    "setup",
+    "brand-lint",
+    "build",
+    "flash",
+    "serial",
+    "provision",
+    "test",
+    "run",
+    "boards",
+    "modules",
+    "manifest",
+    "clean",
+    "doctor",
+    "release",
+]
+SUBCOMMANDS = [
+    "modules list",
+    "modules select",
+    "modules validate",
+    "modules generate",
+    "manifest show",
+    "manifest update",
+]
 
 
 def test_every_command_has_help(capsys: pytest.CaptureFixture[str]) -> None:

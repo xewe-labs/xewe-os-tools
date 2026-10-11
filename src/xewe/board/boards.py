@@ -115,7 +115,10 @@ def renamed_port(board: Board) -> str | None:
 
 
 def scan(
-    p: Paths, probe: bool = True, esptool_cmd: Callable[[], list[str]] | None = None, port: str | None = None,
+    p: Paths,
+    probe: bool = True,
+    esptool_cmd: Callable[[], list[str]] | None = None,
+    port: str | None = None,
     settle: float | None = None,
 ) -> list[Board]:
     """Candidate boards: known VID:PID ports (or just ``port``), chip from cache or esptool probe.

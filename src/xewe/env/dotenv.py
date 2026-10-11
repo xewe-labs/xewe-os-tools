@@ -34,25 +34,30 @@ ENV_VAR = "XEWE_ENV"
 PREFIX = "XEWE_"
 KEYS: dict[str, str] = {
     "XEWE_DEVICE_NAME": "device name the first boot asks for; first provision: optional "
-                        "(default: [project] name in xewe.toml, else the folder name)",
+    "(default: [project] name in xewe.toml, else the folder name)",
     "XEWE_WIFI_SSID": "Wi-Fi network name; first provision: needed when the wifi module is enabled",
     "XEWE_WIFI_PASSWORD": "Wi-Fi password, masked in all output; first provision: needed when the wifi "
-                          "module is enabled",
+    "module is enabled",
     "XEWE_TIMEZONE": "GMT+HH:MM, set instead of the detected timezone; first provision: optional "
-                     "(empty accepts the detected one)",
+    "(empty accepts the detected one)",
     "XEWE_PROVISION_MODULES": "modules to enable at their prompt: all, none or a comma list; first "
-                              "provision: optional (default all)",
+    "provision: optional (default all)",
     "XEWE_TEST_BUTTONS_PIN": "free GPIO for the buttons module's board test (skipped when empty); "
-                             "first provision: not used",
-    "XEWE_TEST_PINS_ADC_PIN": "ADC GPIO the pins module's board test reads (default 1); first "
-                              "provision: not used",
+    "first provision: not used",
+    "XEWE_TEST_PINS_ADC_PIN": "ADC GPIO the pins module's board test reads (default 1); first provision: not used",
     "XEWE_PORT": "serial port of the board (default: detected); first provision: optional",
     "XEWE_CHIP": "chip of the board, c3, c6 or s3 (default: detected); first provision: optional",
 }
 """The keys the file usually holds, each with what it is for (doc/spec.md §13)."""
 OTHER_KEYS = (
-    "XEWE_REQUIRE_BOARD", "XEWE_ARDUINO_CLI", "XEWE_ESPTOOL", "XEWE_ARDUINO_DATA", "XEWE_CACHE",
-    "XEWE_CORE_SOURCE", "XEWE_MODULES_SOURCE", "XEWE_TOOLS_SOURCE",
+    "XEWE_REQUIRE_BOARD",
+    "XEWE_ARDUINO_CLI",
+    "XEWE_ESPTOOL",
+    "XEWE_ARDUINO_DATA",
+    "XEWE_CACHE",
+    "XEWE_CORE_SOURCE",
+    "XEWE_MODULES_SOURCE",
+    "XEWE_TOOLS_SOURCE",
 )
 """Other variables the tools read; allowed in the file too."""
 
@@ -65,7 +70,7 @@ def parse(text: str, source: str = "<text>") -> dict[str, str]:
         if not line or line.startswith("#"):
             continue
         if line.startswith("export "):
-            line = line[len("export "):].lstrip()
+            line = line[len("export ") :].lstrip()
         key, sep, value = line.partition("=")
         key = key.strip()
         if not sep or not key or not key.replace("_", "").isalnum():
@@ -118,12 +123,13 @@ def tools_checkout(project_root: Path | None) -> Path | None:
             data = {}
         source = str(data.get("installed", {}).get("tools", {}).get("source", ""))
         if source.startswith("local:"):
-            return Path(source[len("local:"):])
+            return Path(source[len("local:") :])
     return package_checkout()
 
 
-def find(project_root: Path | None, explicit: str | Path | None = None,
-         environ: Mapping[str, str] | None = None) -> Path | None:
+def find(
+    project_root: Path | None, explicit: str | Path | None = None, environ: Mapping[str, str] | None = None
+) -> Path | None:
     """The dotenv file to use (see the module docstring), or None."""
     env = os.environ if environ is None else environ
     given = explicit or env.get(ENV_VAR)
@@ -140,8 +146,9 @@ def find(project_root: Path | None, explicit: str | Path | None = None,
     return next((c for c in candidates if c.is_file()), None)
 
 
-def load_settings(project_root: Path | None, explicit: str | Path | None = None,
-                  environ: MutableMapping[str, str] | None = None) -> Path | None:
+def load_settings(
+    project_root: Path | None, explicit: str | Path | None = None, environ: MutableMapping[str, str] | None = None
+) -> Path | None:
     """Find the file, apply its ``XEWE_*`` keys; log the path and key count only. Returns the path."""
     env = os.environ if environ is None else environ
     path = find(project_root, explicit, env)
@@ -163,5 +170,7 @@ def hint(project_root: Path) -> str:
     """One line for setup when no file is found: where to put it and which keys."""
     tools = tools_checkout(project_root)
     where = f"{project_root / FILENAME}" + (f" or {tools / FILENAME}" if tools is not None else "")
-    return (f"no {FILENAME} file: for provisioning put XEWE_WIFI_SSID and XEWE_WIFI_PASSWORD "
-            f"(optional: XEWE_DEVICE_NAME, XEWE_TIMEZONE, XEWE_PORT, XEWE_CHIP) in {where}")
+    return (
+        f"no {FILENAME} file: for provisioning put XEWE_WIFI_SSID and XEWE_WIFI_PASSWORD "
+        f"(optional: XEWE_DEVICE_NAME, XEWE_TIMEZONE, XEWE_PORT, XEWE_CHIP) in {where}"
+    )

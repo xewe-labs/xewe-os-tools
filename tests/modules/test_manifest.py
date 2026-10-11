@@ -52,12 +52,15 @@ def _track_latest(project: Paths, commit: str) -> None:
     config.save(project, cfg)
 
 
-def test_show_latest_and_remote_drift(project: Paths, monkeypatch: pytest.MonkeyPatch,
-                                      capsys: pytest.CaptureFixture[str]) -> None:
+def test_show_latest_and_remote_drift(
+    project: Paths, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     _track_latest(project, SHA)
     head = {"sha": SHA}
     calls: list[tuple[str, ...]] = []
-    monkeypatch.setattr(fetch, "git", lambda *a, **k: calls.append(a) or f"ref: refs/heads/main\tHEAD\n{head['sha']}\tHEAD\n")
+    monkeypatch.setattr(
+        fetch, "git", lambda *a, **k: calls.append(a) or f"ref: refs/heads/main\tHEAD\n{head['sha']}\tHEAD\n"
+    )
     assert main(["manifest", "show"]) == 0
     out = capsys.readouterr().out
     assert "latest (main@f157392)" in out and "\n! " not in out
@@ -71,8 +74,9 @@ def test_show_latest_and_remote_drift(project: Paths, monkeypatch: pytest.Monkey
     assert core["drift"] and core["remote"] == MOVED and core["installed_text"] == "latest (main@f157392)"
 
 
-def test_show_latest_unreachable_is_not_drift(project: Paths, monkeypatch: pytest.MonkeyPatch,
-                                              capsys: pytest.CaptureFixture[str]) -> None:
+def test_show_latest_unreachable_is_not_drift(
+    project: Paths, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     _track_latest(project, SHA)
 
     def offline(*a: str, **k: object) -> str:
@@ -83,8 +87,9 @@ def test_show_latest_unreachable_is_not_drift(project: Paths, monkeypatch: pytes
     assert "\n! " not in capsys.readouterr().out
 
 
-def test_update_freezes_latest_and_to_latest_sets_it_back(project: Paths, monkeypatch: pytest.MonkeyPatch,
-                                                          capsys: pytest.CaptureFixture[str]) -> None:
+def test_update_freezes_latest_and_to_latest_sets_it_back(
+    project: Paths, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     _track_latest(project, SHA)
     monkeypatch.setattr(fetch, "git", lambda *a, **k: f"{'0' * 40}\trefs/tags/1.2.0\n{'0' * 40}\trefs/tags/1.10.0\n")
     assert main(["manifest", "update", "core"]) == 0

@@ -20,7 +20,18 @@ try:
 except ImportError:  # Windows
     termios = None  # type: ignore[assignment]
 
-from xewe.report import BOARD_DISABLED, EXIT_FAIL, EXIT_NO_BOARD, EXIT_OK, EXIT_USAGE, NO_BOARD, XeWeError, board_disabled, log, result
+from xewe.report import (
+    BOARD_DISABLED,
+    EXIT_FAIL,
+    EXIT_NO_BOARD,
+    EXIT_OK,
+    EXIT_USAGE,
+    NO_BOARD,
+    XeWeError,
+    board_disabled,
+    log,
+    result,
+)
 
 RECONNECT_SECONDS = 5.0
 SILENCE_SECONDS = 0.5
@@ -124,7 +135,7 @@ class Console:
         ser.timeout = 0.05
         ser.dsrdtr = False
         ser.rtscts = False
-        ser.dtr = True   # applied first by open(): DTR stays high as cdc_acm left it
+        ser.dtr = True  # applied first by open(): DTR stays high as cdc_acm left it
         ser.rts = False  # applied second: 1/1 -> 1/0, never 0/1
         ser.open()
         ser.dtr = False  # 1/0 -> 0/0: both lines low, board untouched
@@ -283,7 +294,7 @@ class Console:
         for i in range(0, len(data), step):
             if i:
                 time.sleep(pause)
-            self._ser.write(data[i:i + step])
+            self._ser.write(data[i : i + step])
             self._ser.flush()
 
     def expect(self, pattern: str, timeout: float = 10) -> re.Match[str]:
@@ -384,7 +395,10 @@ def flush_input(src: TextIO) -> bool:
 
 
 def console_session(
-    console: Console, duration: float | None = None, no_input: bool = False, timestamps: bool = False,
+    console: Console,
+    duration: float | None = None,
+    no_input: bool = False,
+    timestamps: bool = False,
 ) -> None:
     """``xewe serial``/``xewe run`` without ``--send``: interactive on a terminal, else listen only.
 
@@ -484,8 +498,9 @@ def wait_for_port(
             hint = "unplug and replug the board"
             other = renamed() if renamed is not None else None
             if other and other != port:
-                hint = (f"the board came back as {other} (the host gave it a new name); "
-                        f"pass --port {other}, or replug it")
+                hint = (
+                    f"the board came back as {other} (the host gave it a new name); pass --port {other}, or replug it"
+                )
             raise XeWeError(
                 f"{port} did not come back (present for {settle:g} s) within {timeout:.0f} s after esptool reset it; "
                 f"{hint}",
@@ -555,8 +570,11 @@ def serial_main(
         console.open()
     except (serial.SerialException, OSError) as exc:
         console.close()
-        log.error("cannot open %s: %s; if this persists, unplug and replug the board (or toggle USB "
-                  "passthrough)", board.port, exc)
+        log.error(
+            "cannot open %s: %s; if this persists, unplug and replug the board (or toggle USB passthrough)",
+            board.port,
+            exc,
+        )
         return EXIT_FAIL
     with console:
         if reset:
@@ -567,8 +585,12 @@ def serial_main(
         try:
             state = wait_until_ready(console, boot_timeout)
         except ExpectTimeout:
-            log.error("board started booting but printed neither %r nor %r within %g s; nothing sent; last lines:",
-                      BOOT_READY, BOOT_UNPROVISIONED, boot_timeout)
+            log.error(
+                "board started booting but printed neither %r nor %r within %g s; nothing sent; last lines:",
+                BOOT_READY,
+                BOOT_UNPROVISIONED,
+                boot_timeout,
+            )
             for line in console.lines[-TAIL_LINES:]:
                 log.error("  %s", line)
             return EXIT_FAIL

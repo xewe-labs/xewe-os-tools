@@ -220,7 +220,9 @@ def _compile(argv: list[str], env_vars: dict[str, str], cwd: Path, log_path: Pat
     """Run the compile, writing compile.log; ``--verbose`` streams it to stderr."""
     log.debug("$ %s", shlex.join(argv))
     try:
-        proc = subprocess.Popen(argv, cwd=cwd, env=env_vars, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        proc = subprocess.Popen(
+            argv, cwd=cwd, env=env_vars, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+        )
     except FileNotFoundError:
         raise XeWeError(f"{argv[0]} not found; run ./setup.sh", EXIT_NOT_SETUP) from None
     chunks: list[str] = []
@@ -287,8 +289,11 @@ def build_chip(
     code, output = _compile(argv, arduino.env(p, cfg.arduino_data(p)), p.root, out / "compile.log")
     seconds = int(time.monotonic() - start)
     if code != 0:
-        lines = [ln for ln in output.splitlines() if "error" in ln.lower()
-                 and not re.search(r"Downloading index|Error initializing instance", ln)]
+        lines = [
+            ln
+            for ln in output.splitlines()
+            if "error" in ln.lower() and not re.search(r"Downloading index|Error initializing instance", ln)
+        ]
         for ln in lines[-15:]:
             log.error("%s", ln)
         result(f"FAIL   {chip.name}  {seconds} s  see {p.rel(out / 'compile.log')}")

@@ -1,6 +1,5 @@
 """The hard no-board switch (``--no-board`` / ``XEWE_NO_BOARD=1``) and ``-v`` after the command."""
 
-
 import pytest
 from serial.tools import list_ports
 
@@ -9,6 +8,7 @@ from xewe.board import boards, serialio
 from xewe.cli import main
 from xewe.env.project import Paths
 from xewe.report import BOARD_DISABLED, XeWeError
+
 
 @pytest.fixture
 def attached(monkeypatch: pytest.MonkeyPatch, port_node: str) -> str:
@@ -37,8 +37,14 @@ def test_console_never_opens(disabled: None, attached: str) -> None:
 
 
 @pytest.mark.parametrize("flag", [True, False])
-def test_flash_builds_then_exits_4(project: Paths, attached: str, fake_esptool, monkeypatch: pytest.MonkeyPatch,
-                                   capsys: pytest.CaptureFixture[str], flag: bool) -> None:
+def test_flash_builds_then_exits_4(
+    project: Paths,
+    attached: str,
+    fake_esptool,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    flag: bool,
+) -> None:
     monkeypatch.setenv("XEWE_PORT", attached)
     if not flag:
         monkeypatch.setenv("XEWE_NO_BOARD", "1")
@@ -50,10 +56,12 @@ def test_flash_builds_then_exits_4(project: Paths, attached: str, fake_esptool, 
     assert fake_esptool() == []
 
 
-@pytest.mark.parametrize("argv", [["serial"], ["serial", "--send", "x"], ["provision"], ["run"], ["boards"],
-                                  ["boards", "--json"]])
-def test_board_commands_exit_4(project: Paths, attached: str, disabled: None, argv: list[str],
-                               capsys: pytest.CaptureFixture[str]) -> None:
+@pytest.mark.parametrize(
+    "argv", [["serial"], ["serial", "--send", "x"], ["provision"], ["run"], ["boards"], ["boards", "--json"]]
+)
+def test_board_commands_exit_4(
+    project: Paths, attached: str, disabled: None, argv: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
     assert main([*argv, "--port", attached] if argv[0] in ("serial", "provision", "run") else argv) == 4
     assert f"error: {BOARD_DISABLED}" in capsys.readouterr().err
 
@@ -72,8 +80,9 @@ def test_build_is_unaffected(project: Paths, attached: str, disabled: None) -> N
     assert main(["build", "--chip", "c3"]) == 0
 
 
-def test_xewe_test_no_board_is_compiled_not_run(project_with_tests: Paths, attached: str, capsys: pytest.CaptureFixture[str],
-                                                monkeypatch: pytest.MonkeyPatch) -> None:
+def test_xewe_test_no_board_is_compiled_not_run(
+    project_with_tests: Paths, attached: str, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("XEWE_PORT", attached)
     assert main(["test", "--no-board"]) == 0
     out = capsys.readouterr().out
@@ -83,13 +92,22 @@ def test_xewe_test_no_board_is_compiled_not_run(project_with_tests: Paths, attac
 
 
 def test_plugin_option(pytester: pytest.Pytester, project_with_tests: Paths, attached: str) -> None:
-    res = pytester.runpytest("--xewe-project", str(project_with_tests.root), "--xewe-chip", "c3", "-p", "no:cacheprovider",
-                             "--xewe-no-board", str(project_with_tests.root / "tests"))
+    res = pytester.runpytest(
+        "--xewe-project",
+        str(project_with_tests.root),
+        "--xewe-chip",
+        "c3",
+        "-p",
+        "no:cacheprovider",
+        "--xewe-no-board",
+        str(project_with_tests.root / "tests"),
+    )
     res.assert_outcomes(passed=1, skipped=1)
     assert res.ret == 0
 
 
 # --- -v/--verbose after the command
+
 
 def test_verbose_after_command(project: Paths, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["build", "--chip", "c3", "-v"]) == 0

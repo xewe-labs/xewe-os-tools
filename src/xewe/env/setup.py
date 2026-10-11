@@ -67,8 +67,14 @@ def latest_head(label: str, repo: str, prev: Any) -> Head:
         return fetch.remote_head(repo)
     except XeWeError as exc:
         if isinstance(prev, dict) and prev.get("branch") and prev.get("source") == repo:
-            log.warning("%s: cannot resolve latest of %s; keeping the installed %s@%s (%s)",
-                        label, repo, prev["branch"], str(prev.get("commit", ""))[:7], exc)
+            log.warning(
+                "%s: cannot resolve latest of %s; keeping the installed %s@%s (%s)",
+                label,
+                repo,
+                prev["branch"],
+                str(prev.get("commit", ""))[:7],
+                exc,
+            )
             return str(prev["branch"]), str(prev.get("commit", ""))
         raise
 
@@ -98,7 +104,13 @@ def _latest_record(label: str, branch: str, commit: str, source: str) -> dict[st
 
 
 def _install_source(
-    label: str, src: Source, ref: str, dest: Path, local: Path | None, prev: dict[str, Any], force: bool,
+    label: str,
+    src: Source,
+    ref: str,
+    dest: Path,
+    local: Path | None,
+    prev: dict[str, Any],
+    force: bool,
     head: Head | None = None,
 ) -> dict[str, str]:
     """Clone ``src.repo`` at ``ref`` into ``dest`` (or copy ``local``); return the install record.
@@ -125,7 +137,12 @@ def _install_source(
 
 
 def modules_checkout(
-    p: Paths, src: Source, ref: str, local: Path | None, force: bool, head: Head | None = None,
+    p: Paths,
+    src: Source,
+    ref: str,
+    local: Path | None,
+    force: bool,
+    head: Head | None = None,
 ) -> tuple[Path, dict[str, str]]:
     """The modules repo setup reads, and its install record.
 
@@ -159,8 +176,10 @@ def modules_checkout(
     return dest, {"ref": ref, "commit": commit, "source": src.repo}
 
 
-NO_MODULES_WARNING = ("no modules selected (selected = [] in xewe.toml): the image has no Wi-Fi, time or other "
-                      "modules; select some with `./setup.sh --modules LIST` or `xewe modules select LIST`")
+NO_MODULES_WARNING = (
+    "no modules selected (selected = [] in xewe.toml): the image has no Wi-Fi, time or other "
+    "modules; select some with `./setup.sh --modules LIST` or `xewe modules select LIST`"
+)
 
 
 def warn_no_modules(selected: list[str]) -> bool:
@@ -195,7 +214,11 @@ def _menu(registry: modules.Registry) -> list[str]:
 
 
 def install_libraries(
-    p: Paths, lock: lockfile.Lock, order: list[modules.Module], prev_libs: dict[str, Any], force: bool,
+    p: Paths,
+    lock: lockfile.Lock,
+    order: list[modules.Module],
+    prev_libs: dict[str, Any],
+    force: bool,
     checkout: Path,
 ) -> dict[str, dict[str, str]]:
     """Install the library plan (see :func:`modules.library_plan`; the lock wins) into ``build/libraries``;
@@ -211,8 +234,9 @@ def install_libraries(
             log.info("library %s: from %s (%s)", lib.name, lib.origin, lib.ref)
         prev_rec = {k: v for k, v in prev_libs.get(lib.name, {}).items() if k != "origin"}
         head = latest_head(lib.name, lib.repo, prev_rec) if fetch.is_latest(lib.ref) else None
-        rec = _install_source(lib.name, Source(lib.repo, lib.ref), lib.ref, p.libraries / lib.name, None, prev_rec,
-                              force, head)
+        rec = _install_source(
+            lib.name, Source(lib.repo, lib.ref), lib.ref, p.libraries / lib.name, None, prev_rec, force, head
+        )
         libs[lib.name] = {**rec, "origin": lib.origin}
     return libs
 
@@ -223,8 +247,11 @@ def _legacy_version_hint(p: Paths) -> None:
         return
     values = dict(line.split("=", 1) for line in state.read_text().splitlines() if "=" in line)
     version = f"{values.get('MAJOR', '0')}.{values.get('MINOR', '0')}.{values.get('PATCH', '0')}"
-    log.info('legacy build/version_state found: put  version = "%s"  under [project] in xewe.toml '
-             "(the file is no longer used and was not deleted)", version)
+    log.info(
+        'legacy build/version_state found: put  version = "%s"  under [project] in xewe.toml '
+        "(the file is no longer used and was not deleted)",
+        version,
+    )
 
 
 def _shared_default(data: Path) -> bool:
@@ -258,8 +285,13 @@ def tools_record(p: Paths, ref: str, local: Path | None, repo: str) -> dict[str,
 
 
 def install_toolchain(
-    p: Paths, opts: SetupOptions, old: config.BuildConfig | None, cli_version: str, esp32_version: str,
-    cfg: config.BuildConfig, sleep: Callable[[float], None],
+    p: Paths,
+    opts: SetupOptions,
+    old: config.BuildConfig | None,
+    cli_version: str,
+    esp32_version: str,
+    cfg: config.BuildConfig,
+    sleep: Callable[[float], None],
 ) -> tuple[Path, str]:
     """Steps 3 and 4: arduino-cli and the esp32 core in the shared toolchain, recorded in ``cfg``.
 
@@ -345,14 +377,22 @@ def run_setup(p: Paths, opts: SetupOptions, sleep: Callable[[float], None] = tim
     except XeWeError:
         esp_version = None
     if esp_version is None:
-        log.warning("the core's esptool does not run on this host; flashing needs XEWE_ESPTOOL (e.g. 'python -m esptool')")
+        log.warning(
+            "the core's esptool does not run on this host; flashing needs XEWE_ESPTOOL (e.g. 'python -m esptool')"
+        )
     else:
         log.info("esptool %s", esp_version)
 
     # 6-8 sources
     cfg.paths["libraries"] = p.to_build(p.libraries)
     cfg.installed["core"] = _install_source(
-        "core", lock.core, refs["core"], p.libraries / CORE_LIBRARY, core_local, prev.get("core", {}), opts.force,
+        "core",
+        lock.core,
+        refs["core"],
+        p.libraries / CORE_LIBRARY,
+        core_local,
+        prev.get("core", {}),
+        opts.force,
         heads["core"],
     )
     checkout, cfg.installed["modules"] = modules_checkout(
@@ -364,8 +404,9 @@ def run_setup(p: Paths, opts: SetupOptions, sleep: Callable[[float], None] = tim
     registry = modules.Registry.load(checkout)
     if not registry.all:
         where = modules_local or lock.modules.repo
-        log.warning("no modules found in %s (looked for %s); continuing with zero modules",
-                    where, registry.layout_note())
+        log.warning(
+            "no modules found in %s (looked for %s); continuing with zero modules", where, registry.layout_note()
+        )
     if opts.modules is not None:
         lock.selected = modules.expand_selection(registry, opts.modules)
         lockfile.save(lock, p.lock)
@@ -399,4 +440,3 @@ def run_setup(p: Paths, opts: SetupOptions, sleep: Callable[[float], None] = tim
         f"modules {fetch.describe(mod)} ({', '.join(m.slug for m in order) or 'none'})"
     )
     return EXIT_OK
-

@@ -22,19 +22,22 @@ def _wifi_tests(p: Paths) -> None:
 
 
 def _run(pytester: pytest.Pytester, p: Paths, *args: str) -> pytest.RunResult:
-    return pytester.runpytest("--xewe-project", str(p.root), "--xewe-chip", "c3", "-p", "no:cacheprovider",
-                              str(p.root / "tests"), *args)
+    return pytester.runpytest(
+        "--xewe-project", str(p.root), "--xewe-chip", "c3", "-p", "no:cacheprovider", str(p.root / "tests"), *args
+    )
 
 
 def test_no_board_reports_compiled_not_run(pytester: pytest.Pytester, project_with_tests: Paths) -> None:
     res = _run(pytester, project_with_tests)
     res.assert_outcomes(passed=1, skipped=1)
     assert res.ret == 0
-    res.stdout.fnmatch_lines([
-        "*= compiled, not run (no board attached, chip c3) =*",
-        "*test_fw.py::test_status",
-        "xewe test: 1 unit passed, 1 compiled, not run, 0 failed",
-    ])
+    res.stdout.fnmatch_lines(
+        [
+            "*= compiled, not run (no board attached, chip c3) =*",
+            "*test_fw.py::test_status",
+            "xewe test: 1 unit passed, 1 compiled, not run, 0 failed",
+        ]
+    )
     assert (project_with_tests.out_dir("c3") / "2.0.15-c3-xewe-os.bin").is_file()  # board tests still compile
 
 
@@ -58,8 +61,9 @@ def test_unit_marker_deselects_board(pytester: pytest.Pytester, project_with_tes
     assert not project_with_tests.out_dir("c3").exists()
 
 
-def test_compile_failure_fails_board_tests(pytester: pytest.Pytester, project_with_tests: Paths,
-                                              monkeypatch: pytest.MonkeyPatch) -> None:
+def test_compile_failure_fails_board_tests(
+    pytester: pytest.Pytester, project_with_tests: Paths, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("FAKE_ARDUINO_COMPILE_FAIL", "all")
     res = _run(pytester, project_with_tests)
     res.assert_outcomes(passed=1, errors=1)
@@ -73,7 +77,9 @@ def test_no_tests_collected_is_success(pytester: pytest.Pytester, project: Paths
     assert res.ret == 0
 
 
-def test_xewe_test_cli_runs_project_and_module_tests(project_with_tests: Paths, capsys: pytest.CaptureFixture[str]) -> None:
+def test_xewe_test_cli_runs_project_and_module_tests(
+    project_with_tests: Paths, capsys: pytest.CaptureFixture[str]
+) -> None:
     _wifi_tests(project_with_tests)  # same basenames as the project tests: importlib mode
     assert main(["test"]) == 0
     out = capsys.readouterr().out
@@ -183,8 +189,9 @@ def test_one_console_per_session(pytester: pytest.Pytester, project: Paths, boar
 
 def test_boot_waits_through_first_boot_reboot(pytester: pytest.Pytester, project: Paths, board_attached) -> None:
     write_tests(project.root, SESSION_TESTS, unit=None)
-    fake = FakeSerial(chunks=[b"Initial Setup Complete\r\n", b"Rebooting...\r\n", DROP, DROP, b"", BOOTED],
-                      script=pinger())
+    fake = FakeSerial(
+        chunks=[b"Initial Setup Complete\r\n", b"Rebooting...\r\n", DROP, DROP, b"", BOOTED], script=pinger()
+    )
     board_attached(lambda: fake)  # reconnects reopen the same port
     res = _run(pytester, project)
     res.assert_outcomes(passed=2)
@@ -202,15 +209,18 @@ def test_boot_unprovisioned_fails_with_runbook_hint(pytester: pytest.Pytester, p
 
 def uid_answerer(extra: Callable[[bytes], bytes] | None = None) -> Callable[[bytes], bytes]:
     """Answers the liveness probe ``$system uid`` (and whatever ``extra`` answers)."""
+
     def script(data: bytes) -> bytes:
         if data == b"$system uid\n":
             return b"uid64 0123456789abcdef\n"
         return extra(data) if extra else b""
+
     return script
 
 
-def test_boot_silence_reopens_then_ends_session(pytester: pytest.Pytester, project: Paths, board_attached,
-                                                monkeypatch: pytest.MonkeyPatch) -> None:
+def test_boot_silence_reopens_then_ends_session(
+    pytester: pytest.Pytester, project: Paths, board_attached, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(plugin, "BOOT_TIMEOUT_SECONDS", 0.3)
     monkeypatch.setattr(plugin, "PROBE_TIMEOUT_SECONDS", 0.3)
     write_tests(project.root, SESSION_TESTS, unit=None)
@@ -223,8 +233,9 @@ def test_boot_silence_reopens_then_ends_session(pytester: pytest.Pytester, proje
     assert bytes(FakeSerial.instances[1].written).count(b"$system uid\n") == 3
 
 
-def test_board_gone_from_usb_at_boot_ends_session(pytester: pytest.Pytester, project: Paths, board_attached,
-                                                  monkeypatch: pytest.MonkeyPatch) -> None:
+def test_board_gone_from_usb_at_boot_ends_session(
+    pytester: pytest.Pytester, project: Paths, board_attached, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The post-flash reset unplugs the board; the boot wait reads a closed handle."""
     monkeypatch.setattr(plugin, "BOOT_TIMEOUT_SECONDS", 0.3)
     monkeypatch.setattr(serialio, "RECONNECT_SECONDS", 0.1)
@@ -259,8 +270,9 @@ def test_no_flash_skips_the_image_write(project: Paths, board_attached, monkeypa
     assert main(["test", *only]) == 1  # without the flag the image is written
 
 
-def test_boot_silence_but_board_answers_after_reopen(pytester: pytest.Pytester, project: Paths, board_attached,
-                                                     monkeypatch: pytest.MonkeyPatch) -> None:
+def test_boot_silence_but_board_answers_after_reopen(
+    pytester: pytest.Pytester, project: Paths, board_attached, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A stale endpoint: the first open reads nothing, the reopened port talks."""
     monkeypatch.setattr(plugin, "BOOT_TIMEOUT_SECONDS", 0.3)
     write_tests(project.root, SESSION_TESTS, unit=None)
@@ -272,9 +284,9 @@ def test_boot_silence_but_board_answers_after_reopen(pytester: pytest.Pytester, 
     assert not stale.is_open and bytes(fresh.written) == b"$system uid\nping\nping\n"
 
 
-def test_boot_silence_then_first_boot_prompt_after_reopen_fails(pytester: pytest.Pytester, project: Paths,
-                                                                 board_attached,
-                                                                 monkeypatch: pytest.MonkeyPatch) -> None:
+def test_boot_silence_then_first_boot_prompt_after_reopen_fails(
+    pytester: pytest.Pytester, project: Paths, board_attached, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(plugin, "BOOT_TIMEOUT_SECONDS", 0.3)
     write_tests(project.root, SESSION_TESTS, unit=None)
     fakes = iter([FakeSerial(), FakeSerial(incoming=b"Name your device (ex: Kitchen Lights):\r\n")])
@@ -299,8 +311,9 @@ def test_after_2(serial):
 """
 
 
-def test_silent_board_after_a_test_timeout_ends_session(pytester: pytest.Pytester, project: Paths, board_attached,
-                                                        monkeypatch: pytest.MonkeyPatch) -> None:
+def test_silent_board_after_a_test_timeout_ends_session(
+    pytester: pytest.Pytester, project: Paths, board_attached, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A restart that never prints again fails one test, not every later one."""
     monkeypatch.setattr(plugin, "PROBE_TIMEOUT_SECONDS", 0.3)
     write_tests(project.root, RESTART_TESTS, unit=None)
@@ -318,8 +331,9 @@ def test_silent_board_after_a_test_timeout_ends_session(pytester: pytest.Pyteste
     res.stdout.fnmatch_lines(["*silent after a restart*power-cycle*"])
 
 
-def test_timeout_on_a_live_board_continues(pytester: pytest.Pytester, project: Paths, board_attached,
-                                           monkeypatch: pytest.MonkeyPatch) -> None:
+def test_timeout_on_a_live_board_continues(
+    pytester: pytest.Pytester, project: Paths, board_attached, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A test that waited for the wrong text: the probe answers, the next tests run."""
     write_tests(project.root, RESTART_TESTS, unit=None)
     board_attached(lambda: FakeSerial(chunks=[BOOTED], script=uid_answerer(pinger())))
@@ -328,8 +342,9 @@ def test_timeout_on_a_live_board_continues(pytester: pytest.Pytester, project: P
     assert len(FakeSerial.instances) == 2  # reopened once, after test_restart only
 
 
-def test_port_not_back_after_flash_maps_to_exit_4(project: Paths, board_attached,
-                                                   monkeypatch: pytest.MonkeyPatch) -> None:
+def test_port_not_back_after_flash_maps_to_exit_4(
+    project: Paths, board_attached, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from xewe.report import EXIT_NO_BOARD, XeWeError
 
     def gone(*a: Any, **k: Any) -> None:
@@ -340,7 +355,7 @@ def test_port_not_back_after_flash_maps_to_exit_4(project: Paths, board_attached
     assert main(["test"]) == 4
 
 
-PIN_TESTS = '''
+PIN_TESTS = """
 import os
 
 import pytest
@@ -350,11 +365,12 @@ import pytest
 def test_pins_from_dotenv():
     assert os.environ["XEWE_TEST_BUTTONS_PIN"] == "7"
     assert os.environ["XEWE_TEST_PINS_ADC_PIN"] == "3"  # the real environment won
-'''
+"""
 
 
-def test_dotenv_pins_reach_module_tests(pytester: pytest.Pytester, project: Paths,
-                                        monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dotenv_pins_reach_module_tests(
+    pytester: pytest.Pytester, project: Paths, monkeypatch: pytest.MonkeyPatch
+) -> None:
     (project.root / "tests" / "unit").mkdir(parents=True)
     (project.root / "tests" / "unit" / "test_pins_env.py").write_text(PIN_TESTS)
     dotfile = project.root / ("." + "env")
