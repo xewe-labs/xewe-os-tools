@@ -960,10 +960,10 @@ everything after the first `=`.
    `// ---- <slug> (xewe modules generate) ----`. Present: leave the file alone. Absent: append
    ```c
 
-   // ---- led (xewe modules generate) ----
-   // Values of the led module. Edit the numbers; keep this marker and the end marker.
+   // ---- wifi (xewe modules generate) ----
+   // Values of the wifi module. Edit the numbers; keep this marker and the end marker.
    <the module's Config.h after its #pragma once (else without its SPDX lines)>
-   // ---- end led ----
+   // ---- end wifi ----
    ```
    A block is never removed or rewritten: the user's edits in it survive every generate, and a
    block whose module is no longer selected stays with one `note:` line. `Config.h` is never
