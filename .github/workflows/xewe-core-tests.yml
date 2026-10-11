@@ -1,6 +1,7 @@
 # xewe-core-tests.yml: reusable checks for xewe-os-core (the XeWeCore Arduino library).
-# Host unit tests (tests/unit/run.sh) and arduino-lint. The examples are not compiled here.
-# Releases are not done here: core is released through publish-arduino-library (tag X.Y.Z, then the
+# Host unit tests (tests/unit/run.sh), arduino-lint, the examples compiled for c3, c6 and s3,
+# `xewe format --check` and `xewe brand-lint`. Every job blocks.
+# Nothing here publishes: core is released with its own scripts/release.sh (tag X.Y.Z, then the
 # Arduino Library Manager picks it up). See doc/ci.md.
 name: xewe-core-tests
 
@@ -8,11 +9,11 @@ on:
   workflow_call:
     inputs:
       tools_ref:
-        description: "xewe-os-tools ref whose brand-lint is used"
+        description: "xewe-os-tools ref whose format, brand-lint, toolchain pins and chip FQBNs are used"
         type: string
         default: "main"
       arduinojson_ref:
-        description: "ArduinoJson tag for the host unit tests"
+        description: "ArduinoJson tag for the host unit tests and the example builds"
         type: string
         default: "v7.4.3"
 
@@ -44,10 +45,88 @@ jobs:
           library-manager: update
           compliance: specification
 
-  brand-lint:
-    name: brand-lint (non-blocking)
+  # Every examples/*/*.ino against the checked-out library, with the arduino-cli and esp32 core
+  # versions (src/xewe/env/pins.py) and the FQBNs (src/xewe/build/chips.py) of the tools at tools_ref.
+  examples:
+    name: examples (${{ matrix.chip }})
     runs-on: ubuntu-latest
-    continue-on-error: true
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        chip: [c3, c6, s3]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read the toolchain pins and the FQBN from the tools
+        id: pins
+        env:
+          REF: ${{ inputs.tools_ref }}
+          CHIP: ${{ matrix.chip }}
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/xewe-tools"
+          git init -q "$dest"
+          git -C "$dest" fetch -q --depth 1 https://github.com/xewe-labs/xewe-os-tools "$REF"
+          git -C "$dest" checkout -q FETCH_HEAD
+          PYTHONPATH="$dest/src" python3 - "$CHIP" >> "$GITHUB_OUTPUT" <<'PY'
+          import sys
+          from xewe.build.chips import get
+          from xewe.env.pins import ARDUINO_CLI_VERSION, ESP32_CORE_VERSION, ESP32_INDEX_URL
+          print(f"cli={ARDUINO_CLI_VERSION}")
+          print(f"esp32={ESP32_CORE_VERSION}")
+          print(f"index={ESP32_INDEX_URL}")
+          print(f"fqbn={get(sys.argv[1]).fqbn}")
+          PY
+      - uses: arduino/setup-arduino-cli@v2
+        with:
+          version: ${{ steps.pins.outputs.cli }}
+      - uses: actions/cache@v4
+        with:
+          path: ~/.arduino15
+          key: arduino15-${{ runner.os }}-${{ runner.arch }}-esp32-${{ steps.pins.outputs.esp32 }}
+      - name: Install the esp32 core and ArduinoJson
+        env:
+          ESP32: ${{ steps.pins.outputs.esp32 }}
+          INDEX: ${{ steps.pins.outputs.index }}
+          AJ: ${{ inputs.arduinojson_ref }}
+        run: |
+          set -euo pipefail
+          arduino-cli core update-index --additional-urls "$INDEX"
+          arduino-cli core install "esp32:esp32@$ESP32" --additional-urls "$INDEX"
+          arduino-cli lib install "ArduinoJson@${AJ#v}"
+      - name: Compile examples/*/*.ino
+        env:
+          FQBN: ${{ steps.pins.outputs.fqbn }}
+        run: |
+          set -euo pipefail
+          for ino in examples/*/*.ino; do
+            echo "::group::$ino"
+            arduino-cli compile --fqbn "$FQBN" --warnings default --library . "$ino"
+            echo "::endgroup::"
+          done
+
+  # The tools at tools_ref, plus ruff and clang-format at fixed versions so a newer release
+  # never turns a formatted tree red. XEWE_CLANG_FORMAT picks the pip one over the runner's.
+  format:
+    name: xewe format --check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: xewe format --check
+        env:
+          REF: ${{ inputs.tools_ref }}
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install -q "git+https://github.com/xewe-labs/xewe-os-tools@$REF" "ruff==0.17.0" "clang-format==23.1.3"
+          XEWE_CLANG_FORMAT="$RUNNER_TEMP/venv/bin/clang-format" "$RUNNER_TEMP/venv/bin/xewe" --project . format --check
+
+  brand-lint:
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
@@ -61,4 +140,3 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/venv"
           "$RUNNER_TEMP/venv/bin/pip" install -q "git+https://github.com/xewe-labs/xewe-os-tools@$REF"
           "$RUNNER_TEMP/venv/bin/python" -m xewe brand-lint .
-

@@ -9,7 +9,7 @@ same flow. Runners are `ubuntu-latest`; nothing needs a secret beyond the automa
 |---|---|---|
 | `xewe-build.yml` | `xewe-os`, every project (`ci.yml`) | `./setup.sh` → `xewe build` per chip (default c3,c6,s3) → `xewe test --no-board` → upload `.bin` + `manifest.json` + `meta.json` + `build_config.toml`. A separate **lint** job (`xewe format --check`, `xewe brand-lint`) is non-blocking unless the caller passes `strict_lint: true` |
 | `xewe-release.yml` | the same callers, on a `v*` tag | `./setup.sh` → `xewe release` → GitHub Release (assets) → commit to the `releases` branch |
-| `xewe-core-tests.yml` | `xewe-os-core` (`tests.yml`) | `tests/unit/run.sh` (ArduinoJson at the `arduinojson_ref` input, fetched by `git clone`), `arduino-lint`; `xewe brand-lint` non-blocking. The examples are not compiled |
+| `xewe-core-tests.yml` | `xewe-os-core` (`tests.yml`) | `tests/unit/run.sh` (ArduinoJson at the `arduinojson_ref` input, fetched by `git clone`), `arduino-lint`, the examples compiled per chip (see below), `xewe format --check` and `xewe brand-lint`; every job blocks. Releases are core's own `scripts/release.sh` |
 | `xewe-modules-tests.yml` | `xewe-os-modules` (`tests.yml`) | template clone as a harness, `./setup.sh --modules all` with the modules source = the commit under test, `tools/validate.py`, `xewe test --unit-only`, c3 compile; `xewe brand-lint` non-blocking |
 | `xewe-board.yml` | nobody yet | board tests on a self-hosted runner with the board attached: setup, flash, first boot, provision, two test passes with a liveness probe and an optional power-cycle command (see below) |
 | `xewe-pages.yml` | nobody yet | optional web flasher on GitHub Pages, rebuilt from the GitHub Releases (ESP Web Tools manifests, version picker); an alternative to the `releases` branch |
@@ -17,6 +17,18 @@ same flow. Runners are `ubuntu-latest`; nothing needs a secret beyond the automa
 
 Callers reference `@main`, matching the `latest` refs the manifests use until v3. Tag-pin them
 (`@v0.2.0`) when the manifests freeze their refs.
+
+## Core example builds
+
+`xewe-core-tests.yml` job `examples` runs once per chip (c3, c6, s3). It reads `ARDUINO_CLI_VERSION`,
+`ESP32_CORE_VERSION` and `ESP32_INDEX_URL` from `src/xewe/env/pins.py`, and the chip's FQBN from
+`src/xewe/build/chips.py`, of the tools at the `tools_ref` input. It installs arduino-cli
+(`arduino/setup-arduino-cli`), the esp32 core (cached in `~/.arduino15` per core version) and
+ArduinoJson from the Library Manager at the `arduinojson_ref` version, then runs
+`arduino-cli compile --fqbn <fqbn> --warnings default --library . <ino>` for every
+`examples/*/*.ino`. The `format` job installs the tools at `tools_ref` with ruff and clang-format at
+pinned versions (`XEWE_CLANG_FORMAT` points at that clang-format, so the runner's own one is not
+used), so a new upstream release does not fail a tree that was formatted with the pinned versions.
 
 ## The shared toolchain cache
 
