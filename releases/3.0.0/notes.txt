@@ -43,7 +43,8 @@ NEW
 - brand-lint scans only the files git does not ignore when run in a git work tree, so caches
   (.pytest_cache, .mypy_cache, .ruff_cache, *.egg-info) no longer cause false hits.
 - Provisioning: answers wrapped and unknown prompts with their defaults, rescans once for an
-  unlisted network, and the tools' own rescan log line masks the SSID (`H***`).
+  unlisted network, and the tools' own lines (summary, rescan log, typed custom SSID) mask the
+  SSID (`H***`).
 - Serial: interactive console with stdin flush, `--timestamps`, writes over 900 bytes split,
   `--settle`, renamed-port detection, open without reset, boot-banner wait.
 - Builds: the project's Config.h reaches every translation unit, an `XEWE_CHIP_<C3|C6|S3>` define,

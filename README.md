@@ -146,7 +146,8 @@ value counts as unset. Variables already in the environment win over the file, f
 `xewe provision`, `xewe test` (and the pytest plugin, so module tests see the pins without
 exports), `xewe serial`, `xewe flash`, `xewe run` and `xewe boards` read it. The tools log only
 `loaded N keys from <path>`, never a value; the Wi-Fi password is masked as `********` in all
-output.
+output, and the tools' own lines show the SSID as its first character and `***` (the board's own
+lines are left as it printed them).
 
 ## Without a board
 

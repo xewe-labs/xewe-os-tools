@@ -313,7 +313,8 @@ class Driver:
                 self._handle("module", wrapped)
                 assert self.pending is not None
             self.last, self.pending = self.pending, None
-            self.console.send(self.last[1])
+            shown = mask(self.last[1]) if self.last[0] == "custom" else None
+            self.console.send(self.last[1], shown=shown)
             self.mark = len(self.console.lines)
         elif kind == "name":
             if self.seen["name"] > 2:
@@ -480,7 +481,7 @@ def _summary(s: Settings, out: Outcome, seconds: float) -> str:
         parts.append(f"declined {', '.join(out.declined)}")
     if out.ssid:
         retried = f", joined after {out.join_failures} failed join(s)" if out.join_failures else ""
-        parts.append(f'wifi "{out.ssid}" ({out.ssid_how}{retried})')
+        parts.append(f'wifi "{mask(out.ssid)}" ({out.ssid_how}{retried})')
     else:
         parts.append("wifi not configured")
     parts.append(f"timezone {out.timezone}")

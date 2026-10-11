@@ -26,22 +26,23 @@ class Pause:
         self.seconds = seconds
 
 
-# The S3's Wi-Fi prompt as printed on a real board, verbatim.
-REAL_NETWORKS = (
-    "!user",
-    "fuck villa torino",
-    "wifihigh5",
-    "VillaTorinoSucks",
-    "XeWe Laptop Chiller",
-    "Emerald Sky",
-    "XFSETUP-7148",
-    "NoWiFi",
-    "The Return of Pings-2.4",
-    "NETGEAR",
-    "smitty werbenyagermanjensen",
-    "notyomamaswifi",
-    "Benidorm",
-    "ATTuhhDXCb",
+# The shape of the S3's Wi-Fi prompt as a real board prints it: 14 entries with spaces, digits,
+# punctuation and a leading "!". The names are made up.
+SCAN_NETWORKS = (
+    "!demo",
+    "Example Net One A",
+    "fakewifi5",
+    "ExampleNetworkAB",
+    "XeWe Test Net",
+    "Neighbour 5G",
+    "EXSETUP-0000",
+    "NoNet1",
+    "Sample Network Two-2.4",
+    "ROUTER0",
+    "example long network name x",
+    "printer-direct",
+    "Guest-AP",
+    "EXAMPLE123",
 )
 INVALID = "! Invalid number. Please enter a base-10 integer."
 SEP = "+------------------------------------------------+"
@@ -223,7 +224,7 @@ def test_happy_path_wifi_and_time(tmp_path: Path, capsys: pytest.CaptureFixture[
     assert re.search(r"provisioned in \d+ s: ", out)
     assert (
         'name "Kitchen Lights"; modules buttons, pins, wifi, time; '
-        'wifi "HomeNet" (network 1 of 2); timezone y, board detected GMT+02:00'
+        'wifi "H***" (network 1 of 2); timezone y, board detected GMT+02:00'
     ) in out
     assert PASSWORD not in out and PASSWORD not in log.read_text()
     assert out.count("********") == 2  # the typed line and the firmware's echo
@@ -234,7 +235,9 @@ def test_ssid_not_in_scan_uses_custom(capsys: pytest.CaptureFixture[str]) -> Non
     fake = FakeBoard(full(networks=("Neighbour", "Other"), custom=True))
     assert run(fake, settings()) == 0
     assert fake.answers[5:9] == ["-2", "-3", "HomeNet", PASSWORD]
-    assert 'wifi "HomeNet" (custom SSID, not in the scan)' in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert 'wifi "H***" (custom SSID, not in the scan)' in out
+    assert "> H***" in out and "> HomeNet" not in out  # the typed SSID; the board's echo stays
 
 
 def test_timezone_configured_answers_n_and_offset(capsys: pytest.CaptureFixture[str]) -> None:
@@ -404,13 +407,13 @@ def test_failed_join_is_retried_once(capsys: pytest.CaptureFixture[str]) -> None
     assert run(fake, settings()) == 0
     assert fake.answers == ["Kitchen Lights", "y", "y", "y", "y", "1", PASSWORD, "0", PASSWORD, "y", "y"]
     out = capsys.readouterr().out
-    assert 'wifi "HomeNet" (network 0 of 2, joined after 1 failed join(s))' in out
+    assert 'wifi "H***" (network 0 of 2, joined after 1 failed join(s))' in out
     assert PASSWORD not in out
 
 
 def test_summary_name_kept_from_board(capsys: pytest.CaptureFixture[str]) -> None:
-    transcript = [*resumed(), *join_block("XeWe Laptop Chiller"), *module_block("Time"), *time_block(), *finish_block()]
-    assert run(FakeBoard(transcript), settings(ssid="XeWe Laptop Chiller")) == 0
+    transcript = [*resumed(), *join_block("XeWe Test Net"), *module_block("Time"), *time_block(), *finish_block()]
+    assert run(FakeBoard(transcript), settings(ssid="XeWe Test Net")) == 0
     out = capsys.readouterr().out
     assert "name: kept from board; modules time;" in out and 'name "Kitchen Lights"' not in out
 
@@ -543,7 +546,7 @@ def test_answered_module_question_is_not_reused_for_a_later_yn_prompt() -> None:
     assert fake.answers == ["Kitchen Lights", "y", "y", "n"]
 
 
-# --------------------------------------------------------------------------- the real S3 Wi-Fi prompt
+# --------------------------------------------------------------------------- the S3 Wi-Fi prompt
 
 
 def test_real_network_list_selects_by_number(capsys: pytest.CaptureFixture[str]) -> None:
@@ -552,18 +555,19 @@ def test_real_network_list_selects_by_number(capsys: pytest.CaptureFixture[str])
         *module_block("Buttons"),
         *module_block("Pins"),
         *module_block("Wifi"),
-        *wifi_block(REAL_NETWORKS, ssid="XeWe Laptop Chiller"),
+        *wifi_block(SCAN_NETWORKS, ssid="XeWe Test Net"),
         *module_block("Time"),
         *time_block(),
         *finish_block(),
     ]
     fake = FakeBoard(transcript)
-    assert run(fake, settings(ssid="XeWe Laptop Chiller")) == 0
+    assert run(fake, settings(ssid="XeWe Test Net")) == 0
     assert fake.answers == ["Kitchen Lights", "y", "y", "y", "y", "4", PASSWORD, "y", "y"]
-    assert 'wifi "XeWe Laptop Chiller" (network 4 of 14)' in capsys.readouterr().out
+    summary = capsys.readouterr().out.splitlines()[-1]
+    assert 'wifi "X***" (network 4 of 14)' in summary and "XeWe Test Net" not in summary
 
 
-def resumed(networks: tuple[str, ...] = REAL_NETWORKS) -> list[Any]:
+def resumed(networks: tuple[str, ...] = SCAN_NETWORKS) -> list[Any]:
     """A board whose earlier provisioning stopped at Wi-Fi: after the reset it skips the name and
     module prompts (stored) and goes straight to the network list (the stall seen on the S3)."""
     return [
@@ -579,16 +583,16 @@ def resumed(networks: tuple[str, ...] = REAL_NETWORKS) -> list[Any]:
 
 
 def test_resumed_board_at_network_list_is_answered_without_nudge(clock: FakeClock) -> None:
-    transcript = [*resumed(), *join_block("XeWe Laptop Chiller"), *module_block("Time"), *time_block(), *finish_block()]
+    transcript = [*resumed(), *join_block("XeWe Test Net"), *module_block("Time"), *time_block(), *finish_block()]
     fake = FakeBoard(transcript, clock)
-    assert run(fake, settings(ssid="XeWe Laptop Chiller")) == 0
+    assert run(fake, settings(ssid="XeWe Test Net")) == 0
     assert fake.answers == ["4", PASSWORD, "y", "y"]  # no empty nudge line
 
 
 def test_unlisted_ssid_rescans_once_then_custom(capsys: pytest.CaptureFixture[str]) -> None:
     transcript = [
         *resumed(),
-        *scan_block(REAL_NETWORKS[:5]),
+        *scan_block(SCAN_NETWORKS[:5]),
         "Enter custom SSID: ",
         "> ",
         IN,
@@ -600,13 +604,13 @@ def test_unlisted_ssid_rescans_once_then_custom(capsys: pytest.CaptureFixture[st
     fake = FakeBoard(transcript)
     assert run(fake, settings(ssid="Hidden Net")) == 0
     assert fake.answers[:4] == ["-2", "-3", "Hidden Net", PASSWORD]
-    assert 'wifi "Hidden Net" (custom SSID, not in the scan)' in capsys.readouterr().out
+    assert 'wifi "H***" (custom SSID, not in the scan)' in capsys.readouterr().out
 
 
 def test_rescan_log_masks_the_ssid(caplog: pytest.LogCaptureFixture) -> None:
     transcript = [
         *resumed(),
-        *scan_block(REAL_NETWORKS[:5]),
+        *scan_block(SCAN_NETWORKS[:5]),
         "Enter custom SSID: ",
         "> ",
         IN,
@@ -624,15 +628,15 @@ def test_rescan_log_masks_the_ssid(caplog: pytest.LogCaptureFixture) -> None:
 
 def test_ssid_found_after_rescan() -> None:
     transcript = [
-        *resumed(REAL_NETWORKS[:3]),
-        *scan_block(REAL_NETWORKS),
-        *join_block("XeWe Laptop Chiller"),
+        *resumed(SCAN_NETWORKS[:3]),
+        *scan_block(SCAN_NETWORKS),
+        *join_block("XeWe Test Net"),
         *module_block("Time"),
         *time_block(),
         *finish_block(),
     ]
     fake = FakeBoard(transcript)
-    assert run(fake, settings(ssid="XeWe Laptop Chiller")) == 0
+    assert run(fake, settings(ssid="XeWe Test Net")) == 0
     assert fake.answers[:3] == ["-2", "4", PASSWORD]
 
 
@@ -642,13 +646,13 @@ def test_invalid_number_answers_again() -> None:
         INVALID,
         "> ",
         IN,
-        *join_block("XeWe Laptop Chiller"),
+        *join_block("XeWe Test Net"),
         *module_block("Time"),
         *time_block(),
         *finish_block(),
     ]
     fake = FakeBoard(transcript)
-    assert run(fake, settings(ssid="XeWe Laptop Chiller")) == 0
+    assert run(fake, settings(ssid="XeWe Test Net")) == 0
     assert fake.answers[:3] == ["4", "4", PASSWORD]
 
 
@@ -661,14 +665,14 @@ def test_nudge_into_unseen_network_list_rescans(monkeypatch: pytest.MonkeyPatch)
         INVALID,
         "> ",
         IN,
-        *scan_block(REAL_NETWORKS),
-        *join_block("XeWe Laptop Chiller"),
+        *scan_block(SCAN_NETWORKS),
+        *join_block("XeWe Test Net"),
         *module_block("Time"),
         *time_block(),
         *finish_block(),
     ]
     fake = FakeBoard(transcript)
-    assert run(fake, settings(ssid="XeWe Laptop Chiller"), reset=False) == 0
+    assert run(fake, settings(ssid="XeWe Test Net"), reset=False) == 0
     assert fake.answers[:4] == ["", "-2", "4", PASSWORD]
 
 
@@ -681,14 +685,14 @@ def test_nudge_never_fires_after_the_first_prompt(clock: FakeClock) -> None:
         *module_block("Wifi"),
         "Stored WiFi credentials not found",
         Pause(provision.NUDGE_SECONDS + 5),
-        *scan_block(REAL_NETWORKS),
-        *join_block("XeWe Laptop Chiller"),
+        *scan_block(SCAN_NETWORKS),
+        *join_block("XeWe Test Net"),
         *module_block("Time"),
         *time_block(),
         *finish_block(),
     ]
     fake = FakeBoard(transcript, clock)
-    assert run(fake, settings(ssid="XeWe Laptop Chiller")) == 0
+    assert run(fake, settings(ssid="XeWe Test Net")) == 0
     assert "" not in fake.answers
     assert fake.answers == ["Kitchen Lights", "y", "y", "y", "y", "4", PASSWORD, "y", "y"]
 
@@ -698,13 +702,13 @@ def test_resumed_board_quiet_before_first_prompt_gets_no_nudge_after_it(clock: F
     transcript = [
         *resumed(),
         Pause(provision.NUDGE_SECONDS + 5),
-        *join_block("XeWe Laptop Chiller"),
+        *join_block("XeWe Test Net"),
         *module_block("Time"),
         *time_block(),
         *finish_block(),
     ]
     fake = FakeBoard(transcript, clock)
-    assert run(fake, settings(ssid="XeWe Laptop Chiller")) == 0
+    assert run(fake, settings(ssid="XeWe Test Net")) == 0
     assert fake.answers == ["4", PASSWORD, "y", "y"]
 
 
@@ -777,7 +781,7 @@ def test_cli_settings_from_project_dotenv_without_flags(
 ) -> None:
     """Credentials only in <project>/.env: `xewe provision` with no flags (board auto-selected)."""
     (project.root / ".env").write_text(
-        f"XEWE_DEVICE_NAME='Kitchen Lights'\nXEWE_WIFI_SSID=\"XeWe Laptop Chiller\"\n"
+        f"XEWE_DEVICE_NAME='Kitchen Lights'\nXEWE_WIFI_SSID=\"XeWe Test Net\"\n"
         f"export XEWE_WIFI_PASSWORD={PASSWORD}\nXEWE_PROVISION_MODULES=all\n"
     )
     fake = FakeBoard(
@@ -786,7 +790,7 @@ def test_cli_settings_from_project_dotenv_without_flags(
             *module_block("Buttons"),
             *module_block("Pins"),
             *module_block("Wifi"),
-            *wifi_block(REAL_NETWORKS, ssid="XeWe Laptop Chiller"),
+            *wifi_block(SCAN_NETWORKS, ssid="XeWe Test Net"),
             *module_block("Time"),
             *time_block(),
             *finish_block(),

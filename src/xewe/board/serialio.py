@@ -275,16 +275,17 @@ class Console:
             new.append(line)
         return new
 
-    def send(self, cmd: str, show: bool = True) -> None:
+    def send(self, cmd: str, show: bool = True, shown: str | None = None) -> None:
         """Write ``cmd`` + newline; later ``expect`` calls only look at lines after this point.
 
         The ``> cmd`` line goes to the log always and to ``out`` only with ``show`` (the interactive
         console passes False: the terminal shows the typed text and the firmware echoes it).
+        With ``shown`` that text is logged and printed instead of ``cmd`` (e.g. a masked SSID).
         Writes longer than ``SEND_CHUNK_BYTES`` are split (see ``write``).
         """
         self.write((cmd + "\n").encode("utf-8"))
         self._cursor = len(self.lines)
-        self._emit(f"> {self.mask(cmd)}", show)
+        self._emit(f"> {self.mask(cmd if shown is None else shown)}", show)
 
     def write(self, data: bytes, chunk: int = SEND_CHUNK_BYTES, pause: float = SEND_CHUNK_PAUSE) -> None:
         """Write raw ``data`` (nothing logged), in pieces of at most ``chunk`` bytes with ``pause``
