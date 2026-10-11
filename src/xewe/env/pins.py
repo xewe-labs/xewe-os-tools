@@ -14,8 +14,8 @@ ARDUINO_CLI_CHECKSUMS_URL = (
 DEFAULT_CORE_REPO = "https://github.com/xewe-labs/xewe-os-core"
 DEFAULT_MODULES_REPO = "https://github.com/xewe-labs/xewe-os-modules"
 DEFAULT_TOOLS_REPO = "https://github.com/xewe-labs/xewe-os-tools"
-DEFAULT_CORE_REF = "1.0.0"
-DEFAULT_MODULES_REF = "v1.0.0"
-DEFAULT_TOOLS_REF = "v0.1.1"
+DEFAULT_CORE_REF = "3.0.0"
+DEFAULT_MODULES_REF = "3.0.0"
+DEFAULT_TOOLS_REF = "3.0.0"
 
 MIN_FREE_DISK_BYTES = 6 * 1024**3

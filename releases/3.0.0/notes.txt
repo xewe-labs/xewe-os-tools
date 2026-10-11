@@ -1,0 +1,78 @@
+xewe-os-tools 3.0.0
+
+xewe-os-tools is the Python package behind every XeWe OS firmware project: one command, `xewe`,
+for setup, build, flash, serial, provision, test, boards, modules, manifest, format and release,
+plus `brand-lint` for any repo, and the reusable GitHub workflows the other repos call. Linux and
+macOS, x86_64 and arm64; no sudo. It is part of the XeWe OS v3 release set (core 3.0.0, modules
+and template 3.0.0).
+
+3.0.0 follows v0.1.1. From this release on, every repo of the ecosystem tags X.Y.Z with no `v`
+(v0.1.0 and v0.1.1 keep their names).
+
+BREAKING
+
+- Projects only. Library-mode `xewe setup` (setting up the core repo on its own) and `xewe check`
+  are removed; `xewe setup` handles projects (a directory with xewe.toml). `xewe format` still
+  runs in a library, and now in any directory.
+- Layout. Everything generated lives in the project's `build/`: `build/builds/<chip>/out/`,
+  `build/config/` (build_config.toml, boards.toml), `build/modules/` (the generated XeWeModules
+  library, its tests and modules.lock), `build/libraries/`, `build/tools/` (the tools checkout and
+  .venv). Old `src/modules/`, `build/modules-lib/` and `build/config/modules.lock` are removed by
+  `modules generate`.
+- The shared toolchain. arduino-cli, the esp32 core, esptool and the modules checkouts are
+  installed once per machine into `~/.xewe-os/build-tools/` (`XEWE_HOME` moves `~/.xewe-os`), not
+  per project.
+- xewe.toml is the manifest (formerly xewe.lock), edited by hand or with `xewe manifest update`.
+  `ref = "latest"` tracks a repo's default branch; a tag freezes it.
+- No dotenv skeleton. `xewe setup` no longer writes a dotenv file into the project (it shadowed
+  the tools checkout's file); it prints where to put one and which keys.
+- Default refs (src/xewe/env/pins.py) are core, modules and tools "3.0.0"; un-prefixed tags.
+- `xewe run` erases NVS by default (`--keep-nvs` keeps it); `xewe flash` keeps it.
+
+NEW
+
+- `xewe test --no-flash`: run the board tests against the firmware already on the board (no
+  automatic check that it matches the build).
+- A board that leaves USB during a test session (for example at the reset after a flash) ends the
+  session with "board on <port> disappeared from USB (...); power-cycle it" instead of a raw
+  TypeError; a board that stays silent after a restart ends it after one reopen and probe.
+- `xewe format` (clang-format with the shipped no-alignment style, ruff for Python) and
+  `xewe brand-lint`; both now block in core's, the tools' and (with `strict_lint: true`) the
+  modules' CI. `xewe format` reads ruff 0.17's `--check` output (older tools reported nothing to
+  change with it) and formats Python inside nested `build` packages.
+- brand-lint scans only the files git does not ignore when run in a git work tree, so caches
+  (.pytest_cache, .mypy_cache, .ruff_cache, *.egg-info) no longer cause false hits.
+- Provisioning: answers wrapped and unknown prompts with their defaults, rescans once for an
+  unlisted network, and the tools' own rescan log line masks the SSID (`H***`).
+- Serial: interactive console with stdin flush, `--timestamps`, writes over 900 bytes split,
+  `--settle`, renamed-port detection, open without reset, boot-banner wait.
+- Builds: the project's Config.h reaches every translation unit, an `XEWE_CHIP_<C3|C6|S3>` define,
+  one config block per module with knobs, generated modules library carrying the resolved version,
+  `meta.json` recording the resolved core, modules, tools and library commits.
+- Reusable workflows: xewe-build, xewe-release, xewe-core-tests (host tests, arduino-lint,
+  examples for c3/c6/s3, format, brand-lint), xewe-modules-tests, xewe-board (self-hosted, not yet
+  used), xewe-pages (not yet used). Every action is on its newest Node 24 major, except
+  arduino/setup-arduino-cli v2 (no Node 24 release exists).
+- `--no-board` / XEWE_NO_BOARD=1 for compile-only machines; exit 4 when a board is required.
+- Release of the tools themselves: scripts/release.sh (--prepare, then tag and GitHub Release).
+
+INSTALL
+
+- Projects: set `[tools] ref = "3.0.0"` in xewe.toml (or `xewe manifest update tools`), then
+  `./setup.sh`. Python >= 3.11.
+- Workflow callers: `uses: xewe-labs/xewe-os-tools/.github/workflows/<workflow>.yml@3.0.0`.
+- Development: `python3 -m venv .venv && .venv/bin/python -m pip install -e '.[dev]'`.
+
+NOT VERIFIED
+
+- `xewe test --no-flash` and the "disappeared from USB" message have unit tests but have not been
+  exercised on a board.
+- The new CI jobs (tools and modules format, blocking brand-lint) and the action major bumps were
+  checked with actionlint only; their first GitHub run is the CI on the prepare commit.
+- scripts/release.sh was exercised with --dry-run and on a scratch clone with a stub gh; this is
+  its first real run.
+
+TESTING
+
+What was tested on which commits, and what was not: releases/3.0.0/testcard.md (attached to this
+release).
