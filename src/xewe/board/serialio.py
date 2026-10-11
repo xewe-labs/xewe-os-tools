@@ -143,6 +143,11 @@ class Console:
             self.log_file.close()
             self.log_file = None
 
+    @property
+    def connected(self) -> bool:
+        """False when the port is not open, e.g. a reopen after a drop failed (the board left USB)."""
+        return self._ser is not None and bool(getattr(self._ser, "is_open", False))
+
     def __enter__(self) -> Console:
         return self.open() if self._ser is None else self
 
@@ -244,7 +249,7 @@ class Console:
         """Read what is available (waits at most the port timeout) and return completed lines."""
         try:
             data = self._ser.read(max(1, getattr(self._ser, "in_waiting", 0) or 0))
-        except (serial.SerialException, OSError):
+        except (serial.SerialException, OSError, TypeError):  # TypeError: in_waiting on a closed handle (fd None)
             self._reconnect()
             return []
         if not data:

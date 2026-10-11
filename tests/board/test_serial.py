@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import FakeClock, FakeSerial, select_board
+from conftest import FakeClock, FakeSerial, UnpluggedSerial, select_board
 from xewe.board import serialio
 from xewe.board.boards import Board
 from xewe.board.serialio import Console, ExpectTimeout, wait_for_port
@@ -87,6 +87,19 @@ def test_reconnect() -> None:
     console.listen(duration=0.2)
     assert "-- port reconnected --" in out.getvalue()
     assert console.lines == ["after"]
+
+
+def test_closed_handle_after_unplug_is_a_clear_error(no_sleep: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """TV4 D2 / TV5 D3: the board left USB and the handle was closed under the read (raw TypeError before)."""
+    monkeypatch.setattr(serialio, "RECONNECT_SECONDS", 0.1)
+    monkeypatch.setattr(UnpluggedSerial, "gone", False)
+    console = Console("/dev/x", factory=UnpluggedSerial).open()
+    assert console.connected
+    UnpluggedSerial.gone = True
+    console._ser.close()
+    with pytest.raises(XeWeError, match="/dev/x disappeared and did not come back"):
+        console.poll()
+    assert not console.connected
 
 
 def test_reset_pulses_rts(no_sleep: None) -> None:

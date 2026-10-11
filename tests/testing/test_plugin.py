@@ -3,8 +3,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import serial as pyserial
 
-from conftest import DROP, PORT, FakeSerial, write_tests
+from conftest import DROP, PORT, FakeSerial, UnpluggedSerial, write_tests
 from xewe.board import boards, serialio
 from xewe.board.boards import Board
 from xewe.build import flash
@@ -220,6 +221,42 @@ def test_boot_silence_reopens_then_ends_session(pytester: pytest.Pytester, proje
     res.stdout.fnmatch_lines(["*board on /dev/ttyFAKE is silent after a restart*'$system uid'*power-cycle it*"])
     assert len(FakeSerial.instances) == 2  # the port was closed and opened again once
     assert bytes(FakeSerial.instances[1].written).count(b"$system uid\n") == 3
+
+
+def test_board_gone_from_usb_at_boot_ends_session(pytester: pytest.Pytester, project: Paths, board_attached,
+                                                  monkeypatch: pytest.MonkeyPatch) -> None:
+    """TV4 D2 / TV5 D3: the post-flash reset unplugs the board; the boot wait reads a closed handle."""
+    monkeypatch.setattr(plugin, "BOOT_TIMEOUT_SECONDS", 0.3)
+    monkeypatch.setattr(serialio, "RECONNECT_SECONDS", 0.1)
+    monkeypatch.setattr(UnpluggedSerial, "gone", False)
+
+    class Unplugs(UnpluggedSerial):
+        def __setattr__(self, name: str, value: Any) -> None:
+            super().__setattr__(name, value)
+            if name == "rts" and value and self.__dict__.get("is_open"):  # the reset pulse: the device leaves the bus
+                UnpluggedSerial.gone = True
+                raise pyserial.SerialException("write failed: [Errno 19] No such device")
+
+    write_tests(project.root, SESSION_TESTS, unit=None)
+    board_attached(Unplugs)
+    res = _run(pytester, project)
+    res.assert_outcomes()
+    assert res.ret == pytest.ExitCode.TESTS_FAILED
+    res.stdout.fnmatch_lines(["*board on /dev/ttyFAKE disappeared from USB*power-cycle it (unplug and replug)*"])
+    assert "TypeError" not in res.stdout.str() and "silent after a restart" not in res.stdout.str()
+
+
+def test_no_flash_skips_the_image_write(project: Paths, board_attached, monkeypatch: pytest.MonkeyPatch) -> None:
+    def must_not_flash(*a: Any, **k: Any) -> None:
+        raise AssertionError("flashed despite --no-flash")
+
+    (project.root / "tests" / "board").mkdir(parents=True)
+    (project.root / "tests" / "board" / "test_no_flash.py").write_text(SESSION_TESTS)  # a name no other test imported
+    board_attached(lambda: FakeSerial(chunks=[BOOTED], script=pinger()))
+    monkeypatch.setattr(flash, "write_image", must_not_flash)
+    only = ["--", "-k", "test_one or test_two"]  # not the project's module tests
+    assert main(["test", "--no-flash", *only]) == 0
+    assert main(["test", *only]) == 1  # without the flag the image is written
 
 
 def test_boot_silence_but_board_answers_after_reopen(pytester: pytest.Pytester, project: Paths, board_attached,

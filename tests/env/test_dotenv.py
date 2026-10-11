@@ -124,27 +124,10 @@ def test_load_settings_logs_count_never_values(layout: tuple[Path, Path, Path],
     assert SECRET not in caplog.text and "typo" not in caplog.text
 
 
-def test_skeleton_written_when_absent(tmp_path: Path) -> None:
-    assert dotenv.write_skeleton(tmp_path)
-    path = tmp_path / dotenv.FILENAME
-    text = path.read_text()
-    assert path.stat().st_mode & 0o777 == 0o600
-    assert parse(text) == {key: "" for key in dotenv.KEYS}
-    lines = text.splitlines()
-    for key, help_ in dotenv.KEYS.items():
-        i = lines.index(f"{key}=")
-        assert lines[i - 1] == f"# {help_}" and "first provision" in help_
-
-
-def test_skeleton_never_overwrites(tmp_path: Path) -> None:
-    path = tmp_path / dotenv.FILENAME
-    path.write_text("XEWE_PORT=/dev/ttyX\n")
-    assert not dotenv.write_skeleton(tmp_path)
-    assert path.read_text() == "XEWE_PORT=/dev/ttyX\n"
-
-
-def test_skeleton_loads_as_no_settings(tmp_path: Path) -> None:
-    dotenv.write_skeleton(tmp_path)
-    env: dict[str, str] = {}
-    load_settings(tmp_path, None, env)
-    assert env == {}
+def test_hint_names_both_paths_and_provisioning_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(dotenv, "package_checkout", lambda module_file=None: tmp_path / "tools")
+    line = dotenv.hint(tmp_path / "proj")
+    assert "\n" not in line
+    assert str(tmp_path / "proj" / dotenv.FILENAME) in line and str(tmp_path / "tools" / dotenv.FILENAME) in line
+    assert "XEWE_WIFI_SSID" in line and "XEWE_WIFI_PASSWORD" in line
+    assert not hasattr(dotenv, "write_skeleton")

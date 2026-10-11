@@ -17,7 +17,7 @@ projects copy it from there. It creates `build/tools/.venv`, installs this packa
 `$XEWE_TOOLS_SOURCE` (a local checkout) or from the `[tools]` ref in `xewe.toml` cloned into
 `build/tools` (a tag, a branch that is followed on every run, `latest`, or a commit SHA), then runs
 `xewe setup "$@"`. `xewe setup` writes the project's `./run.sh` on every run (it is not committed)
-and, when the project has none, a commented dotenv skeleton.
+and, when no dotenv file is found, prints where to put one and which keys (it never writes one).
 
 The core library (`xewe-os-core`) has its own `./setup.sh`; there `xewe setup` runs in library
 mode and the generated `./run.sh` runs `xewe check`.
@@ -45,13 +45,13 @@ Runtime dependencies: `pyserial`, `pytest`. esptool comes from the pinned esp32 
 
 | Command | What it does |
 |---|---|
-| `xewe setup [--modules LIST\|all\|none] [--latest] [--force] [--core-source DIR] [--modules-source DIR] [--arduino-data DIR]` | arduino-cli, esp32 core and the modules repo (`sources/xewe-os-modules/<ref>/`, or `XEWE_MODULES_SOURCE` as is) into the shared `~/.xewe-os/build-tools` (once per machine and ref; a branch ref is followed), core library and libraries into `build/`; generates `build/modules/` (the `XeWeModules` library, the selected modules' tests, `modules.lock`) and `src/Modules.h` (zero modules is valid: `--modules none`, or no selection); installs the selected modules' `depends_libraries` from the modules repo's `libraries.toml` unless `xewe.toml` `[libraries]` pins that name (the manifest wins); writes `run.sh` and, when missing, the dotenv skeleton. In a library (`library.properties`, no `xewe.toml`): the toolchain, the `depends=` libraries into `build/libraries/` and a `run.sh` that runs `xewe check`; only `--force` and `--arduino-data` apply |
+| `xewe setup [--modules LIST\|all\|none] [--latest] [--force] [--core-source DIR] [--modules-source DIR] [--arduino-data DIR]` | arduino-cli, esp32 core and the modules repo (`sources/xewe-os-modules/<ref>/`, or `XEWE_MODULES_SOURCE` as is) into the shared `~/.xewe-os/build-tools` (once per machine and ref; a branch ref is followed), core library and libraries into `build/`; generates `build/modules/` (the `XeWeModules` library, the selected modules' tests, `modules.lock`) and `src/Modules.h` (zero modules is valid: `--modules none`, or no selection); installs the selected modules' `depends_libraries` from the modules repo's `libraries.toml` unless `xewe.toml` `[libraries]` pins that name (the manifest wins); writes `run.sh`; prints where to put the dotenv file when none is found. In a library (`library.properties`, no `xewe.toml`): the toolchain, the `depends=` libraries into `build/libraries/` and a `run.sh` that runs `xewe check`; only `--force` and `--arduino-data` apply |
 | `xewe check [--unit] [--examples] [--chip C \| --all-chips]` | in a library: `tests/unit/run.sh` (with `ARDUINOJSON_SRC` from `build/libraries`), then every example under `examples/` compiled with the board options of `xewe build` (default chip c3); both parts unless one is named |
 | `xewe build [--chip C \| --all-chips] [--define K=V]... [--clean] [--dry-run]` | compile into `build/builds/<chip>/out/`; prints `Sketch uses N bytes (NN%)` (`--dry-run` prints the arduino-cli command only) |
 | `xewe flash [--chip C] [--port P] [--erase] [--no-build] [--settle S] [--require-board]` | build if stale (sources, version or `--define` values changed), then write the merged image; NVS (name, Wi-Fi, module choices) is kept unless `--erase`. After esptool's reset the port must stay present `--settle` seconds (default 0.5, `XEWE_SETTLE`); a board that comes back under another name (macOS `cu.usbmodem<N>`, same USB serial number) is followed |
 | `xewe serial [--port P] [--send CMD [--expect RE] [--boot-timeout S]] [--duration S] [--no-input] [--timestamps] [--log FILE]` | timestamped console; the tools open the port without resetting the board (`--reset` or flashing resets it); `--send` waits out a boot in progress (see below); without `--send` on a terminal it is interactive: keys typed during flash or boot are discarded, board lines are shown raw (`--timestamps` adds the time; `--log` always has it), each typed line is sent on Enter, Ctrl-C or Ctrl-D exits (`--no-input` or non-terminal stdin: listen only) |
 | `xewe provision [--port P] [--name NAME] [--modules all\|none\|LIST] [--timezone GMT+HH:MM] [--env FILE] [--no-reset] [--log FILE]` | answer the first-boot prompts of a flashed board (settings from the dotenv file) |
-| `xewe test [--chip C \| --all-chips] [--module SLUG]... [--unit-only] [--no-board] [-- PYTEST_ARGS]` | pytest over `tests/` (`tests/unit/`, `tests/board/`) and the selected modules' tests in `build/modules/tests/<slug>/` |
+| `xewe test [--chip C \| --all-chips] [--module SLUG]... [--unit-only] [--no-flash] [--no-board] [-- PYTEST_ARGS]` | pytest over `tests/` (`tests/unit/`, `tests/board/`) and the selected modules' tests in `build/modules/tests/<slug>/`; the image is written once per session unless `--no-flash` (test the firmware already on the board) |
 | `xewe run [--chip C] [--define K=V]... [--keep-nvs] [--no-serial] [--no-input] [--timestamps] [--settle S]` | build, erase the whole flash (NVS too, so every run is a true first boot; `--keep-nvs` skips the erase), flash, then the console (interactive on a terminal, like `xewe serial`). The `flashed` line ends with `(flash erased: first boot)` or `(nvs kept)` |
 | `xewe boards [--no-probe] [--json] [--set-port P [--set-chip C]] [--clear] [--settle S]` | list boards, set an override (the esptool probe resets each board; its port is waited for, `--settle`) |
 | `xewe modules list\|select\|validate\|generate` | the modules repo checkout, `build/modules/`, `src/Modules.h` and the module blocks in `Config.h` |
@@ -86,7 +86,10 @@ The board's USB console queues at most 1024 received bytes and has no flow contr
 split any write longer than 900 bytes into pieces 50 ms apart. During `xewe test`, a board test
 that fails on a timeout makes the next test reopen the port once and send `$system uid`; a board
 that still does not answer ends the session (`board on <port> is silent after a restart …;
-power-cycle it`, exit 1) instead of failing every later test.
+power-cycle it`, exit 1) instead of failing every later test; a port that cannot be reopened ends it
+with `board on <port> disappeared from USB …; power-cycle it`. A native-USB board can drop off USB
+at the reset after a flash; `xewe test --no-flash` skips the write when the board already runs the
+image (the board reports no build id, so the tools cannot check that for you).
 
 ## Provision
 
@@ -124,10 +127,12 @@ port is touched), 1 when the board stops answering as expected, 4 without a boar
 ## Credentials and settings: the dotenv file
 
 Credentials and per-bench settings live in a dotenv file named `.env` that is never committed
-(git-ignored here and in the template). `./setup.sh` writes a commented skeleton into the project
-when there is none: each key with an empty value under one comment line that says what it is and
-whether the first provision needs it. Run `./setup.sh` and fill in the dotenv file. Which file is
-used, first found wins:
+(git-ignored here and in the template). You create it; nothing writes it. `./setup.sh` prints one
+line naming where to put it and the provisioning keys when it finds none. Put it in the tools
+checkout to share it between projects, or in the project to override that one: a project file wins
+as a whole, so an empty or partial one hides the tools checkout's keys. The first provision needs
+`XEWE_WIFI_SSID` and `XEWE_WIFI_PASSWORD` when the wifi module is enabled. Which file is used, first
+found wins:
 
 1. `--env FILE` (`xewe provision --from FILE` is an alias), else the `XEWE_ENV` variable (must
    exist; exit 2 otherwise);

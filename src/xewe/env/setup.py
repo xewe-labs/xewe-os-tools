@@ -392,12 +392,13 @@ def run_setup(p: Paths, opts: SetupOptions, sleep: Callable[[float], None] = tim
         raise XeWeError("Config.h missing in the project root (the template provides it)", EXIT_FAIL)
     _legacy_version_hint(p)
     runscript.write(p, runscript.render(lock.chip))
-    dotenv.write_skeleton(p.root)
 
     # 12 build_config.toml
     cfg.installed["tools"] = tools_record(p, refs["tools"], tools_local, lock.tools.repo)
     cfg.setup_completed = dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     config.save(p, cfg)
+    if not os.environ.get(dotenv.ENV_VAR) and dotenv.find(p.root, environ={}) is None:
+        log.info(dotenv.hint(p.root))
     result(
         f"setup complete: arduino-cli {version}, esp32 {want}, core {fetch.describe(cfg.installed['core'])}, "
         f"modules {fetch.describe(mod)} ({', '.join(m.slug for m in order) or 'none'})"

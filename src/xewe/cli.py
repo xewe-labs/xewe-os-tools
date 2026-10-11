@@ -156,7 +156,7 @@ def parser() -> argparse.ArgumentParser:
                     "(XEWE_DEVICE_NAME, XEWE_WIFI_SSID, XEWE_WIFI_PASSWORD, XEWE_TIMEZONE, XEWE_PROVISION_MODULES), "
                     "then the dotenv file, then defaults. Dotenv file, first found wins: --env/--from FILE, else "
                     "XEWE_ENV, else .env in the project directory, else .env in the xewe-os-tools source checkout "
-                    "(./setup.sh writes a commented skeleton of it). With the file in place no flags are needed. The Wi-Fi password has no "
+                    "(you create it; the keys are in the tools README). With the file in place no flags are needed. The Wi-Fi password has no "
                     "flag and is masked in the output and log.")
     sp.add_argument("--port", help="serial port")
     sp.add_argument("--name", help="device name (default: [project] name in xewe.toml, else the folder name)")
@@ -174,6 +174,8 @@ def parser() -> argparse.ArgumentParser:
     sp.add_argument("--port", help="serial port")
     sp.add_argument("--module", action="append", default=[], metavar="SLUG", help="only this module's tests")
     sp.add_argument("--unit-only", action="store_true", help="only tests marked unit (developer machine, no board)")
+    sp.add_argument("--no-flash", action="store_true",
+                    help="do not write the image first; test whatever firmware is on the board (it is still reset)")
     _require_board(sp)
     _env_arg(sp)
 
@@ -415,7 +417,7 @@ def dispatch(args: argparse.Namespace, extra: list[str]) -> int:
                                         settings, args.timeout, not args.no_reset, args.log)
     if cmd == "test":
         return run_tests(p, lock, _chips(args, p, lock), args.port, args.module, args.unit_only,
-                         _require_board_flag(args), extra)
+                         _require_board_flag(args), extra, args.no_flash)
     if cmd == "run":
         return flash.run(p, lock, args.chip, args.port, build.parse_defines(args.define), args.no_serial,
                          no_input=args.no_input, timestamps=args.timestamps, erase=not args.keep_nvs,

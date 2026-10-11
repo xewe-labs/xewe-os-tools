@@ -644,15 +644,22 @@ def test_setup_generates_run_sh(fresh: Paths) -> None:
     assert run.read_text() == runscript.render("c3")
 
 
-def test_setup_writes_dotenv_skeleton_once(fresh: Paths) -> None:
-    path = fresh.root / dotenv.FILENAME
-    assert not path.exists()
+def test_setup_writes_no_dotenv_and_tools_checkout_file_is_used(
+        fresh: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    tools = tmp_path / "tools-checkout"
+    tools.mkdir()
+    monkeypatch.setattr(dotenv, "package_checkout", lambda module_file=None: tools)
+    caplog.set_level("INFO", logger="xewe")
     assert main(["setup", "--modules", "none"]) == 0
-    assert path.read_text() == dotenv.skeleton()
-    assert all(f"\n{key}=\n" in path.read_text() for key in dotenv.KEYS)
-    path.write_text("XEWE_CHIP=s3\n")
+    assert not (fresh.root / dotenv.FILENAME).exists()
+    assert dotenv.hint(fresh.root) in caplog.text and "XEWE_WIFI_SSID" in caplog.text
+    (tools / dotenv.FILENAME).write_text("XEWE_WIFI_SSID=Net\nXEWE_WIFI_PASSWORD=pw\n")
+    caplog.clear()
     assert main(["setup"]) == 0
-    assert path.read_text() == "XEWE_CHIP=s3\n"
+    assert not (fresh.root / dotenv.FILENAME).exists() and "no .env file" not in caplog.text
+    env: dict[str, str] = {}
+    assert dotenv.load_settings(fresh.root, None, env) == tools / dotenv.FILENAME
+    assert env == {"XEWE_WIFI_SSID": "Net", "XEWE_WIFI_PASSWORD": "pw"}
 
 
 # --- library mode: library.properties and no xewe.toml (xewe-os-core)

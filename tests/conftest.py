@@ -321,3 +321,21 @@ class FakeSerial:
 
     def flush(self) -> None:
         pass
+
+
+class UnpluggedSerial(FakeSerial):
+    """A ``FakeSerial`` whose board left USB once ``gone`` is set: like pyserial on posix, ``in_waiting``
+    on the closed handle raises ``TypeError`` (``ioctl`` on fd None) and every open fails (no device node)."""
+
+    gone = False
+
+    @property
+    def in_waiting(self) -> int:
+        if not self.is_open:
+            raise TypeError("argument must be an int, or have a fileno() method.")
+        return len(self.rx)
+
+    def open(self) -> None:
+        if UnpluggedSerial.gone:
+            raise pyserial.SerialException(2, f"could not open port {self.port}: No such file or directory")
+        super().open()

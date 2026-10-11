@@ -100,8 +100,8 @@ every subprocess command and its output; pytest's own flags go after `--`.
 - **Provisioning.** `xewe provision` answers the first-boot prompts from the dotenv file. Exit 2
   naming `XEWE_WIFI_*` means the user has not filled in the dotenv file: ask them, never invent
   values.
-- **Credentials.** `./setup.sh` writes a commented dotenv skeleton into the project; the user fills
-  it in. Agents never read, print, copy or edit the dotenv file (X-04 of the workspace); the tools
+- **Credentials.** The user creates the dotenv file (tools checkout or project; nothing writes it,
+  setup only says where to put it). Agents never read, print, copy or edit the dotenv file (X-04 of the workspace); the tools
   log only `loaded N keys from <path>` and mask the Wi-Fi password.
 - **The core library.** In `xewe-os-core` (`library.properties`, no `xewe.toml`) `./setup.sh`
   runs `xewe setup` in library mode and writes `run.sh`, which runs `xewe check` (host unit tests

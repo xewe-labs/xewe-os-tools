@@ -16,7 +16,7 @@ when the variable is not already set: the real environment
 wins over the file, flags win over both. Values are never logged; errors name the file, line and
 key only.
 
-``xewe setup`` writes a commented skeleton (``skeleton()``) into a project that has no file yet.
+Nothing writes the file: ``xewe setup`` prints where to put it when none is found (``hint()``).
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ KEYS: dict[str, str] = {
     "XEWE_PORT": "serial port of the board (default: detected); first provision: optional",
     "XEWE_CHIP": "chip of the board, c3, c6 or s3 (default: detected); first provision: optional",
 }
-"""The keys the skeleton lists, each with its comment line. Run ./setup.sh and fill in the dotenv file."""
+"""The keys the file usually holds, each with what it is for (doc/spec.md §14)."""
 OTHER_KEYS = (
     "XEWE_REQUIRE_BOARD", "XEWE_ARDUINO_CLI", "XEWE_ESPTOOL", "XEWE_ARDUINO_DATA", "XEWE_CACHE",
     "XEWE_CORE_SOURCE", "XEWE_MODULES_SOURCE", "XEWE_TOOLS_SOURCE",
@@ -159,25 +159,9 @@ def load_settings(project_root: Path | None, explicit: str | Path | None = None,
     return path
 
 
-SKELETON_HEADER = """\
-# Settings and credentials for xewe: provisioning, board tests, board selection.
-# Never commit this file. ./setup.sh writes it when it is missing and never overwrites it.
-# An empty value counts as unset; the real environment wins over this file.
-"""
-
-
-def skeleton() -> str:
-    """The commented dotenv file ``xewe setup`` writes: one comment line and one empty key per ``KEYS`` entry."""
-    return SKELETON_HEADER + "".join(f"\n# {help_}\n{key}=\n" for key, help_ in KEYS.items())
-
-
-def write_skeleton(project_root: Path) -> bool:
-    """Write ``skeleton()`` to the project's dotenv file (mode 600) unless one exists; True when written."""
-    path = project_root / FILENAME
-    if path.exists() or path.is_symlink():
-        return False
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(skeleton())
-    log.info("wrote %s: fill in the values the first provision needs", FILENAME)
-    return True
+def hint(project_root: Path) -> str:
+    """One line for setup when no file is found: where to put it and which keys."""
+    tools = tools_checkout(project_root)
+    where = f"{project_root / FILENAME}" + (f" or {tools / FILENAME}" if tools is not None else "")
+    return (f"no {FILENAME} file: for provisioning put XEWE_WIFI_SSID and XEWE_WIFI_PASSWORD "
+            f"(optional: XEWE_DEVICE_NAME, XEWE_TIMEZONE, XEWE_PORT, XEWE_CHIP) in {where}")

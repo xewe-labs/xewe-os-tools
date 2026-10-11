@@ -68,6 +68,7 @@ def run_tests(
     unit_only: bool = False,
     require_board: bool = False,
     extra: list[str] | None = None,
+    no_flash: bool = False,
 ) -> int:
     """One pytest session per chip; the worst exit code wins."""
     roots = test_roots(p, lock, only or [])
@@ -87,6 +88,8 @@ def run_tests(
             args += ["--xewe-port", port]
         if require_board:
             args.append("--xewe-require-board")
+        if no_flash:
+            args.append("--xewe-no-flash")
         if unit_only:
             args += ["-m", "unit"]
         args += extra or []

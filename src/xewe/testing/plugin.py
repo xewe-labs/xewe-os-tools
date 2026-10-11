@@ -46,6 +46,11 @@ SILENT_MESSAGE = (
     "power-cycle it (unplug and replug), then re-run the tests"
 )
 """``pytest.exit`` reason when ``revive`` fails: the rest of the session would only time out (TV1 F7)."""
+GONE_MESSAGE = (
+    "board on {port} disappeared from USB (the port did not come back, even after reopening it); "
+    "power-cycle it (unplug and replug), then re-run the tests"
+)
+"""``pytest.exit`` reason when ``revive`` fails because the port cannot be reopened (TV4 D2, TV5 D3)."""
 UNPROVISIONED_MESSAGE = (
     "board on {port} is unprovisioned (first-boot prompt 'Name your device'); "
     "provision it once with `xewe provision` (RUNBOOK section 3, first-boot provisioning), then re-run the tests"
@@ -80,6 +85,8 @@ class XeWeContext:
         except XeWeError:
             self.paths = None
         self.explicit = explicit is not None
+        self.no_flash: bool = bool(config.getoption("xewe_no_flash"))
+        """Skip the session's image write (``xewe test --no-flash``): the board keeps its firmware."""
         self._chip: str | None = config.getoption("xewe_chip")
         self._lock: Lock | None = None
         self.board_tests: set[str] = set()
@@ -131,6 +138,8 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     group.addoption("--xewe-no-board", action="store_true",
                     help="never look for or open a board (also XEWE_NO_BOARD=1); board tests are compiled, not run")
     group.addoption("--xewe-project", default=None, help="project root (default: nearest xewe.toml)")
+    group.addoption("--xewe-no-flash", action="store_true",
+                    help="do not write the image; test the firmware already on the board")
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -222,10 +231,11 @@ def revive(console: Console) -> bool:
 
 
 def require_alive(console: Console) -> None:
-    """``revive`` or end the session with ``pytest.exit`` (exit 1), so one silent board does not
-    turn every later test into a timeout."""
+    """``revive`` or end the session with ``pytest.exit`` (exit 1), so one silent or vanished board
+    does not turn every later test into a timeout."""
     if not revive(console):
-        pytest.exit(SILENT_MESSAGE.format(port=console.port, probe=serialio.PROBE_COMMAND),
+        message = SILENT_MESSAGE if console.connected else GONE_MESSAGE
+        pytest.exit(message.format(port=console.port, probe=serialio.PROBE_COMMAND),
                     returncode=pytest.ExitCode.TESTS_FAILED)
 
 
@@ -236,13 +246,14 @@ def wait_for_boot(console: Console, timeout: float = BOOT_TIMEOUT_SECONDS) -> No
     ``Initial Setup Complete`` and ``Rebooting`` and boots again: that is waited through, as is
     the native-USB port dropping and coming back during either reset.
     No banner in time (or the port still gone): the port is reopened once and the board probed
-    (``require_alive``); a board that answers is used, a silent one ends the session.
+    (``require_alive``); a board that answers is used, a silent or vanished one ends the session.
     """
     try:
         m = wait_for_banner(console, f"{BOOT_READY}|{BOOT_UNPROVISIONED}", timeout)
-    except (ExpectTimeout, XeWeError) as exc:  # XeWeError: port still gone at the deadline
+    # XeWeError: port still gone at the deadline; the others: a handle closed under the read
+    except (ExpectTimeout, XeWeError, SerialException, OSError, TypeError) as exc:
         log.warning("board on %s did not finish booting within %g s (no %r): %s", console.port, timeout,
-                    BOOT_READY, str(exc).splitlines()[0])
+                    BOOT_READY, str(exc).partition("\n")[0])
         start = len(console.lines)
         require_alive(console)
         if any(BOOT_UNPROVISIONED in line for line in console.lines[start:]):
@@ -259,13 +270,17 @@ def firmware(xewe: XeWeContext, board: Board, compiled: Path) -> Iterator[Firmwa
     """Flash the session's image once, open the session console, wait for the boot banner.
 
     The console stays open for the whole session (one port open: every open can pulse a
-    native-USB board) and is closed when the session ends.
+    native-USB board) and is closed when the session ends. ``--xewe-no-flash`` skips the write
+    (the board's own firmware is tested; the board does not report a build id to compare).
     """
     p = xewe.project()
-    try:
-        flash.write_image(flash.esptool_cmd(p), board, xewe.chip, compiled)
-    except XeWeError as exc:
-        xewe.fail(exc)
+    if xewe.no_flash:
+        log.warning("not flashing %s (--no-flash): testing the firmware already on the board", board.port)
+    else:
+        try:
+            flash.write_image(flash.esptool_cmd(p), board, xewe.chip, compiled)
+        except XeWeError as exc:
+            xewe.fail(exc)
     console = Console(board.port)
     try:
         console.open()
