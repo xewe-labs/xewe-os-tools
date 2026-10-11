@@ -20,14 +20,14 @@ LOCK_NAME = "xewe.toml"
 
 
 LIBRARY_PROPERTIES = "library.properties"
-"""An Arduino library's metadata file; a root with it and no ``xewe.toml`` is a library (doc/spec.md §13)."""
+"""An Arduino library's metadata file; ``xewe format`` also takes a root with it and no ``xewe.toml``."""
 
 
 def find_root(explicit: str | os.PathLike[str] | None = None, start: Path | None = None,
               library: bool = False) -> Path:
     """Return the project root: ``explicit`` if given, else the nearest ancestor with xewe.toml.
 
-    With ``library`` a directory with ``library.properties`` is a root too (``setup``, ``check``, ``format``)."""
+    With ``library`` a directory with ``library.properties`` is a root too (``format``)."""
 
     def is_root(d: Path) -> bool:
         return (d / LOCK_NAME).is_file() or (library and (d / LIBRARY_PROPERTIES).is_file())
@@ -108,11 +108,6 @@ class Paths:
     @property
     def lock(self) -> Path:
         return self.root / LOCK_NAME
-
-    @property
-    def is_library(self) -> bool:
-        """True for an Arduino library root: ``library.properties`` and no ``xewe.toml``."""
-        return (self.root / LIBRARY_PROPERTIES).is_file() and not self.lock.is_file()
 
     @property
     def build(self) -> Path:

@@ -7,9 +7,6 @@ to ``build/``. Each step is skipped when what it would install is already there 
 version/ref (``--force`` redoes the source checkouts). ``build/config/build_config.toml`` is
 removed at the start and written last, so an interrupted setup is detected by every other
 command (exit 3).
-
-In a library (``library.properties``, no ``xewe.toml``; doc/spec.md §13) setup installs the
-toolchain and the libraries of ``depends=`` and writes a ``run.sh`` that runs ``xewe check``.
 """
 
 from __future__ import annotations
@@ -27,7 +24,7 @@ from typing import Any
 
 from xewe import __version__
 from xewe.env import arduino, config, dotenv, esptool, fetch, pins, runscript
-from xewe.env.project import LIBRARY_PROPERTIES, Paths
+from xewe.env.project import Paths
 from xewe.modules import lockfile
 from xewe.modules import registry as modules
 from xewe.modules.lockfile import Source
@@ -315,9 +312,7 @@ def install_toolchain(
 
 
 def run_setup(p: Paths, opts: SetupOptions, sleep: Callable[[float], None] = time.sleep) -> int:
-    """Run every setup step in order (the library steps in a library)."""
-    if p.is_library:
-        return run_library_setup(p, opts, sleep)
+    """Run every setup step in order."""
     old, prev, cfg = _begin(p, opts)
 
     # 2 lock + refs
@@ -405,54 +400,3 @@ def run_setup(p: Paths, opts: SetupOptions, sleep: Callable[[float], None] = tim
     )
     return EXIT_OK
 
-
-PROJECT_ONLY = ("--latest", "--modules", "--core-source", "--modules-source")
-
-
-def library_depends(root: Path) -> list[str]:
-    """Library names in ``depends=`` of ``library.properties`` (version constraints dropped)."""
-    for line in (root / LIBRARY_PROPERTIES).read_text(encoding="utf-8").splitlines():
-        if line.startswith("depends="):
-            names = (re.sub(r"\(.*?\)", "", part).strip() for part in line[len("depends="):].split(","))
-            return [name for name in names if name]
-    return []
-
-
-def library_name(root: Path) -> str:
-    """``name=`` of ``library.properties``, else the folder name."""
-    for line in (root / LIBRARY_PROPERTIES).read_text(encoding="utf-8").splitlines():
-        if line.startswith("name="):
-            return line[len("name="):].strip() or root.name
-    return root.name
-
-
-def run_library_setup(p: Paths, opts: SetupOptions, sleep: Callable[[float], None] = time.sleep) -> int:
-    """Setup in a library: toolchain, the ``depends=`` libraries in ``build/libraries``, ``run.sh``."""
-    given = (opts.latest, opts.modules is not None, opts.core_source is not None, opts.modules_source is not None)
-    for flag, used in zip(PROJECT_ONLY, given):
-        if used:
-            raise XeWeError(f"{flag} needs a project (xewe.toml); {p.root} is a library", EXIT_USAGE)
-    old, prev, cfg = _begin(p, opts)
-    _, version = install_toolchain(p, opts, old, pins.ARDUINO_CLI_VERSION, pins.ESP32_CORE_VERSION, cfg, sleep)
-
-    cfg.paths["libraries"] = p.to_build(p.libraries)
-    libs: dict[str, dict[str, str]] = {}
-    for name in library_depends(p.root):
-        if name not in pins.LIBRARY_PINS:
-            log.warning("library %s (depends= of %s) has no pin in the tools; not installed", name, LIBRARY_PROPERTIES)
-            continue
-        repo, ref = pins.LIBRARY_PINS[name]
-        prev_rec = {k: v for k, v in prev.get("libraries", {}).get(name, {}).items() if k != "origin"}
-        rec = _install_source(name, Source(repo, ref), ref, p.libraries / name, None, prev_rec, opts.force)
-        libs[name] = {**rec, "origin": "tools"}
-    cfg.installed["libraries"] = libs
-
-    runscript.write(p, runscript.render_check())
-    tools_ref = os.environ.get("XEWE_TOOLS_REF") or fetch.LATEST
-    cfg.installed["tools"] = tools_record(p, tools_ref, _env_path("XEWE_TOOLS_SOURCE"), pins.DEFAULT_TOOLS_REPO)
-    cfg.setup_completed = dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    config.save(p, cfg)
-    names = ", ".join(f"{n} {fetch.describe(r)}" for n, r in libs.items()) or "none"
-    result(f"setup complete (library {library_name(p.root)}): arduino-cli {version}, "
-           f"esp32 {pins.ESP32_CORE_VERSION}, libraries {names}")
-    return EXIT_OK

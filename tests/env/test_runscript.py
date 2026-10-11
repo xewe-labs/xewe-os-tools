@@ -17,19 +17,10 @@ def test_render_fills_version_chip_and_keep_nvs() -> None:
     assert lines[-1] == 'exec "${PY}" -m xewe --project "${ROOT}" run "$@"'
 
 
-def test_render_check_calls_xewe_check() -> None:
-    text = runscript.render_check()
-    lines = text.splitlines()
-    assert lines[1].startswith(runscript.GENERATED_MARK) and f"xewe-os-tools {__version__}" in lines[1]
-    assert "--all-chips" in text and "tests/unit/run.sh" in text
-    assert lines[-1] == 'exec "${PY}" -m xewe --project "${ROOT}" check "$@"'
-
-
-def test_both_forms_are_valid_bash(tmp_path: Path) -> None:
-    for text in (runscript.render("c3"), runscript.render_check()):
-        script = tmp_path / "run.sh"
-        script.write_text(text)
-        assert subprocess.run(["bash", "-n", str(script)], check=False).returncode == 0
+def test_render_is_valid_bash(tmp_path: Path) -> None:
+    script = tmp_path / "run.sh"
+    script.write_text(runscript.render("c3"))
+    assert subprocess.run(["bash", "-n", str(script)], check=False).returncode == 0
 
 
 def test_write_new_and_regenerate(tmp_path: Path) -> None:
@@ -50,5 +41,5 @@ def test_any_existing_run_sh_is_replaced(tmp_path: Path) -> None:
     other.write_text("keep me\n")
     (tmp_path / "run.sh").unlink()
     (tmp_path / "run.sh").symlink_to(other)
-    runscript.write(Paths(tmp_path), runscript.render_check())
+    runscript.write(Paths(tmp_path), runscript.render("c6"))
     assert not (tmp_path / "run.sh").is_symlink() and other.read_text() == "keep me\n"

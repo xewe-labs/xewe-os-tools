@@ -61,7 +61,3 @@ Tests import the installed `xewe`: install the checkout once with `pip install -
   `LOCK` is its manifest text, `make_modules_checkout(dest, layout, board_tests)` a modules
   checkout built from `fixtures/module_properties/`.
 - `FIXTURES` / `FAKES` / `PROPERTIES` are the shared folders.
-- Library mode (`env/test_setup.py`): `library` is a scratch Arduino library (`library.properties`
-  with `depends=`, two examples, a `tests/unit/run.sh` that records `ARDUINOJSON_SRC`) with a fake
-  git; `lib_clones` lists what it cloned. `xewe setup` and `xewe check` run against it with the
-  fake arduino-cli.

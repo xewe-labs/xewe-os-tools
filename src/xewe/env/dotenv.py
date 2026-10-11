@@ -1,4 +1,4 @@
-"""Settings and credentials from a dotenv file (doc/spec.md §14). Stdlib only.
+"""Settings and credentials from a dotenv file (doc/spec.md §13). Stdlib only.
 
 Which file, first found wins:
 
@@ -49,7 +49,7 @@ KEYS: dict[str, str] = {
     "XEWE_PORT": "serial port of the board (default: detected); first provision: optional",
     "XEWE_CHIP": "chip of the board, c3, c6 or s3 (default: detected); first provision: optional",
 }
-"""The keys the file usually holds, each with what it is for (doc/spec.md §14)."""
+"""The keys the file usually holds, each with what it is for (doc/spec.md §13)."""
 OTHER_KEYS = (
     "XEWE_REQUIRE_BOARD", "XEWE_ARDUINO_CLI", "XEWE_ESPTOOL", "XEWE_ARDUINO_DATA", "XEWE_CACHE",
     "XEWE_CORE_SOURCE", "XEWE_MODULES_SOURCE", "XEWE_TOOLS_SOURCE",

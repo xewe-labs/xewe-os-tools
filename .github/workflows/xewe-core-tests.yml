@@ -1,6 +1,5 @@
 # xewe-core-tests.yml: reusable checks for xewe-os-core (the XeWeCore Arduino library).
-# Host unit tests (tests/unit/run.sh), arduino-lint, and every example compiled for c3, c6 and s3.
-# The examples job runs `xewe setup` and `xewe check --examples` in the core checkout (library mode).
+# Host unit tests (tests/unit/run.sh) and arduino-lint. The examples are not compiled here.
 # Releases are not done here: core is released through publish-arduino-library (tag X.Y.Z, then the
 # Arduino Library Manager picks it up). See doc/ci.md.
 name: xewe-core-tests
@@ -9,11 +8,11 @@ on:
   workflow_call:
     inputs:
       tools_ref:
-        description: "xewe-os-tools ref whose pins (arduino-cli, esp32 core, FQBN options, libraries) are used"
+        description: "xewe-os-tools ref whose brand-lint is used"
         type: string
         default: "main"
       arduinojson_ref:
-        description: "ArduinoJson tag for the host unit tests (the examples use the tools' pin)"
+        description: "ArduinoJson tag for the host unit tests"
         type: string
         default: "v7.4.3"
 
@@ -63,40 +62,3 @@ jobs:
           "$RUNNER_TEMP/venv/bin/pip" install -q "git+https://github.com/xewe-labs/xewe-os-tools@$REF"
           "$RUNNER_TEMP/venv/bin/python" -m xewe brand-lint .
 
-  examples:
-    name: examples (${{ matrix.chip }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        chip: [c3, c6, s3]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install the tools
-        id: tools
-        env:
-          REF: ${{ inputs.tools_ref }}
-        run: |
-          set -euo pipefail
-          python3 -m venv "$RUNNER_TEMP/venv"
-          "$RUNNER_TEMP/venv/bin/pip" install -q "git+https://github.com/xewe-labs/xewe-os-tools@$REF"
-          echo "esp32=$("$RUNNER_TEMP/venv/bin/python" -c 'from xewe.env import pins; print(pins.ESP32_CORE_VERSION)')" >> "$GITHUB_OUTPUT"
-      - name: Cache the shared toolchain (XEWE_HOME)
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/xewe-home
-          key: xewe-home-${{ runner.os }}-${{ runner.arch }}-esp32-${{ steps.tools.outputs.esp32 }}
-      - name: xewe setup (library mode)
-        env:
-          XEWE_HOME: ${{ runner.temp }}/xewe-home
-          XEWE_TOOLS_REF: ${{ inputs.tools_ref }}
-        run: '"$RUNNER_TEMP/venv/bin/python" -m xewe --project . setup'
-      - name: Compile every example
-        env:
-          XEWE_HOME: ${{ runner.temp }}/xewe-home
-          CHIP: ${{ matrix.chip }}
-        run: '"$RUNNER_TEMP/venv/bin/python" -m xewe --project . check --examples --chip "$CHIP"'

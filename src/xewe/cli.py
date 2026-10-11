@@ -11,7 +11,7 @@ from typing import Any
 
 from xewe import __version__
 from xewe.board import boards, provision, serialio
-from xewe.build import brandlint, check, chips, flash, release
+from xewe.build import brandlint, chips, flash, release
 from xewe.build import format as fmt
 from xewe.build import compile as build
 from xewe.env import clean, config, doctor, dotenv, setup
@@ -58,7 +58,7 @@ def _env_arg(sp: argparse.ArgumentParser, *aliases: str) -> None:
     sp.add_argument("--env", *aliases, dest="env_file", type=Path, metavar="FILE", help=ENV_HELP)
 
 
-LIBRARY_COMMANDS = frozenset({"setup", "check", "format"})
+LIBRARY_COMMANDS = frozenset({"format"})
 """Commands that also run in an Arduino library (library.properties, no xewe.toml)."""
 
 NO_BOARD_COMMANDS = frozenset({"flash", "serial", "provision", "test", "run", "boards"})
@@ -87,13 +87,13 @@ def parser() -> argparse.ArgumentParser:
     """The full argument parser."""
     ap = argparse.ArgumentParser(prog="xewe", description="XeWe OS firmware tools: setup, build, flash, serial, provision, test.")
     ap.add_argument("--project", metavar="DIR", help="project root (default: nearest ancestor with xewe.toml; "
-                                                     "setup, check and format also take a library root)")
+                                                     "format also takes a library root)")
     ap.add_argument("-v", "--verbose", action="store_true", help=VERBOSE_HELP + " (also accepted after the command)")
     ap.add_argument("--version", action="version", version=f"xewe-os-tools {__version__}")
     sub = ap.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
     sp = sub.add_parser("setup", help="install the shared toolchain (~/.xewe-os/build-tools) and the core, libraries and "
-                                      "modules into build/; in a library, the toolchain and its depends= libraries")
+                                      "modules into build/")
     sp.add_argument("--latest", action="store_true", help="install the newest tags (xewe.toml is not changed)")
     sp.add_argument("--modules", metavar="LIST|all|none", help="select modules (written to xewe.toml; \"\" or none = no modules)")
     sp.add_argument("--force", action="store_true", help="redo every step")
@@ -248,16 +248,6 @@ def parser() -> argparse.ArgumentParser:
     sp.add_argument("paths", nargs="*", type=Path, metavar="PATH", help="files or directories (default: the project)")
 
     sp = sub.add_parser(
-        "check", help="in an Arduino library: host unit tests and every example compiled (what its run.sh calls)",
-        description="For an Arduino library (library.properties, no xewe.toml) such as xewe-os-core: run "
-                    "tests/unit/run.sh, then compile every example under examples/ with the board options of "
-                    "xewe build. Both parts by default; --unit or --examples runs one. Chip: --chip C (default c3) "
-                    "or --all-chips. The examples need ./setup.sh first (exit 3).")
-    sp.add_argument("--unit", action="store_true", help="run tests/unit/run.sh")
-    sp.add_argument("--examples", action="store_true", help="compile every example")
-    _chip_args(sp)
-
-    sp = sub.add_parser(
         "brand-lint", help="fail on banned spellings of the brand (see xewe-os/doc/naming.md)",
         description="Scan the text files under each DIR (default .) for banned spellings of the brand and print "
                     "path:line:text for each hit. Skips .git, build, .venv, static, __pycache__, history, test_logs, "
@@ -388,9 +378,6 @@ def dispatch(args: argparse.Namespace, extra: list[str]) -> int:
         return clean.clean(p, args.all, args.modules)
     if cmd == "format":
         return fmt.format_main(p, args.paths, args.check)
-    if cmd == "check":
-        chip_names = list(chips.ALL_CHIPS) if args.all_chips else [args.chip or chips.DEFAULT_CHIP]
-        return check.check(p, args.unit, args.examples, chip_names)
     lock = lockfile.load(p.lock)
     if cmd in ("build", "run"):
         setup.warn_no_modules(lock.selected)

@@ -48,7 +48,7 @@ in that order. Read it as described below before doing anything else in the repo
 ## Project: xewe-os-tools (`xewe`)
 
 The Python package `xewe`: setup, build, flash, serial, provision, test, format, release and
-brand-lint for XeWe OS firmware projects, and `setup`/`check` for the core library. Human
+brand-lint for XeWe OS firmware projects. Human
 documentation: `README.md` and `doc/` (`doc/spec.md` is the full specification, `doc/ci.md` the
 reusable workflows, `doc/tests.md` the self-tests). Project rules are X-01 … X-08 at the end of
 `RULES.md`. Organization rules: `https://github.com/xewe-labs/.github/blob/main/AGENTS.md`; they
@@ -103,9 +103,6 @@ every subprocess command and its output; pytest's own flags go after `--`.
 - **Credentials.** The user creates the dotenv file (tools checkout or project; nothing writes it,
   setup only says where to put it). Agents never read, print, copy or edit the dotenv file (X-04 of the workspace); the tools
   log only `loaded N keys from <path>` and mask the Wi-Fi password.
-- **The core library.** In `xewe-os-core` (`library.properties`, no `xewe.toml`) `./setup.sh`
-  runs `xewe setup` in library mode and writes `run.sh`, which runs `xewe check` (host unit tests
-  and every example compiled).
 - `xewe` never runs git writes; `xewe release` prints the git and gh commands. Only
   `manifest update`, `modules select`, `setup --modules` and `release` edit `xewe.toml`. Never edit
   `build/` or `src/Modules.h` by hand.

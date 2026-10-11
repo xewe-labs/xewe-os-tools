@@ -20,8 +20,3 @@ DEFAULT_MODULES_REF = "v1.0.0"
 DEFAULT_TOOLS_REF = "v0.1.1"
 
 MIN_FREE_DISK_BYTES = 6 * 1024**3
-
-LIBRARY_PINS: dict[str, tuple[str, str]] = {
-    "ArduinoJson": ("https://github.com/bblanchon/ArduinoJson", "v7.4.3"),
-}
-"""Repo and ref of each library a library's ``depends=`` may name (``xewe setup`` in a library)."""
