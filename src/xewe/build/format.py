@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -33,6 +34,9 @@ CPP_SUFFIXES = frozenset({".h", ".hpp", ".c", ".cpp", ".ino"})
 CPP_DIRS = ("src", "examples", "tests/unit")
 PY_DIRS = ("src", "examples", "tests")
 SKIP_DIRS = frozenset({"build", "__pycache__", "node_modules"})
+PY_SKIP_DIRS = SKIP_DIRS - {"build"}
+"""A nested ``build`` folder holds C++ build output (``examples/*/build``) but can be a Python package
+(the tools' ``xewe.build``); the project's own ``build/`` is skipped for both."""
 GENERATED = ("src/Modules.h",)
 
 INSTALL_HINT = ("clang-format not found: install it (apt install clang-format, brew install clang-format, "
@@ -40,6 +44,10 @@ INSTALL_HINT = ("clang-format not found: install it (apt install clang-format, b
 
 STYLE_FILE = Path(__file__).with_name("clang-format")
 """The XeWe clang-format style (package data), passed as ``--style=file:<path>``."""
+
+RUFF_CHANGED_RE = re.compile(r"^(?:Would reformat: (.+)|\s*--> (.+?):\d+:\d+|(.+?):\d+:\d+: unformatted: .*)$")
+"""A file ``ruff format --check`` would change: ``Would reformat: <f>`` (older ruff), ``--> <f>:L:C``
+(the full output of ruff 0.17) or ``<f>:L:C: unformatted: ...`` (its concise output)."""
 
 RUFF = [sys.executable, "-m", "ruff"]
 """How ruff is run (the tools venv's own interpreter); tests replace it."""
@@ -68,12 +76,13 @@ def find_clang_format(p: Paths) -> Path:
 
 
 def _walk(path: Path, suffixes: Iterable[str]) -> list[Path]:
-    """Files under ``path`` with one of ``suffixes``, skipping build/, hidden and cache directories."""
+    """Files under ``path`` with one of ``suffixes``, skipping build/ (C++ only), hidden and cache directories."""
     if path.is_file():
         return [path] if path.suffix in suffixes else []
+    skip = PY_SKIP_DIRS if set(suffixes) == {".py"} else SKIP_DIRS
     found: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(path):
-        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS and not d.startswith("."))
+        dirnames[:] = sorted(d for d in dirnames if d not in skip and not d.startswith("."))
         found += [Path(dirpath) / f for f in sorted(filenames) if Path(f).suffix in suffixes]
     return found
 
@@ -148,8 +157,11 @@ def format_python(p: Paths, files: list[Path], check: bool) -> list[Path]:
         raise XeWeError(f"ruff format failed: {(proc.stderr or proc.stdout).strip()}", EXIT_FAIL)
     if not check:
         return []  # ruff rewrote the files itself; it does not list them with --quiet
-    prefix = "Would reformat: "
-    return [Path(ln.removeprefix(prefix).strip()) for ln in proc.stdout.splitlines() if ln.startswith(prefix)]
+    found = [m for m in map(RUFF_CHANGED_RE.match, proc.stdout.splitlines()) if m]
+    changed = list(dict.fromkeys(Path(next(g for g in m.groups() if g).strip()) for m in found))
+    if proc.returncode == 1 and not changed:
+        raise XeWeError(f"ruff format --check failed and named no file: {(proc.stdout or proc.stderr).strip()}")
+    return changed
 
 
 def format_main(p: Paths, paths: list[Path], check: bool) -> int:

@@ -42,6 +42,8 @@ xewe-os-tools/
 ├── .agents/               the agent workspace (AGENTS.md, RULES.md, PREFERENCES.md, handoffs/, skills/)
 ├── .github/workflows/     ci.yml (this repo) and the reusable xewe-*.yml (doc/ci.md)
 ├── doc/                   spec.md (this page), ci.md, tests.md
+├── scripts/release.sh     releases the tools (README "Releasing"): --prepare, then tag and GitHub Release
+├── releases/<version>/    notes.txt (GitHub Release text) and testcard.md (what was tested) per release
 ├── src/xewe/              the `xewe` package
 │   ├── __init__.py        __version__ = "0.1.1"
 │   ├── __main__.py        python -m xewe
@@ -175,7 +177,7 @@ new; `--keep-nvs` skips it), then `exec "${ROOT}/build/tools/.venv/bin/python" -
 ## 3. Command surface
 
 Global flags (any position before the subcommand): `--project DIR` (default: nearest ancestor of
-CWD containing `xewe.toml`; for `format` also `library.properties`), `--verbose` / `-v` (print every subprocess command line and its full
+CWD containing `xewe.toml`; for `format` also `library.properties`, else the current directory), `--verbose` / `-v` (print every subprocess command line and its full
 output; also accepted after the subcommand, so `xewe -v test` and `xewe test -v` are the same),
 `--version`. Arguments for pytest itself go after `--` (`xewe test -- -vv -k wifi`).
 
@@ -225,7 +227,7 @@ Agents in compile-only mode must set `XEWE_NO_BOARD=1`.
 | `xewe manifest show` | `[--json]` | Manifest refs vs installed refs (from `build_config.toml`), drift marked `!` | — |
 | `xewe manifest update` | `[core\|modules\|tools]... [--to REF]` | Resolves newest tag (§4) and rewrites `xewe.toml` (so it freezes a `latest` ref; `--to latest` tracks the default branch again); prints diff; does not run setup | — |
 | `xewe clean` | `[--all] [--modules]` | Default: delete `build/builds/` and `build/tmp/`. `--all`: delete all of `build/` except `tools/` (the tools checkout and its venv; setup must re-run). `--modules`: also delete `build/modules/` and `src/Modules.h`. Never touches `~/.xewe-os/build-tools` (toolchain and shared modules checkouts) | — |
-| `xewe format` | `[--check] [PATH...]` | clang-format the project's (or library's) C++ and ruff-format its Python (see below). `--check` changes nothing and exits 1 listing `would reformat <file>` | n/a |
+| `xewe format` | `[--check] [PATH...]` | clang-format the project's (or library's, or the current directory's) C++ and ruff-format its Python (see below). `--check` changes nothing and exits 1 listing `would reformat <file>` | n/a |
 | `xewe brand-lint` | `[DIR...]` | Banned spellings of the brand (see below). Needs no project | n/a |
 | `xewe doctor` | | Checks python, git, venv, the shared toolchain (`XEWE_HOME` resolved; cli and core present), arduino-cli version, core version, esptool, manifest (`xewe.toml`) vs installed, free disk ≥ 6 GB, serial permissions (Linux: user in `dialout`/`uucp`), Rosetta 2 on Apple silicon (the esp32 core's `ctags` is x86_64: "bad CPU type" without it; probe `pgrep -q oahd` or `arch -x86_64 /usr/bin/true`; warns with `softwareupdate --install-rosetta --agree-to-license`), board scan | exit 0 if only warnings |
 | `xewe release` | `--version X.Y.Z [--matrix FILE] [--notes FILE]` | §11 | n/a (no board needed) |
@@ -233,10 +235,11 @@ Agents in compile-only mode must set `XEWE_NO_BOARD=1`.
 **`xewe format`** (`src/xewe/build/format.py`). AI-first style: nothing is column-aligned, because runs
 of alignment whitespace cost tokens, break exact-match edits and turn a one-line change into a
 realigned block. Files: `*.h *.hpp *.c *.cpp *.ino` directly in the project root (the sketch,
-`Config.h`) and under `src/`, `examples/`, `tests/unit/` (recursive; never `build/`, hidden or
-`__pycache__` directories, nor the generated `src/Modules.h`); `PATH` arguments (files or
-directories) replace that set. Style: `src/xewe/build/clang-format`, the XeWe style shipped with
-the tools as package data, passed as `--style=file:<path>` (`format.STYLE_FILE`); a
+`Config.h`) and under `src/`, `examples/`, `tests/unit/` (recursive; never `build/` at any depth,
+hidden or `__pycache__` directories, nor the generated `src/Modules.h`); `PATH` arguments (files or
+directories) replace that set. The root is the project or library; in a directory that is neither
+(the tools or modules repo) it is the current directory. Style: `src/xewe/build/clang-format`, the
+XeWe style shipped with the tools as package data, passed as `--style=file:<path>` (`format.STYLE_FILE`); a
 `.clang-format` in the project is not read, and no repo carries one. The rules: LLVM base,
 `IndentWidth: 4`, `ContinuationIndentWidth: 4`, `AccessModifierOffset: -4`, `ColumnLimit: 100`,
 `UseTab: Never`, every `AlignConsecutive*: None`, `AlignArrayOfStructures: None`,
@@ -248,16 +251,23 @@ the tools as package data, passed as `--style=file:<path>` (`format.STYLE_FILE`)
 the tools venv (`pip install clang-format`), else one inside the shared toolchain's esp32 core
 (`build-tools/arduino15/packages/esp32/tools/*/…/bin/clang-format`; core 3.3.12 ships none), else
 exit 3 with the install hint. Each file is formatted to stdout and rewritten (mode kept) only when
-it differs. Python (`*.py` in the root, `src/`, `examples/`, `tests/`): `ruff format [--check]`
-when ruff is importable in the tools venv (`pip install 'xewe-os-tools[dev]'`), else skipped with
-an info line. Last line: `format: N C++ and M Python files, K formatted|would reformat`.
+it differs. Python (`*.py` in the root, `src/`, `examples/`, `tests/`; a nested `build` folder is
+kept here, since it can be a package such as `xewe.build`, only the root `build/` is skipped):
+`ruff format [--check]` when ruff is importable in the tools venv (`pip install
+'xewe-os-tools[dev]'`), else skipped with an info line. The files to change are read from both
+`--check` outputs (`Would reformat: <f>` of older ruff, `--> <f>:L:C` of ruff 0.17); a
+failing check that names no file is an error. Last line: `format: N C++ and M Python files, K
+formatted|would reformat`.
 
 **`xewe brand-lint [DIR...]`** (`src/xewe/build/brandlint.py`). Scans every text file under each
 `DIR` (default `.`; a file argument is scanned as is) for the banned spellings of
 `xewe-os/doc/naming.md` (`brandlint.PATTERN`, case sensitive): the brand with only its first
 letter capitalised and a letter right after it, the lowercase brand followed by the word `os`, and
-the brand with only its first letter capitalised followed by ` OS`. Skipped: the directories `.git`, `build`, `.venv`, `static`, `__pycache__`,
-`history`, `test_logs`; symlinks met while walking; binary files (a NUL byte or not UTF-8); any
+the brand with only its first letter capitalised followed by ` OS`. Inside a git work tree the
+files are those git does not ignore (`git ls-files --cached --others --exclude-standard`), so
+caches never count; elsewhere the directory is walked. Skipped either way: the directories `.git`,
+`build`, `.venv`, `static`, `__pycache__`, `history`, `test_logs`, `.pytest_cache`, `.mypy_cache`,
+`.ruff_cache` and `*.egg-info`; symlinks; binary files (a NUL byte or not UTF-8); any
 file named `naming.md` in any case (the naming page lists the banned spellings as examples); the
 dotenv file and `<dotenv file>.*` (their lines are never printed). Clean: `brand-lint: clean` on
 stdout, exit 0. Hits: `brand-lint: banned spellings found (see xewe-os/doc/naming.md):` and one
@@ -800,7 +810,9 @@ or a module's own value prompts such as the template's `Starting level (0-100)?`
 - Output: board lines echoed with timestamps as `xewe serial` (and `--log FILE`); any line that
   contains the password, typed or echoed, is replaced by `********` there and in the tail. Last
   line: `provisioned in N s: name "<name>"; modules <enabled>; wifi "<ssid>" (network N of M |
-  custom SSID, not in the scan); timezone <y, board detected GMT+02:00 | n, set GMT-08:00 …>`.
+  custom SSID, not in the scan); timezone <y, board detected GMT+02:00 | n, set GMT-08:00 …>`. The
+  tools' own rescan log line masks the SSID as its first character and `***`
+  (`network 'H***' is not in the scan`); the board's echo of it is left as the board printed it.
 
 ---
 
@@ -1049,15 +1061,15 @@ shared fixtures and fakes (doc/tests.md); `pytest tests/<area>` runs one area.
 | `env/test_fetch.py` | asset name per (os, arch), checksum mismatch rejected, `.part` resume via a local HTTP server |
 | `env/test_setup.py` | shared toolchain reused by a second project (no second download or core install), `XEWE_HOME` override, `build-tools/.lock`, step order, skip-when-recorded idempotency, `--force`, interrupted run leaves no `build_config.toml`, local sources, `--latest` tag selection from fake `ls-remote` output, `Head "<url>"` rescue path, module libraries from the modules `libraries.toml` catalogue vs a `[libraries]` pin in the manifest (manifest wins), missing/bad catalogue, `manifest show` origin, shared modules checkout per ref (reused by a second project, branch followed, other-repo checkout re-cloned), no `build/tmp` after setup, ref `latest` (core/modules/tools/library resolved from fake `ls-remote --symref`, recorded with branch+commit, followed when the head moves, local source wins, offline keeps the checkout), the `latest` strings of the template's `setup.sh` (`tests/fixtures/setup.sh`), `run.sh` rewritten on every setup, no dotenv file written (provisioning then reads the tools checkout's file), no-modules `warning:` line from setup (Enter at the menu), build and run, none with modules selected |
 | `env/test_runscript.py` | generated `run.sh` (version, chip, `--keep-nvs`), valid bash, any existing `run.sh` or symlink replaced; setup writes it (`env/test_setup.py`) |
-| `build/test_format.py` | fake clang-format (`tests/fakes/clang-format`): default file set (no `build/`, hidden dirs, `src/Modules.h`, `tests/board/*.cpp`), `--check` exit 1 and lists without writing, apply then clean check, mode kept, always the shipped style file (a project `.clang-format` is ignored), the style's rules, the style is package data, format in a library, `PATH` arguments, failure exit 1, binary search order (`XEWE_CLANG_FORMAT`, `PATH`, venv, toolchain, exit 3 hint), ruff skipped when missing and called with `--check`/`--quiet` |
+| `build/test_format.py` | fake clang-format (`tests/fakes/clang-format`): default file set (no `build/`, hidden dirs, `src/Modules.h`, `tests/board/*.cpp`), `--check` exit 1 and lists without writing, apply then clean check, mode kept, always the shipped style file (a project `.clang-format` is ignored), the style's rules, the style is package data, format in a library and in a directory that is neither (the current directory), `PATH` arguments, nested `build` Python packages kept, ruff's old and new `--check` output, failure exit 1, binary search order (`XEWE_CLANG_FORMAT`, `PATH`, venv, toolchain, exit 3 hint), ruff skipped when missing and called with `--check`/`--quiet` |
 | `env/test_arduino.py` | env vars (no `~/.arduino15`), exact compile argv per chip, FQBN strings (golden), no `JTAGAdapter` |
 | `build/test_compile.py` | `builds/<chip>/out/` contents, bin name, `manifest.json` byte-equal to golden built from 2.0.0 release files, `meta.json` keys (`modules_version`), `XeWeBuildInfo.h` content, `--define`, sketch staging when folder ≠ stem, `--all-chips` continues after failure |
 | `board/test_boards.py` | VID:PID filter, chip-id output parsing (sample esptool 5 output), cache by serial number, override precedence, no-board / one / several decision, `boards.toml` `[override]` preserved |
 | `build/test_flash.py` | esptool argv, `--erase` (port wait after erase and after write), `flash` keeps NVS by default, `run` erases by default and `--keep-nvs` does not, port not back → exit 4, baud fallback, no-board exit 0 vs `--require-board` exit 4, chip mismatch exit 2 |
 | `board/test_serial.py` | timestamps, `\r` stripping, send/expect match and timeout (exit 1), reconnect, a closed handle after an unplug (`TypeError` from `in_waiting`) → `XeWeError` and `connected` False, reset across a port drop, `wait_for_port` settle and timeout (exit 4); interactive mode: typed line sent, `--no-input` and non-TTY stdin listen only, EOF exit 0, reconnect, raw lines and no `> CMD` echo (timestamped with `--timestamps`, in `--send` mode, listen-only and the log), stdin flushed only when interactive on a TTY (interactive mode in `board/test_serial_interactive.py`) |
-| `board/test_provision.py` | scripted first-boot transcript: answers in order, SSID by number (the real S3 list), rescan then `-3` custom, `! Invalid number` re-answered, board resuming at the network list, nudge only before the first prompt (fake clock), timezone `y` / `n` + offset, already provisioned sends nothing, unlisted module answered `n` and unknown value / y/n prompts answered with their default (logged), endless unknown prompt exit 1, nudge, port drop at reboot, prompt timeout exit 1 with masked tail, password never in stdout/log; settings precedence flags > env > dotenv file > defaults, settings from `<project>/.env` with no flags, exit 2 before the port, exit 4 without a board |
+| `board/test_provision.py` | scripted first-boot transcript: answers in order, SSID by number (the real S3 list), rescan then `-3` custom, `! Invalid number` re-answered, board resuming at the network list, nudge only before the first prompt (fake clock), timezone `y` / `n` + offset, already provisioned sends nothing, unlisted module answered `n` and unknown value / y/n prompts answered with their default (logged), endless unknown prompt exit 1, nudge, port drop at reboot, prompt timeout exit 1 with masked tail, password never in stdout/log, the rescan log line masks the SSID; settings precedence flags > env > dotenv file > defaults, settings from `<project>/.env` with no flags, exit 2 before the port, exit 4 without a board |
 | `env/test_dotenv.py` | parsing (comments, quotes, `export`, no interpolation), errors without values, real environment wins, resolution order (`--env`, `XEWE_ENV`, project, tools checkout from `build_config.toml` or the package checkout), missing file is not an error, only the key count is logged, `hint()` (both paths, the provisioning keys) |
-| `build/test_brandlint.py` | each banned spelling fails with the exact stderr lines, allowed spellings are clean, skipped directories, binary and non-UTF-8 files, `naming.md` in any case, dotenv files, several `DIR`s, a missing `DIR` exits 2, no project needed, the tools repo itself is clean |
+| `build/test_brandlint.py` | each banned spelling fails with the exact stderr lines, allowed spellings are clean, skipped directories (caches and `*.egg-info` included), in a git work tree only the files git does not ignore, outside one a directory walk, binary and non-UTF-8 files, `naming.md` in any case, dotenv files, several `DIR`s, a missing `DIR` exits 2, no project needed, the tools repo itself is clean |
 | `testing/test_plugin.py` | `pytester`: no board → "compiled, not run" summary and exit 0; `--require-board` → pytest 1, `xewe test` 4; faked board: one port open per session, boot banner wait (first-boot reboot, unprovisioned, timeout, board gone from USB at the boot reset → `disappeared from USB`); `xewe test --no-flash` writes no image; unit tests run; `--unit-only` runs only `unit` tests and builds nothing; board tests found under `modules/<slug>/tests/board/`; compile failure fails board tests; pins from the project `.env` reach `os.environ` (real environment wins) |
 | `modules/test_registry.py` | dependency order and cycle error against fixtures copied from the six real `module.properties`; generated `build/modules/` (`library.properties`, `XeWeModules.h`, `tests/<slug>/{board,unit}/`, `modules.lock`) and `src/Modules.h` golden, library version (tag / `0.0.0+<sha7>` / `0.0.0`), empty selection, legacy `src/modules/`, `build/modules-lib/` and `build/config/modules.lock` removal; every validator rule (tests layout included) has a failing fixture |
 | `build/test_release.py` | matrix parsing and typing, folder layout, `firmware_map.csv`, version ≥ check, printed commands, never calls git (but `status`/`rev-parse`), `meta.json` provenance (`*_commit` next to each ref, libraries, `-` when unknown) |

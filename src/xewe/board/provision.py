@@ -124,6 +124,11 @@ class Settings:
         return self.enables("wifi")
 
 
+def mask(ssid: str) -> str:
+    """``ssid`` as the tools log it: the first character and ``***`` (logs get copied around)."""
+    return ssid[:1] + "***"
+
+
 def slug(name: str) -> str:
     """Module display name or slug → slug (``Web Interface`` → ``web-interface``)."""
     return re.sub(r"[\s_]+", "-", name.strip().lower())
@@ -290,7 +295,7 @@ class Driver:
             return str(number)
         if self.rescans < RESCANS:
             self.rescans += 1
-            log.info("network %r is not in the scan (%d networks); rescanning", s.ssid, len(self.networks))
+            log.info("network %r is not in the scan (%d networks); rescanning", mask(s.ssid), len(self.networks))
             return "-2"
         self.out.ssid_how = "custom SSID, not in the scan"
         return "-3"

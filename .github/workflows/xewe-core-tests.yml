@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Fetch ArduinoJson (header-only, no package manager)
         env:
           REF: ${{ inputs.arduinojson_ref }}
@@ -38,8 +38,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: arduino/arduino-lint-action@v2
+      - uses: actions/checkout@v7
+      - uses: arduino/arduino-lint-action@v3
         with:
           project-type: library
           library-manager: update
@@ -56,7 +56,7 @@ jobs:
       matrix:
         chip: [c3, c6, s3]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Read the toolchain pins and the FQBN from the tools
         id: pins
         env:
@@ -80,7 +80,7 @@ jobs:
       - uses: arduino/setup-arduino-cli@v2
         with:
           version: ${{ steps.pins.outputs.cli }}
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.arduino15
           key: arduino15-${{ runner.os }}-${{ runner.arch }}-esp32-${{ steps.pins.outputs.esp32 }}
@@ -112,8 +112,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: xewe format --check
@@ -129,8 +129,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: xewe brand-lint

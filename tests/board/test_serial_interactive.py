@@ -141,7 +141,7 @@ def test_cli_no_input_flag(project: Paths) -> None:
     assert exc.value.code == 0
 
 
-# ---------------------------------------------------------------- RT3: raw console, stdin flush
+# ---------------------------------------------------------------- raw console, stdin flush
 
 STAMPED = re.compile(r"^\d\d:\d\d:\d\d\.\d{3}  ")
 BANNER = b"| System Setup Complete |\n"

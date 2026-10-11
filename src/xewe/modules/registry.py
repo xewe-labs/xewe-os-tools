@@ -6,9 +6,9 @@ The checkout is ``XEWE_MODULES_SOURCE`` or the shared ``build-tools/sources/xewe
 ``XeWeModules`` (``library.properties``, ``src/``), the selected modules' tests
 (``tests/<slug>/{board,unit}/``) and ``modules.lock``.
 
-Two layouts are read: ``modules/<slug>/module.properties`` (the modules repo, D4) and, until the
-modules are ported (O9), the old one-repo-per-module layout ``xewe-os-module-<slug>/`` (or a
-single module repo whose root holds ``module.properties``).
+Two layouts are read: ``modules/<slug>/module.properties`` (the modules repo) and the old
+one-repo-per-module layout ``xewe-os-module-<slug>/`` (or a single module repo whose root holds
+``module.properties``).
 """
 
 from __future__ import annotations

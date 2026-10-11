@@ -57,13 +57,16 @@ apply where this file is silent.
 ### Layout
 
 - `src/xewe/` is the package (standard `src` layout); five areas: `env/` (machine and project:
-  setup, toolchain, paths, dotenv), `build/` (compile, flash, release, format, check, brand-lint,
+  setup, toolchain, paths, dotenv), `build/` (compile, flash, release, format, brand-lint,
   the `clang-format` style file), `board/` (ports, serial, provision), `modules/` (registry,
   manifest, `xewe.toml`), `testing/` (pytest plugin and runner). `cli.py` dispatches.
 - `tests/` mirrors the package: `tests/<area>/test_<module>.py`, one `tests/conftest.py`, fakes in
   `tests/fakes/` (arduino-cli, esptool, clang-format), fixtures in `tests/fixtures/`.
 - `.github/workflows/`: `ci.yml` (this repo) and the reusable `xewe-*.yml` that the other repos
   call (`doc/ci.md`).
+- `scripts/release.sh` releases the tools; `releases/<version>/` holds each release's
+  `notes.txt` and `testcard.md` (README "Releasing"). Agents may run `--dry-run` only, and
+  `--prepare` only on a scratch copy unless asked; the owner commits, tags and pushes.
 
 ### Check your work
 
@@ -72,9 +75,11 @@ python -m pytest -q          # self-tests: no network, no arduino-cli, no board
 python -m pyflakes src tests
 python -m mypy               # package and paths from pyproject.toml
 python -m xewe brand-lint .
+python -m xewe format --check   # ruff 0.17.0 (CI pins it); blocking in CI
 ```
 
-Tests import the installed package: after a change, `pip install .` into the venv first.
+Tests import the installed package: install the checkout once with `pip install -e .` (an
+editable install follows every change).
 
 ### Using xewe from a project
 

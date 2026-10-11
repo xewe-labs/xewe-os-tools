@@ -35,9 +35,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ inputs.python-version }}
 
@@ -69,7 +69,7 @@ jobs:
       # ~6 GB installed (1.7 GB download): restored instead of downloaded when the pins are unchanged.
       # downloads/ (the archives) is not cached: the installed tree is enough.
       - name: Cache the shared toolchain (~/.xewe-os/build-tools)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.xewe-os/build-tools/bin
@@ -101,7 +101,7 @@ jobs:
         run: build/tools/.venv/bin/python -m xewe test --no-board
 
       - name: Upload the firmware
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: firmware-${{ github.sha }}
           path: |
@@ -121,8 +121,8 @@ jobs:
     continue-on-error: ${{ !inputs.strict_lint }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ inputs.python-version }}
       - name: Install the tools at the manifest ref

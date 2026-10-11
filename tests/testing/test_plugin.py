@@ -225,7 +225,7 @@ def test_boot_silence_reopens_then_ends_session(pytester: pytest.Pytester, proje
 
 def test_board_gone_from_usb_at_boot_ends_session(pytester: pytest.Pytester, project: Paths, board_attached,
                                                   monkeypatch: pytest.MonkeyPatch) -> None:
-    """TV4 D2 / TV5 D3: the post-flash reset unplugs the board; the boot wait reads a closed handle."""
+    """The post-flash reset unplugs the board; the boot wait reads a closed handle."""
     monkeypatch.setattr(plugin, "BOOT_TIMEOUT_SECONDS", 0.3)
     monkeypatch.setattr(serialio, "RECONNECT_SECONDS", 0.1)
     monkeypatch.setattr(UnpluggedSerial, "gone", False)
@@ -301,7 +301,7 @@ def test_after_2(serial):
 
 def test_silent_board_after_a_test_timeout_ends_session(pytester: pytest.Pytester, project: Paths, board_attached,
                                                         monkeypatch: pytest.MonkeyPatch) -> None:
-    """TV1 F7: a restart that never prints again fails one test, not every later one."""
+    """A restart that never prints again fails one test, not every later one."""
     monkeypatch.setattr(plugin, "PROBE_TIMEOUT_SECONDS", 0.3)
     write_tests(project.root, RESTART_TESTS, unit=None)
     alive = [True]

@@ -53,8 +53,8 @@ Runtime dependencies: `pyserial`, `pytest`. esptool comes from the pinned esp32 
 | `xewe modules list\|select\|validate\|generate` | the modules repo checkout, `build/modules/`, `src/Modules.h` and the module blocks in `Config.h` |
 | `xewe manifest show\|update` | `xewe.toml` refs vs installed refs; move refs to new tags. `ref = "latest"` tracks the newest commit of the repo's default branch (re-fetched on every setup); a tag freezes it (`xewe manifest update` replaces `latest` with the newest tag, `--to latest` sets it back) |
 | `xewe clean [--all] [--modules]` | delete generated output (`build/builds`, `build/tmp`; `--all`: all of `build/` but `tools/`; `--modules`: also `build/modules` and `src/Modules.h`; never `~/.xewe-os/build-tools`) |
-| `xewe format [--check] [PATH...]` | clang-format `*.h *.hpp *.c *.cpp *.ino` (root, `src/`, `examples/`, `tests/unit/`; never `build/`) with the XeWe style shipped with the tools (no column alignment: it costs tokens and turns one-line changes into realigned blocks; a `.clang-format` in the project is not read), and `ruff format` the Python when ruff is installed; `--check` exits 1 listing files that would change. Runs in a project or a library. clang-format: `XEWE_CLANG_FORMAT`, `PATH` or the tools venv (`pip install clang-format`), version 14 or newer |
-| `xewe brand-lint [DIR...]` | fail (exit 1) on banned spellings of the brand in the text files under each `DIR` (default `.`; rules: `xewe-os/doc/naming.md`); skips `.git`, `build`, `.venv`, `static`, `__pycache__`, `history`, `test_logs`, binary files, `naming.md` and dotenv files. Needs no project |
+| `xewe format [--check] [PATH...]` | clang-format `*.h *.hpp *.c *.cpp *.ino` (root, `src/`, `examples/`, `tests/unit/`; never `build/`) with the XeWe style shipped with the tools (no column alignment: it costs tokens and turns one-line changes into realigned blocks; a `.clang-format` in the project is not read), and `ruff format` the Python when ruff is installed; `--check` exits 1 listing files that would change. Runs in a project, a library, or any other directory (the current one is then the root; the modules repo passes `modules tools`). clang-format: `XEWE_CLANG_FORMAT`, `PATH` or the tools venv (`pip install clang-format`), version 14 or newer |
+| `xewe brand-lint [DIR...]` | fail (exit 1) on banned spellings of the brand in the text files under each `DIR` (default `.`; rules: `xewe-os/doc/naming.md`); in a git work tree only the files git does not ignore; skips `.git`, `build`, `.venv`, `static`, `__pycache__`, `history`, `test_logs`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `*.egg-info`, binary files, `naming.md` and dotenv files. Needs no project |
 | `xewe doctor` | check the environment (on Apple silicon also Rosetta 2, which the esp32 core's `ctags` needs) |
 | `xewe release --version X.Y.Z [--matrix FILE] [--notes FILE]` | release matrix into `static/firmware/releases/<version>/`, each `meta.json` recording the resolved core, modules, tools and library commits; writes `[project] version` and prints the git and gh commands (CI runs it on a version tag: [doc/ci.md](doc/ci.md)) |
 
@@ -164,6 +164,41 @@ board: no port is listed, probed or opened. `flash`/`run` build and then exit 4,
 `provision` and `boards` exit 4, all with `board access disabled (--no-board / XEWE_NO_BOARD)`;
 `xewe test` reports board tests as "compiled, not run" and exits 0. Agents in compile-only mode
 must set `XEWE_NO_BOARD=1`.
+
+## Releasing
+
+Maintainers only. Tags are `X.Y.Z` with no `v` (the older `v0.1.0` and `v0.1.1` stay as they are).
+A release is a "prepare" commit, then one command:
+
+```sh
+scripts/release.sh --prepare 3.0.0   # sets every version location, creates releases/3.0.0/ skeletons; no git change
+# fill releases/3.0.0/notes.txt and testcard.md, then commit "prepare 3.0.0" and push main
+scripts/release.sh 3.0.0 --dry-run   # prints every step and HEAD's CI state, changes nothing
+scripts/release.sh 3.0.0
+```
+
+The version locations are `pyproject.toml`, `src/xewe/__init__.py`, `DEFAULT_TOOLS_REF` in
+`src/xewe/env/pins.py` and the examples in `doc/spec.md`, `doc/ci.md` and this file
+(`VERSION_LOCATIONS` in the script). The release itself runs five numbered stages: 1 preflight
+(version `X.Y.Z`; on `main`, clean and level with `origin/main` after a fetch; the tag free here and on origin;
+`releases/<version>/` committed; every version location says the version, or it lists the ones
+that do not; `gh` logged in); 2 waits for the `ci` workflow on HEAD to pass; 3 runs the pytest
+suite; 4 tags HEAD `<version>` (annotated), pushes the tag and creates the GitHub Release from
+`notes.txt` with `testcard.md` attached; 5 prints how consumers pick it up:
+
+```toml
+[tools]
+repo = "https://github.com/xewe-labs/xewe-os-tools"
+ref = "3.0.0"   # the tools tag
+```
+
+and workflow callers `uses: xewe-labs/xewe-os-tools/.github/workflows/xewe-build.yml@3.0.0`.
+
+Options: `--ci-timeout <min>` (default 30) bounds the CI wait; `--skip-ci` skips it, for
+emergencies only, with a loud warning. If the tag exists but the GitHub Release does not, the same
+command only creates the release (pushing the tag first if origin lacks it), provided the tagged
+commit's files say the version (otherwise it lists the stale locations); the branch, clean-tree and
+origin checks are skipped then.
 
 ## License
 

@@ -10,13 +10,19 @@ same flow. Runners are `ubuntu-latest`; nothing needs a secret beyond the automa
 | `xewe-build.yml` | `xewe-os`, every project (`ci.yml`) | `./setup.sh` → `xewe build` per chip (default c3,c6,s3) → `xewe test --no-board` → upload `.bin` + `manifest.json` + `meta.json` + `build_config.toml`. A separate **lint** job (`xewe format --check`, `xewe brand-lint`) is non-blocking unless the caller passes `strict_lint: true` |
 | `xewe-release.yml` | the same callers, on a `v*` tag | `./setup.sh` → `xewe release` → GitHub Release (assets) → commit to the `releases` branch |
 | `xewe-core-tests.yml` | `xewe-os-core` (`tests.yml`) | `tests/unit/run.sh` (ArduinoJson at the `arduinojson_ref` input, fetched by `git clone`), `arduino-lint`, the examples compiled per chip (see below), `xewe format --check` and `xewe brand-lint`; every job blocks. Releases are core's own `scripts/release.sh` |
-| `xewe-modules-tests.yml` | `xewe-os-modules` (`tests.yml`) | template clone as a harness, `./setup.sh --modules all` with the modules source = the commit under test, `tools/validate.py`, `xewe test --unit-only`, c3 compile; `xewe brand-lint` non-blocking |
+| `xewe-modules-tests.yml` | `xewe-os-modules` (`tests.yml`) | template clone as a harness, `./setup.sh --modules all` with the modules source = the commit under test, `tools/validate.py`, `xewe test --unit-only`, c3 compile; `xewe format --check modules tools` (blocking only with `strict_lint: true`, default false until the modules format commit) and `xewe brand-lint` (blocking), both from the tools at the `tools_ref` input |
 | `xewe-board.yml` | nobody yet | board tests on a self-hosted runner with the board attached: setup, flash, first boot, provision, two test passes with a liveness probe and an optional power-cycle command (see below) |
 | `xewe-pages.yml` | nobody yet | optional web flasher on GitHub Pages, rebuilt from the GitHub Releases (ESP Web Tools manifests, version picker); an alternative to the `releases` branch |
-| `ci.yml` | this repo | pytest (3.11–3.13), pyflakes, mypy (settings in `pyproject.toml`), actionlint on these workflows; `xewe brand-lint` non-blocking |
+| `ci.yml` | this repo | pytest (3.11–3.13), pyflakes, mypy (settings in `pyproject.toml`), actionlint on these workflows, `xewe format --check` and `xewe brand-lint` from this checkout; every job blocks |
 
-Callers reference `@main`, matching the `latest` refs the manifests use until v3. Tag-pin them
-(`@v0.2.0`) when the manifests freeze their refs.
+Callers pin a tools tag, the same one their `xewe.toml [tools] ref` names, for example
+`uses: xewe-labs/xewe-os-tools/.github/workflows/xewe-build.yml@3.0.0`. Tags are `X.Y.Z` with no
+`v` across the ecosystem from 3.0.0 on. `@main` follows the newest tools (development only).
+
+Action versions: every action is on its newest major that runs on Node 24 (checkout v7,
+setup-python v7, cache v6, upload-artifact v7, configure-pages v6, upload-pages-artifact v5,
+deploy-pages v5, arduino-lint-action v3). `arduino/setup-arduino-cli` stays at v2: no release
+runs on Node 24 yet, so the core `examples` job still shows the Node 20 deprecation notice.
 
 ## Core example builds
 
@@ -29,6 +35,9 @@ ArduinoJson from the Library Manager at the `arduinojson_ref` version, then runs
 `examples/*/*.ino`. The `format` job installs the tools at `tools_ref` with ruff and clang-format at
 pinned versions (`XEWE_CLANG_FORMAT` points at that clang-format, so the runner's own one is not
 used), so a new upstream release does not fail a tree that was formatted with the pinned versions.
+The modules `format` job and the tools' own `ci.yml` `format` job pin the same versions (ruff
+0.17.0, clang-format 23.1.3). The modules repo is neither a project nor a library, so its job
+names the folders: `xewe format --check modules tools`.
 
 ## The shared toolchain cache
 
@@ -90,8 +99,8 @@ is a proposal only, kept in the xewe-labs workspace at `docs/phase4/reports/ci-c
 - Actions → General → Workflow permissions: "Read repository contents" is enough; the callers
   raise it to `contents: write` for the release job only.
 - Branch protection on `main`: require the `build / build and host tests` check (projects), the
-  `core / ...` checks (core) or `modules / ...` (modules). Do not require the lint jobs while they
-  are non-blocking.
+  `core / ...` checks (core) or `modules / ...` (modules). Do not require the lint or format jobs
+  while they are non-blocking.
 - Leave `releases` unprotected, or give a ruleset a bypass for GitHub Actions: the release job
   pushes to it with `GITHUB_TOKEN`. Block force-pushes and deletion there.
 
@@ -103,4 +112,8 @@ whitespace and format commits have landed in a repo. Then, in that repo's `ci.ym
 "(non-blocking)") and a failure fails the run; add it to the required checks if you want merges
 gated on it. A step whose command the tools ref in `xewe.toml` does not have yet is skipped with
 a notice.
+
+The modules repo does the same with `strict_lint: true` under its `modules` job's `with:` once its
+format commit has landed (today 12 of its 13 C/C++ files would change); its brand-lint already
+blocks. Core and the tools have no switch: their format and brand-lint jobs always block.
 

@@ -90,7 +90,7 @@ def test_reconnect() -> None:
 
 
 def test_closed_handle_after_unplug_is_a_clear_error(no_sleep: None, monkeypatch: pytest.MonkeyPatch) -> None:
-    """TV4 D2 / TV5 D3: the board left USB and the handle was closed under the read (raw TypeError before)."""
+    """The board left USB and the handle was closed under the read (raw TypeError before)."""
     monkeypatch.setattr(serialio, "RECONNECT_SECONDS", 0.1)
     monkeypatch.setattr(UnpluggedSerial, "gone", False)
     console = Console("/dev/x", factory=UnpluggedSerial).open()

@@ -26,7 +26,7 @@ class Pause:
         self.seconds = seconds
 
 
-# The S3's Wi-Fi prompt as printed on the real board (2026-10-08), verbatim.
+# The S3's Wi-Fi prompt as printed on a real board, verbatim.
 REAL_NETWORKS = ("!user", "fuck villa torino", "wifihigh5", "VillaTorinoSucks", "XeWe Laptop Chiller",
                  "Emerald Sky", "XFSETUP-7148", "NoWiFi", "The Return of Pings-2.4", "NETGEAR",
                  "smitty werbenyagermanjensen", "notyomamaswifi", "Benidorm", "ATTuhhDXCb")
@@ -433,6 +433,16 @@ def test_unlisted_ssid_rescans_once_then_custom(capsys: pytest.CaptureFixture[st
     assert run(fake, settings(ssid="Hidden Net")) == 0
     assert fake.answers[:4] == ["-2", "-3", "Hidden Net", PASSWORD]
     assert 'wifi "Hidden Net" (custom SSID, not in the scan)' in capsys.readouterr().out
+
+
+def test_rescan_log_masks_the_ssid(caplog: pytest.LogCaptureFixture) -> None:
+    transcript = [*resumed(), *scan_block(REAL_NETWORKS[:5]), "Enter custom SSID: ", "> ", IN,
+                  *join_block("Hidden Net"), *module_block("Time"), *time_block(), *finish_block()]
+    caplog.set_level("INFO", logger="xewe")
+    assert run(FakeBoard(transcript), settings(ssid="Hidden Net")) == 0
+    assert "network 'H***' is not in the scan (14 networks); rescanning" in caplog.text
+    assert "Hidden" not in caplog.text
+    assert provision.mask("X") == "X***"
 
 
 def test_ssid_found_after_rescan() -> None:

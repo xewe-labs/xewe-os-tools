@@ -27,7 +27,8 @@ def find_root(explicit: str | os.PathLike[str] | None = None, start: Path | None
               library: bool = False) -> Path:
     """Return the project root: ``explicit`` if given, else the nearest ancestor with xewe.toml.
 
-    With ``library`` a directory with ``library.properties`` is a root too (``format``)."""
+    With ``library`` (``format``) a directory with ``library.properties`` is a root too, and when no
+    ancestor has either file the start directory is the root (a repo that is neither, e.g. the tools)."""
 
     def is_root(d: Path) -> bool:
         return (d / LOCK_NAME).is_file() or (library and (d / LIBRARY_PROPERTIES).is_file())
@@ -42,6 +43,8 @@ def find_root(explicit: str | os.PathLike[str] | None = None, start: Path | None
     for candidate in (here, *here.parents):
         if is_root(candidate):
             return candidate
+    if library:
+        return here
     raise XeWeError(f"no {wanted} in {here} or any parent; pass --project DIR", EXIT_USAGE)
 
 

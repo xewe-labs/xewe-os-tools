@@ -41,6 +41,16 @@ def test_collect_defaults(proj: Paths) -> None:
                              "tests/unit/test_foo.cpp"]
 
 
+def test_collect_python_keeps_nested_build_packages(proj: Paths) -> None:
+    for rel in ("src/pkg/build/mod.py", "tests/build/test_b.py", "examples/A/build/gen.py", "build/tools/x.py",
+                "src/__pycache__/c.py", ".hidden/h.py", "examples/A/build/A.ino.cpp"):
+        (proj.root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (proj.root / rel).write_text("x = 1\n")
+    py = sorted(proj.rel(f) for f in fmt.collect(proj, [], {".py"}, fmt.PY_DIRS))
+    assert py == ["examples/A/build/gen.py", "src/pkg/build/mod.py", "tests/build/test_b.py"]
+    assert "examples/A/build/A.ino.cpp" not in [proj.rel(f) for f in fmt.collect(proj, [], fmt.CPP_SUFFIXES, fmt.CPP_DIRS)]
+
+
 def test_check_lists_and_changes_nothing(proj: Paths, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["format", "--check"]) == 1
     out = capsys.readouterr().out
@@ -103,6 +113,18 @@ def test_format_runs_in_a_library(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert (lib / "src" / "Lib.h").read_text() == UNALIGNED
 
 
+def test_format_without_a_project_uses_the_current_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = tmp_path / "repo"  # neither xewe.toml nor library.properties, like the tools or modules repo
+    (repo / "mods" / "a").mkdir(parents=True)
+    (repo / "mods" / "a" / "A.h").write_text(ALIGNED)
+    monkeypatch.setenv("XEWE_CLANG_FORMAT", str(FAKES / "clang-format"))
+    monkeypatch.setattr(fmt, "ruff_available", lambda: False)
+    monkeypatch.chdir(repo)
+    assert main(["format", "--check", "mods"]) == 1
+    assert main(["format", "mods"]) == 0
+    assert (repo / "mods" / "a" / "A.h").read_text() == UNALIGNED
+
+
 def test_find_order(proj: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("XEWE_CLANG_FORMAT")
     monkeypatch.setattr(fmt.sys, "executable", str(tmp_path / "venv" / "bin" / "python"))
@@ -154,3 +176,20 @@ def test_python_through_ruff(proj: Paths, tmp_path: Path, monkeypatch: pytest.Mo
     argvs = [json.loads(ln) for ln in (tmp_path / "ruff.jsonl").read_text().splitlines()]
     assert argvs == [["format", "--check", str(proj.root / "tests/board/test_x.py")],
                      ["format", "--quiet", str(proj.root / "tests/board/test_x.py")]]
+
+
+@pytest.mark.parametrize("out", [
+    "Would reformat: {f}\n1 file would be reformatted\n",
+    "unformatted: File would be reformatted\n   --> {f}:3:1\n    |\n1 file would be reformatted\n",
+    "{f}:3:1: unformatted: File would be reformatted\n1 file would be reformatted\n",
+])
+def test_ruff_check_output_old_and_new(proj: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                       capsys: pytest.CaptureFixture[str], out: str) -> None:
+    (proj.root / "tests/board/skip.cpp").unlink()
+    (proj.root / "tests/board/test_x.py").write_text("x=1\n")
+    fake = tmp_path / "ruff.py"
+    fake.write_text(f"import sys\nprint({out!r}.format(f=sys.argv[-1]), end='')\nsys.exit(1)\n")
+    monkeypatch.setattr(fmt, "RUFF", [sys.executable, str(fake)])
+    monkeypatch.setattr(fmt, "ruff_available", lambda: True)
+    assert main(["format", "--check", "tests/board"]) == 1
+    assert "would reformat tests/board/test_x.py\nformat: 0 C++ and 1 Python files, 1 would reformat" in capsys.readouterr().out

@@ -1,4 +1,4 @@
-"""Supported chips (D1): FQBN board, chip family for the web-flasher manifest, esptool id."""
+"""Supported chips: FQBN board, chip family for the web-flasher manifest, esptool id."""
 
 from __future__ import annotations
 

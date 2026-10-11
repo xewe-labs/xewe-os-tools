@@ -45,12 +45,12 @@ SILENT_MESSAGE = (
     "board on {port} is silent after a restart (no reply to {probe!r}, even after reopening the port); "
     "power-cycle it (unplug and replug), then re-run the tests"
 )
-"""``pytest.exit`` reason when ``revive`` fails: the rest of the session would only time out (TV1 F7)."""
+"""``pytest.exit`` reason when ``revive`` fails: the rest of the session would only time out."""
 GONE_MESSAGE = (
     "board on {port} disappeared from USB (the port did not come back, even after reopening it); "
     "power-cycle it (unplug and replug), then re-run the tests"
 )
-"""``pytest.exit`` reason when ``revive`` fails because the port cannot be reopened (TV4 D2, TV5 D3)."""
+"""``pytest.exit`` reason when ``revive`` fails because the port cannot be reopened."""
 UNPROVISIONED_MESSAGE = (
     "board on {port} is unprovisioned (first-boot prompt 'Name your device'); "
     "provision it once with `xewe provision` (RUNBOOK section 3, first-boot provisioning), then re-run the tests"

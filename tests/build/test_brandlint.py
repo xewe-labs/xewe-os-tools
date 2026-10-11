@@ -40,7 +40,7 @@ def test_allowed_spellings_are_clean(tree: Path, capsys: pytest.CaptureFixture[s
 def test_skipped_places(tree: Path, capsys: pytest.CaptureFixture[str]) -> None:
     word = BANNED[0]
     for rel in (".git/x", "build/x", ".venv/x", "static/x", "__pycache__/x", "history/x", "test_logs/x",
-                "sub/build/x", "doc/naming.md", "NAMING.md", "Naming.MD", dotenv.FILENAME, dotenv.FILENAME + ".local"):
+                ".pytest_cache/x", ".mypy_cache/x", ".ruff_cache/x", "src/pkg.egg-info/x", "sub/build/x", "doc/naming.md", "NAMING.md", "Naming.MD", dotenv.FILENAME, dotenv.FILENAME + ".local"):
         (tree / rel).parent.mkdir(parents=True, exist_ok=True)
         (tree / rel).write_text(word + "\n")
     (tree / "bin.dat").write_bytes(word.encode() + b"\0\n")
@@ -51,6 +51,33 @@ def test_skipped_places(tree: Path, capsys: pytest.CaptureFixture[str]) -> None:
     (tree / ".github" / "ci.yml").write_text("# " + word + "\n")
     assert brandlint.hits(["."]) == ["./.github/ci.yml:1:# " + word, "./doc/other.md:1:" + word]
     capsys.readouterr()
+
+
+def test_git_work_tree_scans_only_files_git_does_not_ignore(tree: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    word = BANNED[0]
+    for rel in ("a.md", "new.md", "cache/x", "history/x", "doc/naming.md"):
+        (tree / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tree / rel).write_text(word + "\n")
+    (tree / "gone.md").write_text(word + "\n")
+    (tree / "gone.md").unlink()
+    calls: list[tuple[str, ...]] = []
+
+    def git(*args: str, **kwargs: object) -> str:
+        calls.append(args)
+        if "rev-parse" in args:
+            return "true\n"
+        # tracked and untracked files git does not ignore: cache/ is ignored, gone.md deleted
+        return "\0".join(["a.md", "new.md", "history/x", "doc/naming.md", "gone.md"]) + "\0"
+
+    monkeypatch.setattr(brandlint, "git", git)
+    assert brandlint.hits(["."]) == ["./a.md:1:" + word, "./new.md:1:" + word]
+    assert calls[1] == ("-C", ".", "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+
+
+def test_outside_a_work_tree_walks_the_directory(tree: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tree / "a.md").write_text(BANNED[0] + "\n")
+    monkeypatch.setattr(brandlint, "git", lambda *a, **k: "")
+    assert brandlint.hits(["."]) == ["./a.md:1:" + BANNED[0]]
 
 
 def test_several_dirs_and_missing_dir(tree: Path, capsys: pytest.CaptureFixture[str]) -> None:

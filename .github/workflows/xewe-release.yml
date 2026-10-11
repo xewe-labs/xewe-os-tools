@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Version from the tag
         id: ver
@@ -56,7 +56,7 @@ jobs:
           pre=false; [[ "$full" != "$base" ]] && pre=true
           { echo "tag=$tag"; echo "version=$full"; echo "base=$base"; echo "prerelease=$pre"; } >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ inputs.python-version }}
 
@@ -82,7 +82,7 @@ jobs:
           PY
 
       - name: Cache the shared toolchain (~/.xewe-os/build-tools)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.xewe-os/build-tools/bin
@@ -253,7 +253,7 @@ jobs:
           echo "pushed $BR: $rel/$VERSION"
 
       - name: Upload the release folder
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-${{ steps.ver.outputs.version }}
           path: ${{ steps.dir.outputs.path }}
