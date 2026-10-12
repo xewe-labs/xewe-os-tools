@@ -3,9 +3,12 @@
 # publish it twice:
 #   1. a GitHub Release with the binaries and firmware-<version>.tar.gz (canonical, permanent);
 #      every meta.json records the resolved commits of core, modules, tools and libraries
-#   2. a commit of the same folder to the `releases` branch (static files for the web flasher)
-# Tags: vX.Y.Z (release) or vX.Y.Z-<suffix> (pre-release, e.g. v2.0.0-rc1). X.Y.Z must equal
-# [project] version in xewe.toml at the tagged commit. See doc/ci.md.
+#   2. a commit of the same folder to `releases_branch` (static files for the web flasher): an
+#      orphan `releases` branch by default, or the project's own `main`, where the commit adds
+#      static/firmware/releases/<version>/ and keeps the rest of the tree; .bin files go to Git LFS
+#      when the branch's .gitattributes says so
+# Tags: X.Y.Z (release) or X.Y.Z-<suffix> (pre-release, e.g. 3.1.0-rc1); a leading `v` is
+# accepted. X.Y.Z must equal [project] version in xewe.toml at the tagged commit. See doc/ci.md.
 name: xewe-release
 
 on:
@@ -16,7 +19,7 @@ on:
         type: boolean
         default: true
       releases_branch:
-        description: "branch that holds static/firmware/releases/ for the web flasher"
+        description: "branch that holds static/firmware/releases/ for the web flasher (`releases`, or `main` to commit next to the source)"
         type: string
         default: "releases"
       modules:
@@ -50,7 +53,7 @@ jobs:
           [[ "$GITHUB_REF_TYPE" == tag ]] || { echo "::error::run on a tag (got $GITHUB_REF)"; exit 1; }
           full="${tag#v}"
           base="${full%%-*}"
-          [[ "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::tag $tag is not vX.Y.Z[-suffix]"; exit 1; }
+          [[ "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::tag $tag is not X.Y.Z[-suffix]"; exit 1; }
           manifest="$(python3 -c 'import tomllib; print(tomllib.load(open("xewe.toml", "rb"))["project"]["version"])')"
           [[ "$manifest" == "$base" ]] || { echo "::error::tag $tag does not match [project] version $manifest in xewe.toml; bump xewe.toml first"; exit 1; }
           pre=false; [[ "$full" != "$base" ]] && pre=true
@@ -206,6 +209,10 @@ jobs:
           set -euo pipefail
           w="$RUNNER_TEMP/releases-branch"
           url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          # Git LFS (preinstalled on ubuntu-latest): the clean filter and the pre-push upload for the
+          # .bin files the branch's .gitattributes routes to LFS; no download of older ones (skip smudge)
+          git lfs install --local
+          export GIT_LFS_SKIP_SMUDGE=1
           if git ls-remote --exit-code --heads origin "$BR" >/dev/null; then
             git fetch -q --depth 1 origin "$BR"
             git worktree add -q -B "$BR" "$w" FETCH_HEAD
@@ -246,11 +253,20 @@ jobs:
           (root / "index.json").write_text(json.dumps({"releases": entries}, indent=2) + "\n")
           PY
           git -C "$w" add -A
-          if git -C "$w" diff --cached --quiet; then echo "releases branch already up to date"; exit 0; fi
+          if git -C "$w" diff --cached --quiet; then echo "$BR already up to date"; exit 0; fi
+          # a .bin that .gitattributes routes to LFS must be staged as a pointer, not as the binary
+          while IFS= read -r f; do
+            if [[ "$(git -C "$w" check-attr filter -- "$f" | sed 's/.*: filter: //')" == lfs ]] \
+              && (( $(git -C "$w" cat-file -s ":$f") > 1024 )); then
+              echo "::error::$f is not an LFS pointer (git lfs install failed?)"; exit 1
+            fi
+          done < <(git -C "$w" diff --cached --name-only -- "$rel/$VERSION" | grep '\.bin$' || true)
+          # [skip ci]: a push to a branch with CI would otherwise build the same commit again
           git -C "$w" -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-            commit -q -m "release $VERSION ($TAG, ${GITHUB_SHA::7})"
+            commit -q -m "release $VERSION ($TAG, ${GITHUB_SHA::7}) [skip ci]"
           git -C "$w" push -q "$url" "HEAD:refs/heads/$BR"
           echo "pushed $BR: $rel/$VERSION"
+          git -C "$w" lfs ls-files | grep -F "$rel/$VERSION/" || true
 
       - name: Upload the release folder
         uses: actions/upload-artifact@v7

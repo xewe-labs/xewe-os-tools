@@ -8,7 +8,7 @@ same flow. Runners are `ubuntu-latest`; nothing needs a secret beyond the automa
 | Workflow (this repo) | Called by | What it runs |
 |---|---|---|
 | `xewe-build.yml` | `xewe-os`, every project (`ci.yml`) | `./setup.sh` → `xewe build` per chip (default c3,c6,s3) → `xewe test --no-board` → upload `.bin` + `manifest.json` + `meta.json` + `build_config.toml`. A separate **lint** job (`xewe format --check`, `xewe brand-lint`) is non-blocking unless the caller passes `strict_lint: true` |
-| `xewe-release.yml` | the same callers, on a `v*` tag | `./setup.sh` → `xewe release` → GitHub Release (assets) → commit to the `releases` branch |
+| `xewe-release.yml` | the same callers, on an `X.Y.Z` tag | `./setup.sh` → `xewe release` → GitHub Release (assets) → commit of the release folder to `releases_branch` (`releases`, or `main`) |
 | `xewe-core-tests.yml` | `xewe-os-core` (`tests.yml`) | `tests/unit/run.sh` (ArduinoJson at the `arduinojson_ref` input, fetched by `git clone`), `arduino-lint`, the examples compiled per chip (see below), `xewe format --check` and `xewe brand-lint`; every job blocks. Releases are core's own `scripts/release.sh` |
 | `xewe-modules-tests.yml` | `xewe-os-modules` (`tests.yml`) | template clone as a harness, `./setup.sh --modules all` with the modules source = the commit under test, `tools/validate.py`, `xewe test --unit-only`, c3 compile; `xewe format --check modules tools` (blocking only with `strict_lint: true`, default false until the modules format commit) and `xewe brand-lint` (blocking), both from the tools at the `tools_ref` input |
 | `xewe-board.yml` | nobody yet | board tests on a self-hosted runner with the board attached: setup, flash, first boot, provision, two test passes with a liveness probe and an optional power-cycle command (see below) |
@@ -16,7 +16,7 @@ same flow. Runners are `ubuntu-latest`; nothing needs a secret beyond the automa
 | `ci.yml` | this repo | pytest (3.11–3.13), pyflakes, mypy (settings in `pyproject.toml`), actionlint on these workflows, `xewe format --check` and `xewe brand-lint` from this checkout; every job blocks |
 
 Callers pin a tools tag, the same one their `xewe.toml [tools] ref` names, for example
-`uses: xewe-labs/xewe-os-tools/.github/workflows/xewe-build.yml@3.0.0`. Tags are `X.Y.Z` with no
+`uses: xewe-labs/xewe-os-tools/.github/workflows/xewe-build.yml@3.0.1`. Tags are `X.Y.Z` with no
 `v` across the ecosystem from 3.0.0 on. `@main` follows the newest tools (development only).
 
 Action versions: every action is on its newest major that runs on Node 24 (checkout v7,
@@ -51,8 +51,9 @@ the calling repository (10 GB limit each; one entry is about 2 GB compressed).
 
 ## Releases
 
-Push an annotated tag `vX.Y.Z` on a commit whose `xewe.toml [project] version` is `X.Y.Z`; the tag
-message becomes the release notes. `vX.Y.Z-<suffix>` (for example `v2.0.0-rc1`) is a pre-release:
+Push an annotated tag `X.Y.Z` (no `v`; a leading `v` is still accepted) on a commit whose
+`xewe.toml [project] version` is `X.Y.Z`; the tag message becomes the release notes.
+`X.Y.Z-<suffix>` (for example `3.1.0-rc1`) is a pre-release:
 the build uses version `X.Y.Z` (what `xewe release` accepts) and the folder is renamed to
 `X.Y.Z-<suffix>`, so a pre-release never takes the final version's place.
 
@@ -65,15 +66,22 @@ A tools ref whose `xewe release` does not write these fields gets them filled in
 
 Each release is published twice:
 
-| | GitHub Release (always) | `releases` branch (`publish_branch`, default true) |
+| | GitHub Release (always) | `releases_branch` (`publish_branch`, default true) |
 |---|---|---|
 | Holds | per-chip `.bin`, `firmware-<v>.tar.gz` (the whole folder, `meta.json` included), notes with the resolved commits | `static/firmware/releases/<v>/` exactly as `xewe release` lays it out, plus `index.json` (all versions, newest first) |
 | For | people and scripts; canonical and permanent | the web flasher: static files at stable URLs (`raw.githubusercontent.com/<org>/<repo>/releases/...`, or GitHub Pages from that branch), no CORS-blocked asset redirects |
 | Cost | none in git | binaries in git history, but on an orphan branch, never in `main` clones (`git clone --single-branch`) |
 
-The branch keeps `main` small and is written only by CI. The template keeps
-`publish_branch: false` until its `binaries` branch is retired or reused
-(`releases_branch: binaries`).
+The orphan `releases` branch (the default) keeps `main` small and is written only by CI.
+`releases_branch: main` commits the folder into the project's own `main` instead, after the
+release: one bot commit `release <v> (<tag>, <sha7>) [skip ci]` that adds
+`static/firmware/releases/<v>/` (and `index.json`) and leaves the rest of the tree as it is, so the
+tag itself does not contain its binaries. The commit goes through Git LFS: the job runs
+`git lfs install --local`, the `.gitattributes` of `main` decides what is stored in LFS (for
+example `static/**/*.bin filter=lfs diff=lfs merge=lfs -text`), and the job fails if a `.bin` it
+routes to LFS would be committed as a plain blob. Older binaries are not downloaded
+(`GIT_LFS_SKIP_SMUDGE=1`). A push with `GITHUB_TOKEN` does not start new workflow runs, and
+`[skip ci]` covers other tokens. The template (`xewe-os`) publishes this way.
 
 The release job needs `permissions: contents: write`, which the caller grants to that job only.
 
@@ -101,8 +109,9 @@ is a proposal only, kept in the xewe-labs workspace at `docs/phase4/reports/ci-c
 - Branch protection on `main`: require the `build / build and host tests` check (projects), the
   `core / ...` checks (core) or `modules / ...` (modules). Do not require the lint or format jobs
   while they are non-blocking.
-- Leave `releases` unprotected, or give a ruleset a bypass for GitHub Actions: the release job
-  pushes to it with `GITHUB_TOKEN`. Block force-pushes and deletion there.
+- Leave `releases_branch` (`releases`, or `main` when the release commits there) unprotected, or
+  give a ruleset a bypass for GitHub Actions: the release job pushes to it with `GITHUB_TOKEN`.
+  Block force-pushes and deletion there.
 
 ## Making lint blocking
 

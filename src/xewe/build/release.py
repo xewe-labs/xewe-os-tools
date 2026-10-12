@@ -101,15 +101,15 @@ def default_matrix() -> Matrix:
 
 
 def publish_commands(version: str) -> list[str]:
-    """The commands that publish the release (printed for a human to run)."""
+    """The commands that publish the release (printed for a human to run); tags are ``X.Y.Z``, no ``v``."""
     rel = f"static/firmware/releases/{version}"
     return [
         f"git add xewe.toml {rel}",
         f'git commit -m "release {version}"',
-        f'git tag -a v{version} -m "Release {version}"',
-        f"git push origin v{version}",
-        f"gh release create v{version} static/firmware/releases/firmware-{version}.tar.gz --verify-tag "
-        f"--title v{version} --notes-file {rel}/release_notes.txt",
+        f'git tag -a {version} -m "Release {version}"',
+        f"git push origin {version}",
+        f"gh release create {version} static/firmware/releases/firmware-{version}.tar.gz --verify-tag "
+        f"--title {version} --notes-file {rel}/release_notes.txt",
     ]
 
 

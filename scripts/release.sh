@@ -45,6 +45,7 @@ VERSION_LOCATIONS=(
   'doc/spec.md|^tools = [{] ref = "[^"]*"|tools = { ref = "{V}"'
   'doc/ci.md|(xewe-os-tools/[.]github/workflows/[a-z-]+[.]yml)@v?[0-9]+[.][0-9]+[.][0-9]+|\1@{V}'
   'README.md|^ref = "[^"]*"( *# the tools tag)|ref = "{V}"\1'
+  'README.md|(xewe-os-tools/[.]github/workflows/[a-z-]+[.]yml)@v?[0-9]+[.][0-9]+[.][0-9]+|\1@{V}'
 )
 
 die() { echo "error: $*" >&2; exit 1; }

@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import tarfile
 from pathlib import Path
@@ -72,7 +73,8 @@ def test_default_matrix_release(
     out = capsys.readouterr().out
     for cmd in release.publish_commands("2.1.0"):
         assert f"  {cmd}" in out
-    assert f"gh release create v2.1.0 {REL}/firmware-2.1.0.tar.gz --verify-tag" in out
+    assert f"gh release create 2.1.0 {REL}/firmware-2.1.0.tar.gz --verify-tag" in out
+    assert "git push origin 2.1.0" in out and " v2.1.0" not in out
     assert not any(a[0] == "git" for a in no_git_writes)
 
 
@@ -192,3 +194,57 @@ def test_with_provenance_keeps_ref_fallback() -> None:
         "libraries",
     ]
     assert out["core_ref"] == "1.2.0" and out["modules_ref"] == "latest"
+
+
+WORKFLOW = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "xewe-release.yml"
+
+
+def _step_script(name: str) -> str:
+    """The ``run: |`` block of the xewe-release.yml step called ``name``, dedented."""
+    lines = WORKFLOW.read_text().splitlines()
+    start = lines.index(f"      - name: {name}")
+    run = next(i for i in range(start, len(lines)) if lines[i].strip() == "run: |")
+    indent = len(lines[run]) - len(lines[run].lstrip()) + 2
+    body: list[str] = []
+    for line in lines[run + 1 :]:
+        if line.strip() and len(line) - len(line.lstrip()) < indent:
+            break
+        body.append(line[indent:])
+    return "\n".join(body) + "\n"
+
+
+@pytest.mark.parametrize(
+    ("tag", "expected"),
+    [
+        ("3.0.0", {"tag": "3.0.0", "version": "3.0.0", "base": "3.0.0", "prerelease": "false"}),
+        ("3.0.0-rc1", {"tag": "3.0.0-rc1", "version": "3.0.0-rc1", "base": "3.0.0", "prerelease": "true"}),
+        ("v3.0.0", {"tag": "v3.0.0", "version": "3.0.0", "base": "3.0.0", "prerelease": "false"}),
+    ],
+)
+def test_workflow_version_from_tag(tmp_path: Path, tag: str, expected: dict[str, str]) -> None:
+    (tmp_path / "xewe.toml").write_text('schema = 1\n[project]\nname = "x"\nversion = "3.0.0"\n')
+    out = tmp_path / "out"
+    env = {"PATH": os.environ["PATH"], "GITHUB_REF_NAME": tag, "GITHUB_REF_TYPE": "tag", "GITHUB_OUTPUT": str(out)}
+    proc = subprocess.run(["bash", "-c", _step_script("Version from the tag")], cwd=tmp_path, env=env)
+    assert proc.returncode == 0
+    assert dict(ln.split("=", 1) for ln in out.read_text().splitlines()) == expected
+
+
+@pytest.mark.parametrize(("tag", "message"), [("3.0", "is not X.Y.Z"), ("3.0.1", "does not match")])
+def test_workflow_version_from_tag_rejects(tmp_path: Path, tag: str, message: str) -> None:
+    (tmp_path / "xewe.toml").write_text('schema = 1\n[project]\nname = "x"\nversion = "3.0.0"\n')
+    env = {"PATH": os.environ["PATH"], "GITHUB_REF_NAME": tag, "GITHUB_REF_TYPE": "tag", "GITHUB_OUTPUT": "/dev/null"}
+    proc = subprocess.run(
+        ["bash", "-c", _step_script("Version from the tag")], cwd=tmp_path, env=env, capture_output=True, text=True
+    )
+    assert proc.returncode == 1 and message in proc.stdout
+
+
+def test_workflow_branch_commit_uses_lfs_and_skips_ci() -> None:
+    script = _step_script("Commit to the releases branch")
+    lfs = script.index("git lfs install --local")
+    assert lfs < script.index("git worktree add") and "export GIT_LFS_SKIP_SMUDGE=1" in script
+    assert "check-attr filter" in script  # a .bin routed to LFS must be staged as a pointer
+    assert '[skip ci]"' in script
+    # the folder lands at static/firmware/releases/<version>/ of the branch, the rest of it kept
+    assert 'cp -R "$rel/$VERSION" "$w/$rel/"' in script and "rel=static/firmware/releases" in script
