@@ -17,11 +17,13 @@ this page is the reference the code is checked against. Sections are cited as §
 - Relocatable: no absolute path into the project is stored; a project directory can be moved or renamed.
 - No-board is first class: every hardware command compiles, then reports "compiled, not run" and
   exits 0, unless `--require-board`.
-- Stable outputs: fixed FQBN options, merged-image name, `manifest.json` schema and
+- Stable outputs: fixed FQBN options (the partition scheme is the only per-project one), merged-image name, `manifest.json` schema and
   `static/firmware/releases/<version>/` layout.
 
 **Non-goals**
-- OTA, partitions other than `no_ota`, chips other than C3/C6/S3.
+- OTA, flash sizes other than 4 MB, custom partition tables (a sketch's own `partitions.csv`),
+  chips other than C3/C6/S3. The partition scheme is one of the esp32 core's 4 MB schemes
+  (`[build] partition_scheme`, default `no_ota`; §4, §7).
 - PlatformIO, on-device Unity tests.
 - Windows (not yet; nothing may assume POSIX-only paths or `/dev/*` in core logic: `pathlib`
   everywhere, `.exe` suffixes in the cli and esptool lookups).
@@ -68,7 +70,8 @@ xewe-os-tools/
 │   │   ├── format.py      xewe format: clang-format (C++) + ruff format (Python)
 │   │   ├── clang-format   the XeWe C++ style (package data; format passes it as --style=file:)
 │   │   ├── brandlint.py   xewe brand-lint
-│   │   └── chips.py       c3/c6/s3 table: FQBN board, chip family, esptool id
+│   │   ├── partitions.py  partition schemes of the installed esp32 core, app partition size (§7)
+│   │   └── chips.py       c3/c6/s3 table: FQBN board, chip family, esptool id, board options
 │   ├── board/             xewe.board: the attached board
 │   │   ├── serialio.py    Console: open, reset, listen with timestamps, send/expect, boot-banner wait
 │   │   ├── boards.py      port scan, VID:PID filter, esptool probe, boards.toml
@@ -322,6 +325,9 @@ name = "xewe-os"        # optional; default: stem of the single .ino in the proj
 version = "2.0.15"      # firmware version (§7)
 chip = "c3"             # chip used when --chip is not given and no board is attached
 
+# [build]               # optional
+# partition_scheme = "huge_app"   # FQBN PartitionScheme (§7); default "no_ota"
+
 [core]
 repo = "https://github.com/xewe-labs/xewe-os-core"
 ref = "3.0.0"           # tags are X.Y.Z, no v (git-and-releases.md)
@@ -370,6 +376,11 @@ Rules:
 - Local sources (`--core-source DIR`, `--modules-source DIR`, `XEWE_TOOLS_SOURCE`, and env
   `XEWE_CORE_SOURCE`, `XEWE_MODULES_SOURCE`) override `repo`+`ref` for one run, are recorded as
   `source = "local:<abs path>"` in `build_config.toml` (that file is not committed), and never touch the manifest.
+- `[build] partition_scheme` (optional, default `no_ota`) is the FQBN `PartitionScheme` option of every
+  build, flash, run, test and release compile (§7). The manifest only checks its shape (a non-empty id of
+  letters, digits and `_`, exit 2 otherwise); `xewe build` checks it against the installed esp32 core.
+  Without the key the FQBN, `build.stamp` and the size limit are those of `no_ota`, as before.
+  `xewe release` and `xewe manifest update` keep the table when they rewrite the manifest.
 - Unknown keys are an error (exit 2) so typos do not silently fall back to defaults.
 
 ---
@@ -559,18 +570,42 @@ Chip table (`chips.py`):
 | s3 | `esp32s3` | `ESP32-S3` | `esp32s3` |
 
 Board options:
-`CDCOnBoot=cdc,CPUFreq=160,DebugLevel=none,EraseFlash=all,FlashMode=qio,FlashSize=4M,PartitionScheme=no_ota,UploadSpeed=921600`
+`CDCOnBoot=cdc,CPUFreq=160,DebugLevel=none,EraseFlash=all,FlashMode=qio,FlashSize=4M,PartitionScheme=<scheme>,UploadSpeed=921600`
 
-Full FQBNs:
+`<scheme>` is `xewe.toml [build] partition_scheme`, `no_ota` without the key (`chips.board_options`,
+`Chip.fqbn_for`). Full FQBNs with the default:
 ```
 esp32:esp32:esp32c3:CDCOnBoot=cdc,CPUFreq=160,DebugLevel=none,EraseFlash=all,FlashMode=qio,FlashSize=4M,PartitionScheme=no_ota,UploadSpeed=921600
 esp32:esp32:esp32c6:CDCOnBoot=cdc,CPUFreq=160,DebugLevel=none,EraseFlash=all,FlashMode=qio,FlashSize=4M,PartitionScheme=no_ota,UploadSpeed=921600
 esp32:esp32:esp32s3:CDCOnBoot=cdc,CPUFreq=160,DebugLevel=none,EraseFlash=all,FlashMode=qio,FlashSize=4M,PartitionScheme=no_ota,UploadSpeed=921600
 ```
 
+Partition scheme (`partitions.py`): the installed esp32 core
+(`<arduino data>/packages/esp32/hardware/esp32/<esp32 version>/`) decides which schemes exist.
+`boards.txt` lists, per FQBN board, `menu.PartitionScheme.<id>.build.partitions=<csv stem>`; a scheme
+is usable for a chip when its board lists it, `tools/partitions/<stem>.csv` exists and has an app
+partition, and every partition ends inside 4 MB (`FlashSize=4M`). In esp32 3.3.12 that is, for all
+three chips, `default`, `defaultffat`, `minimal`, `no_fs`, `no_ota`, `noota_3g`, `noota_ffat`,
+`noota_3gffat`, `huge_app`, `min_spiffs`, `rainmaker`, `rainmaker_4MB`, `zigbee_zczr`, and
+on c6 also `zigbee` and the `zigbee*_2MB` ones; `custom` (the sketch's own `partitions.csv`) and the
+8/16/32 MB schemes are refused. The app limit is the size of the first `app` partition in the CSV:
+
+| scheme | app partition | rest of the 4 MB |
+|---|---|---|
+| `no_ota` (default) | 0x200000 (2,097,152 B) | 2 MB SPIFFS, coredump |
+| `huge_app` | 0x300000 (3,145,728 B) | 896 KB SPIFFS, coredump |
+| `min_spiffs` | 0x1E0000 (1,966,080 B), twice (OTA) | 128 KB SPIFFS |
+| `default` | 0x140000 (1,310,720 B), twice (OTA) | 1.4 MB SPIFFS |
+
+nvs (0x9000) and coredump (0x3F0000) sit at the same offsets in all of them, so changing the
+scheme keeps the stored settings. A scheme the core does not offer, or one larger than 4 MB, is exit
+2 naming the usable ones; a non-default scheme without an installed core is exit 3. `--dry-run`
+prints the command without checking.
+
 Steps per chip:
 1. Require `build_config.toml` (else exit 3), `src/Modules.h` and `build/modules/library.properties`
    (else exit 3 "run `xewe modules generate`"). With zero modules selected, both exist and declare nothing.
+   Resolve the partition scheme and its app partition size (above).
 2. Sketch dir: the project root if the folder name equals the `.ino` stem (arduino-cli requires
    `<dir>/<dir>.ino`); otherwise mirror `*.ino`, `*.h`, `*.cpp`, `src/` into
    `build/tmp/sketch/<stem>/` with `shutil.copy2` (mtimes kept so the cache stays warm). This is the
@@ -626,7 +661,9 @@ Steps per chip:
    up-to-date check counts `Config.h` as a source (step 5), and gcc's dependency files list
    `-include` headers, so arduino-cli's own cache is invalidated by an edit as well.
    stdout+stderr go to `build/builds/<chip>/out/compile.log`; on failure print the last 15 lines matching
-   `error` and exit 1. `--verbose` streams the log live.
+   `error` and exit 1. `--verbose` streams the log live. arduino-cli itself refuses an image larger than
+   the scheme's `upload.maximum_size`; the tools check the size again against the app partition of the
+   scheme's CSV and print `FAIL   <chip>  <s> s  too big for <scheme>` (exit 1) when it does not fit.
 5. Artifacts into `build/builds/<chip>/out/` (directory emptied first):
    - `<version>-<chip>-<project>.bin` ← `build/builds/<chip>/cache/<stem>.ino.merged.bin` (produced by the
      esp32 core 3.x itself; missing → exit 1 "core did not produce merged.bin").
@@ -647,14 +684,15 @@ Steps per chip:
      }
      ```
    - `meta.json` — keys `type, chip_family, project_name, version, timestamp_param, config
-     (the --define dict, sorted), fqbn, fqbn_extra (""), compile_time_sec, artifacts{binary_filename,
+     (the --define dict, sorted), fqbn, fqbn_extra (""), partition_scheme, compile_time_sec, artifacts{binary_filename,
      path_rel_binary, path_rel_manifest_json, path_rel_meta_json}, tools_version, arduino_cli,
      esp32_core, core_ref, modules_ref, modules_version` (the `version=` of
      `build/modules/library.properties`), `modules` (selected+resolved slugs),
      `sketch_size` (bytes, from "Sketch uses N bytes"), `sketch_size_percent` (the "(NN%)" of
-     program storage on the same line, `null` if absent), `warnings` (count). No absolute path is
+     program storage on the same line, `null` if absent), `app_partition_size` (bytes of the scheme's
+     app partition, the limit; `null` when no esp32 core is installed), `warnings` (count). No absolute path is
      stored; `path_rel_*` are relative to the project parent (`xewe-os/build/builds/c3/out/...`).
-   - `build.stamp` — sha256 of chip, full FQBN (board options), project version and the sorted
+   - `build.stamp` — sha256 of chip, full FQBN (board options with the partition scheme), project version and the sorted
      `--define` list. `flash`/`run` treat the binary as stale when the stamp differs from the
      inputs of the current call (a build with `--define X=1` followed by a plain `xewe flash`
      rebuilds), in addition to the mtime check against every source (sketch files, `src/`

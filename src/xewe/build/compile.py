@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from xewe import __version__
-from xewe.build import chips
+from xewe.build import chips, partitions
 from xewe.env import arduino, config, fetch
 from xewe.env.project import Paths
 from xewe.modules.lockfile import Lock
@@ -180,12 +180,15 @@ def _sources(p: Paths) -> list[Path]:
     return files
 
 
-def build_key(chip_name: str, version: str, defines: dict[str, str]) -> str:
-    """Hash of the build inputs that are not files: chip, FQBN (with board options), version, defines."""
+def build_key(
+    chip_name: str, version: str, defines: dict[str, str], scheme: str = chips.DEFAULT_PARTITION_SCHEME
+) -> str:
+    """Hash of the build inputs that are not files: chip, FQBN (with board options and partition
+    scheme), version, defines."""
     chip = chips.get(chip_name)
     inputs = {
         "chip": chip.name,
-        "fqbn": chip.fqbn,
+        "fqbn": chip.fqbn_for(scheme),
         "version": version,
         "defines": sorted(defines.items()),
     }
@@ -262,7 +265,9 @@ def build_chip(
         sketch_dir = p.sketch_mirror(stem)
     else:
         sketch_dir = stage_sketch(p)
-    argv = arduino.compile_argv(p.rel(cli), chip, p, sketch_dir)
+    scheme = lock.scheme
+    fqbn = chip.fqbn_for(scheme)
+    argv = arduino.compile_argv(p.rel(cli), chip, p, sketch_dir, scheme)
     if dry_run:
         result(shlex.join(argv))
         if cfg is not None:
@@ -272,6 +277,9 @@ def build_chip(
         return BuildResult(chip.name, True)
 
     assert cfg is not None
+    esp32 = str(cfg.installed.get("esp32") or lock.esp32_version)
+    resolved = partitions.resolve(partitions.platform_dir(cfg.arduino_data(p), esp32), chip, scheme)
+    app_size = resolved.app_size if resolved else None
     name = project_name(p, lock)
     timestamp = _now()
     write_build_info(p, chip.name, build_info_header(name, version, timestamp, chip.name, defines))
@@ -282,7 +290,7 @@ def build_chip(
     out.mkdir(parents=True)
     p.cache_dir(chip.name).mkdir(parents=True, exist_ok=True)
 
-    result(f"build  {chip.name}  {chip.fqbn}")
+    result(f"build  {chip.name}  {fqbn}")
     core = fetch.describe(cfg.installed.get("core")) if fetch.is_latest(lock.core.ref) else lock.core.ref
     result(f"       sketch {name} ({version})  modules {', '.join(_resolved_modules(p)) or '-'}  core {core}")
     start = time.monotonic()
@@ -309,6 +317,10 @@ def build_chip(
         MANIFEST_TEMPLATE.format(name=name, version=version, family=chip.family, binary=bin_name), encoding="utf-8"
     )
     size, percent = parse_size(output)
+    if size is not None and app_size is not None and size > app_size:
+        log.error("sketch uses %d bytes; the app partition of %s holds %d", size, scheme, app_size)
+        result(f"FAIL   {chip.name}  {seconds} s  too big for {scheme}")
+        return BuildResult(chip.name, False, seconds=seconds)
     warnings = sum(1 for ln in output.splitlines() if "warning:" in ln)
     rel_dir = f"{p.root.name}/{p.rel(out)}"
     installed = cfg.installed
@@ -319,8 +331,9 @@ def build_chip(
         "version": version,
         "timestamp_param": timestamp,
         "config": {k: typed(defines[k]) for k in sorted(defines)},
-        "fqbn": chip.fqbn,
+        "fqbn": fqbn,
         "fqbn_extra": "",
+        "partition_scheme": scheme,
         "compile_time_sec": seconds,
         "artifacts": {
             "binary_filename": bin_name,
@@ -337,10 +350,11 @@ def build_chip(
         "modules": {"selected": lock.selected, "resolved": _resolved_modules(p)},
         "sketch_size": size,
         "sketch_size_percent": percent,
+        "app_partition_size": app_size,
         "warnings": warnings,
     }
     (out / "meta.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
-    (out / STAMP_NAME).write_text(build_key(chip.name, version, defines) + "\n", encoding="utf-8")
+    (out / STAMP_NAME).write_text(build_key(chip.name, version, defines, scheme) + "\n", encoding="utf-8")
     size_text = f"Sketch uses {size} bytes" if size is not None else "size unknown"
     if size is not None and percent is not None:
         size_text += f" ({percent}%)"

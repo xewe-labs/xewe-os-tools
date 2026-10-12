@@ -19,7 +19,7 @@ try:
 except ImportError:  # Windows: no advisory lock
     fcntl = None  # type: ignore[assignment]
 
-from xewe.build.chips import Chip
+from xewe.build.chips import DEFAULT_PARTITION_SCHEME, Chip
 from xewe.env import fetch, pins
 from xewe.env.project import Paths
 from xewe.report import EXIT_NOT_SETUP, XeWeError, log, verbose
@@ -206,13 +206,14 @@ def config_flags(chip: Chip, p: Paths, sketch_dir: Path) -> str:
     return f'-I "{gen}" -include "{sketch_dir / "Config.h"}"'
 
 
-def compile_argv(cli: str, chip: Chip, p: Paths, sketch_dir: Path) -> list[str]:
-    """The exact ``arduino-cli compile`` argv for ``chip`` (paths relative to the project root)."""
+def compile_argv(cli: str, chip: Chip, p: Paths, sketch_dir: Path, scheme: str = DEFAULT_PARTITION_SCHEME) -> list[str]:
+    """The exact ``arduino-cli compile`` argv for ``chip`` with partition ``scheme`` (paths relative
+    to the project root)."""
     return [
         cli,
         "compile",
         "--fqbn",
-        chip.fqbn,
+        chip.fqbn_for(scheme),
         "--build-path",
         p.rel(p.cache_dir(chip.name)),
         "--libraries",

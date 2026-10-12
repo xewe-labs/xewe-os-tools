@@ -87,10 +87,11 @@ def ensure_built(
     p: Paths, lock: Lock, chip: str, no_build: bool = False, defines: dict[str, str] | None = None
 ) -> Path:
     """Path of the chip's merged image, building it first when missing, older than a source, or
-    built from other inputs (``--define`` values, version, chip, FQBN options; see ``build_key``)."""
+    built from other inputs (``--define`` values, version, chip, FQBN options and partition scheme;
+    see ``build_key``)."""
     defines = defines or {}
     binary = p.out_dir(chip) / build.binary_name(lock.version, chip, build.project_name(p, lock))
-    if build.is_up_to_date(p, binary, build.build_key(chip, lock.version, defines)):
+    if build.is_up_to_date(p, binary, build.build_key(chip, lock.version, defines, lock.scheme)):
         result(f"build  {chip}  up to date ({p.rel(binary)})")
         return binary
     if no_build:

@@ -8,7 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from xewe.build.chips import CHIPS, DEFAULT_CHIP
+from xewe.build.chips import CHIPS, DEFAULT_CHIP, DEFAULT_PARTITION_SCHEME
+from xewe.build.partitions import SCHEME_RE
 from xewe.env import pins
 from xewe.env.project import write_atomic
 from xewe.modules import tomlw
@@ -23,6 +24,7 @@ VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 
 _ALLOWED: dict[str, set[str]] = {
     "project": {"name", "version", "chip"},
+    "build": {"partition_scheme"},
     "core": {"repo", "ref"},
     "modules": {"repo", "ref", "selected"},
     "tools": {"repo", "ref"},
@@ -59,7 +61,13 @@ class Lock:
     libraries: dict[str, Source] = field(default_factory=dict)
     arduino_cli: str | None = None
     esp32: str | None = None
+    partition_scheme: str | None = None
     header: str = DEFAULT_HEADER
+
+    @property
+    def scheme(self) -> str:
+        """``PartitionScheme`` of the FQBN ([build] partition_scheme or ``no_ota``)."""
+        return self.partition_scheme or DEFAULT_PARTITION_SCHEME
 
     @property
     def arduino_cli_version(self) -> str:
@@ -120,6 +128,14 @@ def parse(text: str, path: Path = Path("xewe.toml")) -> Lock:
         if lock.chip not in CHIPS:
             raise _err(path, f"[project] chip must be c3, c6 or s3, got '{lock.chip}'")
 
+    build = data.get("build", {})
+    if "partition_scheme" in build:
+        lock.partition_scheme = _str(path, "build", "partition_scheme", build["partition_scheme"])
+        if not SCHEME_RE.match(lock.partition_scheme):
+            raise _err(
+                path, f"[build] partition_scheme must be a scheme id like huge_app, got '{lock.partition_scheme}'"
+            )
+
     for name in ("core", "modules", "tools"):
         section = data.get(name, {})
         src: Source = getattr(lock, name)
@@ -169,6 +185,7 @@ def dumps(lock: Lock) -> str:
     data: dict[str, Any] = {
         "schema": SCHEMA,
         "project": project,
+        "build": {"partition_scheme": lock.partition_scheme} if lock.partition_scheme else None,
         "core": {"repo": lock.core.repo, "ref": lock.core.ref},
         "modules": {"repo": lock.modules.repo, "ref": lock.modules.ref, "selected": lock.selected},
         "tools": {"repo": lock.tools.repo, "ref": lock.tools.ref},

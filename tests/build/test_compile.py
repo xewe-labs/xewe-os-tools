@@ -19,6 +19,7 @@ META_KEYS = [
     "config",
     "fqbn",
     "fqbn_extra",
+    "partition_scheme",
     "compile_time_sec",
     "artifacts",
     "tools_version",
@@ -30,6 +31,7 @@ META_KEYS = [
     "modules",
     "sketch_size",
     "sketch_size_percent",
+    "app_partition_size",
     "warnings",
 ]
 
@@ -59,6 +61,8 @@ def test_build_outputs(project: Paths, capsys: pytest.CaptureFixture[str]) -> No
     assert meta["modules"] == {"selected": ["wifi", "web-interface"], "resolved": ["wifi", "web-interface"]}
     assert meta["modules_version"] == "1.0.0"  # the tag of build/modules/library.properties
     assert "JTAGAdapter" not in meta["fqbn"]
+    assert meta["partition_scheme"] == "no_ota" and "PartitionScheme=no_ota" in meta["fqbn"]
+    assert meta["app_partition_size"] is None  # no esp32 core installed: arduino-cli checks the size
 
 
 def test_build_info_header_and_defines(project: Paths) -> None:
