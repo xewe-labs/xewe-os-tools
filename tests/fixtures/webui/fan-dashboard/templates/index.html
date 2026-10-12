@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fan dashboard</title>
+  <link rel="icon" href="{{ url_for('static', filename='icon.svg') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <main class="page">
+    <h1>Fan dashboard</h1>
+    <section class="card">
+      <h2>Fan</h2>
+      <p>Speed <output id="fanSpeedValue">-</output> % · <span id="fanRpm">-</span> rpm</p>
+      <input id="fanSpeed" type="range" min="0" max="100" step="5" />
+    </section>
+    <section class="card">
+      <h2>LED strip</h2>
+      <label><input id="ledOn" type="checkbox" /> On</label>
+      <input id="ledColor" type="color" />
+    </section>
+  </main>
+  <script src="{{ url_for('static', filename='fan-api.js') }}"></script>
+  <script src="{{url_for("static", filename="app.js")}}"></script>
+</body>
+</html>

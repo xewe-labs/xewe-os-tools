@@ -8,10 +8,11 @@ tests/
 ├── conftest.py   the only conftest: shared fixtures and helpers (below)
 ├── fakes/        arduino-cli, esptool, clang-format (Python scripts)
 ├── fixtures/     manifest-2.0.0-c3.json (golden), module_properties/ (the six real module.properties),
-│                 setup.sh (a copy of the template's, for the bootstrap string checks)
+│                 setup.sh (a copy of the template's, for the bootstrap string checks),
+│                 webui/ (fan-dashboard/, the Flask example of doc/webui.md, and its golden export)
 ├── test_cli.py
 ├── env/          test_setup test_doctor test_clean test_dotenv test_fetch test_arduino test_project test_runscript
-├── build/        test_compile test_flash test_release test_format test_brandlint
+├── build/        test_compile test_flash test_release test_format test_brandlint test_webui
 ├── board/        test_serial test_serial_interactive test_boards test_provision
 ├── modules/      test_registry test_manifest test_lockfile test_tomlw
 └── testing/      test_plugin test_no_board

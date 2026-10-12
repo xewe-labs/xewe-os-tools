@@ -1,5 +1,6 @@
 # xewe-core-tests.yml: reusable checks for xewe-os-core (the XeWeCore Arduino library).
-# Host unit tests (tests/unit/run.sh), arduino-lint, the examples compiled for c3, c6 and s3,
+# Host unit tests (tests/unit/run.sh), arduino-lint (strict, Library Manager update: the
+# Library Manager rules of core's doc/library-rules.md), the examples compiled for c3, c6 and s3,
 # `xewe format --check` and `xewe brand-lint`. Every job blocks.
 # Nothing here publishes: core is released with its own scripts/release.sh (tag X.Y.Z, then the
 # Arduino Library Manager picks it up). See doc/ci.md.
@@ -34,6 +35,8 @@ jobs:
       - name: tests/unit/run.sh
         run: ARDUINOJSON_SRC="$RUNNER_TEMP/ArduinoJson/src" tests/unit/run.sh
 
+  # Run from the checkout root (no path): arduino-lint reads a relative "." as the folder name and
+  # fails LS003 on it.
   arduino-lint:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -43,7 +46,7 @@ jobs:
         with:
           project-type: library
           library-manager: update
-          compliance: specification
+          compliance: strict
 
   # Every examples/*/*.ino against the checked-out library, with the arduino-cli and esp32 core
   # versions (src/xewe/env/pins.py) and the FQBNs (src/xewe/build/chips.py) of the tools at tools_ref.

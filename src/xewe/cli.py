@@ -11,7 +11,7 @@ from typing import Any
 
 from xewe import __version__
 from xewe.board import boards, provision, serialio
-from xewe.build import brandlint, chips, flash, release
+from xewe.build import brandlint, chips, flash, release, webui
 from xewe.build import format as fmt
 from xewe.build import compile as build
 from xewe.env import clean, config, doctor, dotenv, setup
@@ -335,6 +335,20 @@ def parser() -> argparse.ArgumentParser:
     )
     sp.add_argument("dirs", nargs="*", metavar="DIR", help="directories or files to scan (default: .)")
 
+    sp = sub.add_parser(
+        "webui",
+        help="export a Flask web UI prototype as PROGMEM headers and a sketch (doc/webui.md)",
+        description="export: write each .html/.css/.js of the Flask project's templates/ and static/ as a "
+        "PROGMEM header, copy app.py and generate <project>_app.ino with one route per file, into "
+        "OUT_DIR/<project>_<YYYYmmdd_HHMMSS>/. prompt: print the LLM prompt that ports app.py into that sketch. "
+        "Needs no project.",
+    )
+    wsub = sp.add_subparsers(dest="webui_command", required=True, metavar="ACTION")
+    m = wsub.add_parser("export", help="Flask project -> PROGMEM headers, app.py and <project>_app.ino")
+    m.add_argument("flask_project", type=Path, metavar="FLASK_DIR", help="folder with app.py, templates/, static/")
+    m.add_argument("out", type=Path, metavar="OUT_DIR", help="parent of the timestamped export folder")
+    wsub.add_parser("prompt", help="print the prompt that ports app.py into the generated sketch")
+
     sp = sub.add_parser("release", help="build the release matrix into static/firmware/releases/<version>/")
     sp.add_argument("--version", required=True, dest="release_version", metavar="X.Y.Z")
     sp.add_argument("--matrix", type=Path, metavar="FILE")
@@ -448,6 +462,8 @@ def dispatch(args: argparse.Namespace, extra: list[str]) -> int:
         disable_board()
     if cmd == "brand-lint":
         return brandlint.brand_lint(args.dirs)
+    if cmd == "webui":
+        return webui.webui_main(args.webui_command, getattr(args, "flask_project", None), getattr(args, "out", None))
     p = Paths(find_root(args.project, library=cmd in LIBRARY_COMMANDS))
     if cmd in ENV_COMMANDS:
         dotenv.load_settings(p.root, getattr(args, "env_file", None))

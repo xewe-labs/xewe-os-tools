@@ -1,0 +1,41 @@
+Make my Arduino ESP32 web server application work perfectly based on the provided Flask `app.py` reference. All HTML, CSS, and JS template/static files have already been converted into C++ PROGMEM headers and are included in the Arduino template.
+
+I need a single, complete, drop-in `.ino` file replacement. Do not use external custom modules; put everything in this sketch. Use the `WiFi` and `WebServer` libraries.
+
+**Strict Implementation Rules:**
+
+**1. State Management:**
+Translate the Flask in-memory dictionary (e.g., `SCHEDULE_DATA`) into a `std::map<String, String>`. Keep the default initial data exactly as it appears in the Flask app.
+
+**2. Static File Routing & Naming Mismatches:**
+Create `HTTP_GET` routes for every included static file. You MUST use the correct MIME types (`text/html`, `text/css`, `application/javascript`).
+*Critical Fix:* The browser will request filenames with hyphens (e.g., `/static/schedule-utils.js`), but the C++ PROGMEM variables use underscores (e.g., `SCHEDULE_UTILS_JS`). Map the hyphenated URL string exactly to the underscored variable.
+*Jinja Catch:* The frontend might contain unresolved Flask Jinja tags. Add a specific route to catch `/%7B%7B%20url_for('static',%20filename='style.css')%20%7D%7D` and serve the CSS file to prevent 404s.
+
+**3. API Endpoints & JSON:**
+Use `ArduinoJson` (v6/v7) to handle the GET, POST, and DELETE endpoints exactly like Flask.
+* **GET (JSON):** Iterate through the `std::map`, deserialize the strings, package them into a single JSON object, serialize, and send.
+* **POST (Set):** Deserialize the incoming `server.arg("plain")`. If the "id" is "null", "0", or empty, emulate the Flask logic: iterate existing keys, find the maximum integer ID, add 1, assign it to the new event, serialize, and save to the map.
+* **POST (Delete):** Extract the ID from the payload and `erase()` it from the map.
+
+**4. CORS & Preflight (CRITICAL):**
+The browser WILL send `HTTP_OPTIONS` preflight requests before any POST/DELETE fetches. You MUST create a global CORS helper function:
+`server.sendHeader("Access-Control-Allow-Origin", "*");`
+`server.sendHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS, DELETE, PUT");`
+`server.sendHeader("Access-Control-Allow-Headers", "Content-Type");`
+Call this helper right before *every* `server.send()`.
+Inside `server.onNotFound()`, check if `server.method() == HTTP_OPTIONS`. If it is, call the CORS helper and return a `204` (No Content) so the browser allows the actual POST request to proceed. If it's not an OPTIONS request, return a 404.
+
+**5. Debugging:**
+Include `Serial.print` statements for every API hit and missed route so I can debug easily.
+
+**6. Wi-Fi:**
+Connect in station mode with these placeholders, which I replace with my own network before building:
+const char* ssid = "YOUR_SSID";
+const char* password = "YOUR_PASSWORD";
+
+**[INSERT ARDUINO APP TEMPLATE HERE]**
+
+**[INSERT APP.PY REFERENCE HERE]**
+
+Output the full, compiled C++ code inside a single code block.

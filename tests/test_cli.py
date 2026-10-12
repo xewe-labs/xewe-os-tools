@@ -23,6 +23,7 @@ COMMANDS = [
     "clean",
     "doctor",
     "release",
+    "webui",
 ]
 SUBCOMMANDS = [
     "modules list",
@@ -31,6 +32,8 @@ SUBCOMMANDS = [
     "modules generate",
     "manifest show",
     "manifest update",
+    "webui export",
+    "webui prompt",
 ]
 
 

@@ -41,7 +41,7 @@ xewe-os-tools/
 ├── README.md  LICENSE.txt  .gitignore
 ├── .agents/               the agent workspace (AGENTS.md, RULES.md, PREFERENCES.md, handoffs/, skills/)
 ├── .github/workflows/     ci.yml (this repo) and the reusable xewe-*.yml (doc/ci.md)
-├── doc/                   spec.md (this page), ci.md, tests.md
+├── doc/                   spec.md (this page), ci.md, tests.md, webui.md
 ├── scripts/release.sh     releases the tools (README "Releasing"): --prepare, then tag and GitHub Release
 ├── releases/<version>/    notes.txt (GitHub Release text) and testcard.md (what was tested) per release
 ├── src/xewe/              the `xewe` package
@@ -68,6 +68,8 @@ xewe-os-tools/
 │   │   ├── format.py      xewe format: clang-format (C++) + ruff format (Python)
 │   │   ├── clang-format   the XeWe C++ style (package data; format passes it as --style=file:)
 │   │   ├── brandlint.py   xewe brand-lint
+│   │   ├── webui.py       xewe webui: Flask UI prototype -> PROGMEM headers + sketch (doc/webui.md)
+│   │   ├── webui-prompt.txt  the porting prompt (package data) that xewe webui prompt prints
 │   │   └── chips.py       c3/c6/s3 table: FQBN board, chip family, esptool id
 │   ├── board/             xewe.board: the attached board
 │   │   ├── serialio.py    Console: open, reset, listen with timestamps, send/expect, boot-banner wait
@@ -86,7 +88,8 @@ xewe-os-tools/
     ├── README.md          pointer to doc/tests.md
     ├── conftest.py        the only conftest: shared fixtures and helpers
     ├── fakes/             arduino-cli, esptool, clang-format (Python scripts) used by the self-tests
-    ├── fixtures/          golden manifest.json, the six real module.properties, a copy of the template's setup.sh
+    ├── fixtures/          golden manifest.json, the six real module.properties, a copy of the template's setup.sh,
+    │                      webui/ (the fan-dashboard Flask example and its golden export)
     ├── test_cli.py
     ├── env/  build/  board/  modules/  testing/
 ```
@@ -122,14 +125,14 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-"xewe.build" = ["clang-format"]
+"xewe.build" = ["clang-format", "webui-prompt.txt"]
 
 [tool.mypy]
 mypy_path = "src"
 packages = ["xewe"]
 ```
 
-Subpackages are found under `src/`; the style file ships as package data. Editable installs
+Subpackages are found under `src/`; the style file and the webui prompt ship as package data. Editable installs
 (`pip install -e .`) work. A non-editable install builds inside the source tree; `setup.sh`
 deletes `<source>/build/` and `<source>/*.egg-info` first so a stale build tree cannot ship
 deleted modules. `python -m mypy` and `python -m pyflakes src tests` run from the repo root.
@@ -229,6 +232,8 @@ Agents in compile-only mode must set `XEWE_NO_BOARD=1`.
 | `xewe clean` | `[--all] [--modules]` | Default: delete `build/builds/` and `build/tmp/`. `--all`: delete all of `build/` except `tools/` (the tools checkout and its venv; setup must re-run). `--modules`: also delete `build/modules/` and `src/Modules.h`. Never touches `~/.xewe-os/build-tools` (toolchain and shared modules checkouts) | — |
 | `xewe format` | `[--check] [PATH...]` | clang-format the project's (or library's, or the current directory's) C++ and ruff-format its Python (see below). `--check` changes nothing and exits 1 listing `would reformat <file>` | n/a |
 | `xewe brand-lint` | `[DIR...]` | Banned spellings of the brand (see below). Needs no project | n/a |
+| `xewe webui export` | `FLASK_DIR OUT_DIR` | [webui.md](webui.md). Writes each `.html`/`.css`/`.js` of `templates/` and `static/` as `<stem>_<ext>.h` (PROGMEM raw literal, `url_for('static', ...)` rewritten), copies `app.py` and generates `<name>_app.ino` (one GET route per file) into `OUT_DIR/<name>_<YYYYmmdd_HHMMSS>/`; last line `webui: N headers and <name>_app.ino [+ app.py] in <dir>`. Exit 2 when `FLASK_DIR` is not a directory, 1 when two files map to one array name. Needs no project | n/a |
+| `xewe webui prompt` | | Prints the LLM prompt that ports `app.py` into the generated sketch (`src/xewe/build/webui-prompt.txt`) | n/a |
 | `xewe doctor` | | Checks python, git, venv, the shared toolchain (`XEWE_HOME` resolved; cli and core present), arduino-cli version, core version, esptool, manifest (`xewe.toml`) vs installed, free disk ≥ 6 GB, serial permissions (Linux: user in `dialout`/`uucp`), Rosetta 2 on Apple silicon (the esp32 core's `ctags` is x86_64: "bad CPU type" without it; probe `pgrep -q oahd` or `arch -x86_64 /usr/bin/true`; warns with `softwareupdate --install-rosetta --agree-to-license`), board scan | exit 0 if only warnings |
 | `xewe release` | `--version X.Y.Z [--matrix FILE] [--notes FILE]` | §11 | n/a (no board needed) |
 
@@ -1071,6 +1076,7 @@ shared fixtures and fakes (doc/tests.md); `pytest tests/<area>` runs one area.
 | `board/test_provision.py` | scripted first-boot transcript: answers in order, SSID by number (the S3 list's shape, made-up names), rescan then `-3` custom, `! Invalid number` re-answered, board resuming at the network list, nudge only before the first prompt (fake clock), timezone `y` / `n` + offset, already provisioned sends nothing, unlisted module answered `n` and unknown value / y/n prompts answered with their default (logged), endless unknown prompt exit 1, nudge, port drop at reboot, prompt timeout exit 1 with masked tail, password never in stdout/log, the summary, the rescan log line and the typed custom SSID mask the SSID; settings precedence flags > env > dotenv file > defaults, settings from `<project>/.env` with no flags, exit 2 before the port, exit 4 without a board |
 | `env/test_dotenv.py` | parsing (comments, quotes, `export`, no interpolation), errors without values, real environment wins, resolution order (`--env`, `XEWE_ENV`, project, tools checkout from `build_config.toml` or the package checkout), missing file is not an error, only the key count is logged, `hint()` (both paths, the provisioning keys) |
 | `build/test_brandlint.py` | each banned spelling fails with the exact stderr lines, allowed spellings are clean, skipped directories (caches and `*.egg-info` included), in a git work tree only the files git does not ignore, outside one a directory walk, binary and non-UTF-8 files, `naming.md` in any case, dotenv files, several `DIR`s, a missing `DIR` exits 2, no project needed, the tools repo itself is clean |
+| `build/test_webui.py` | export of `fixtures/webui/fan-dashboard/` byte-equal to the golden `fan-dashboard_export/`, the timestamped folder name, `url_for` rewrite (both quote styles), routes, array names and MIME types, only `.html`/`.css`/`.js` under `templates/` and `static/` (binary, other suffixes and folders skipped; non-UTF-8 warned), duplicate array name exit 1, missing folder exit 2, the prompt printed with placeholder Wi-Fi only |
 | `testing/test_plugin.py` | `pytester`: no board → "compiled, not run" summary and exit 0; `--require-board` → pytest 1, `xewe test` 4; faked board: one port open per session, boot banner wait (first-boot reboot, unprovisioned, timeout, board gone from USB at the boot reset → `disappeared from USB`); `xewe test --no-flash` writes no image; unit tests run; `--unit-only` runs only `unit` tests and builds nothing; board tests found under `modules/<slug>/tests/board/`; compile failure fails board tests; pins from the project `.env` reach `os.environ` (real environment wins) |
 | `modules/test_registry.py` | dependency order and cycle error against fixtures copied from the six real `module.properties`; generated `build/modules/` (`library.properties`, `XeWeModules.h`, `tests/<slug>/{board,unit}/`, `modules.lock`) and `src/Modules.h` golden, library version (tag / `0.0.0+<sha7>` / `0.0.0`), empty selection, legacy `src/modules/`, `build/modules-lib/` and `build/config/modules.lock` removal; every validator rule (tests layout included) has a failing fixture |
 | `build/test_release.py` | matrix parsing and typing, folder layout, `firmware_map.csv`, version ≥ check, printed commands (tags without `v`), never calls git (but `status`/`rev-parse`), `meta.json` provenance (`*_commit` next to each ref, libraries, `-` when unknown); `xewe-release.yml`: the tag-to-version step run with bash, the branch commit through Git LFS with `[skip ci]` |

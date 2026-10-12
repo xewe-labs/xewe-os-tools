@@ -1,0 +1,35 @@
+#pragma once
+#include <pgmspace.h>
+static const char STYLE_CSS[] PROGMEM = R"rawliteral(
+:root {
+  --bg: #11151c;
+  --card: #1b222d;
+  --text: #e8edf4;
+  --accent: #00c2ff;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, sans-serif;
+}
+
+.page {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.card {
+  background: var(--card);
+  border-radius: 8px;
+  margin-bottom: 16px;
+  padding: 12px 16px;
+}
+
+input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+)rawliteral";

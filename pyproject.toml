@@ -31,7 +31,7 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-"xewe.build" = ["clang-format"]
+"xewe.build" = ["clang-format", "webui-prompt.txt"]
 
 [tool.ruff]
 line-length = 120

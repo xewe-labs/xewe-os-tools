@@ -2,7 +2,7 @@
 
 One Python package, one command (`xewe`), for XeWe OS firmware projects: setup, build, flash,
 serial, provision, test, boards, modules, manifest, format and release, plus `brand-lint` for
-every repo. Linux and macOS, x86_64 and arm64. No sudo and
+every repo and `webui` (a Flask web UI prototype exported as C++ headers: [doc/webui.md](doc/webui.md)). Linux and macOS, x86_64 and arm64. No sudo and
 no system package manager: the toolchain (arduino-cli, esp32 core, esptool) and the modules repo
 checkout (`sources/xewe-os-modules/<ref>/`) are installed once per machine into
 `~/.xewe-os/build-tools/` (`$XEWE_HOME` overrides `~/.xewe-os`), everything else into the project's
@@ -55,6 +55,7 @@ Runtime dependencies: `pyserial`, `pytest`. esptool comes from the pinned esp32 
 | `xewe clean [--all] [--modules]` | delete generated output (`build/builds`, `build/tmp`; `--all`: all of `build/` but `tools/`; `--modules`: also `build/modules` and `src/Modules.h`; never `~/.xewe-os/build-tools`) |
 | `xewe format [--check] [PATH...]` | clang-format `*.h *.hpp *.c *.cpp *.ino` (root, `src/`, `examples/`, `tests/unit/`; never `build/`) with the XeWe style shipped with the tools (no column alignment: it costs tokens and turns one-line changes into realigned blocks; a `.clang-format` in the project is not read), and `ruff format` the Python when ruff is installed; `--check` exits 1 listing files that would change. Runs in a project, a library, or any other directory (the current one is then the root; the modules repo passes `modules tools`). clang-format: `XEWE_CLANG_FORMAT`, `PATH` or the tools venv (`pip install clang-format`), version 14 or newer |
 | `xewe brand-lint [DIR...]` | fail (exit 1) on banned spellings of the brand in the text files under each `DIR` (default `.`; rules: `xewe-os/doc/naming.md`); in a git work tree only the files git does not ignore; skips `.git`, `build`, `.venv`, `static`, `__pycache__`, `history`, `test_logs`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `*.egg-info`, binary files, `naming.md` and dotenv files. Needs no project |
+| `xewe webui export FLASK_DIR OUT_DIR` \| `xewe webui prompt` | export the `.html`/`.css`/`.js` of a Flask prototype's `templates/` and `static/` as PROGMEM headers plus `app.py` and a sketch with one route per file into `OUT_DIR/<name>_<timestamp>/`; `prompt` prints the LLM prompt that ports `app.py` into that sketch ([doc/webui.md](doc/webui.md)). Needs no project, nor Flask |
 | `xewe doctor` | check the environment (on Apple silicon also Rosetta 2, which the esp32 core's `ctags` needs) |
 | `xewe release --version X.Y.Z [--matrix FILE] [--notes FILE]` | release matrix into `static/firmware/releases/<version>/`, each `meta.json` recording the resolved core, modules, tools and library commits; writes `[project] version` and prints the git and gh commands (CI runs it on a version tag: [doc/ci.md](doc/ci.md)) |
 
