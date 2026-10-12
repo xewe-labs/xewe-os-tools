@@ -190,10 +190,10 @@ suite; 4 tags HEAD `<version>` (annotated), pushes the tag and creates the GitHu
 ```toml
 [tools]
 repo = "https://github.com/xewe-labs/xewe-os-tools"
-ref = "3.0.0"   # the tools tag
+ref = "3.0.1"   # the tools tag
 ```
 
-and workflow callers `uses: xewe-labs/xewe-os-tools/.github/workflows/xewe-build.yml@3.0.0`.
+and workflow callers `uses: xewe-labs/xewe-os-tools/.github/workflows/xewe-build.yml@3.0.1`.
 
 Options: `--ci-timeout <min>` (default 30) bounds the CI wait; `--skip-ci` skips it, for
 emergencies only, with a loud warning. If the tag exists but the GitHub Release does not, the same

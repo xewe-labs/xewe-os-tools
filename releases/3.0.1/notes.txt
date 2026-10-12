@@ -1,0 +1,36 @@
+xewe-os-tools 3.0.1
+
+xewe-os-tools is the Python package behind every XeWe OS firmware project (`xewe`: setup, build,
+flash, serial, provision, test, release, format, brand-lint) and the reusable GitHub workflows the
+other repos call. 3.0.1 follows 3.0.0 and lets a firmware project commit its release binaries to
+its own `main`, as the template (xewe-os 3.0.0) does.
+
+CHANGED SINCE 3.0.0
+
+- xewe-release.yml: the commit of static/firmware/releases/<version>/ to `releases_branch` goes
+  through Git LFS (`git lfs install --local`; older binaries are not downloaded), so
+  `releases_branch: main` with a `.gitattributes` such as
+  `static/**/*.bin filter=lfs diff=lfs merge=lfs -text` stores the .bin files in LFS and keeps the
+  rest of `main` as it is. The job fails if a .bin that `.gitattributes` routes to LFS would be
+  committed as a plain blob. The bot commit message ends in `[skip ci]`.
+- Tags without `v` everywhere: the release workflow's messages, the commands `xewe release`
+  prints (`git tag -a X.Y.Z`, `gh release create X.Y.Z`), doc/spec.md and doc/ci.md. A leading `v`
+  on a tag is still accepted.
+- doc/ci.md documents `releases_branch: main`.
+- scripts/release.sh keeps the README's workflow example ref in step with the version.
+
+INSTALL
+
+- Projects: `[tools] ref = "3.0.1"` in xewe.toml, then `./setup.sh`.
+- Workflow callers: `uses: xewe-labs/xewe-os-tools/.github/workflows/<workflow>.yml@3.0.1`.
+
+NOT VERIFIED
+
+- The LFS commit to `main` has not run on GitHub yet: its first run is the template's 3.0.0 tag.
+  The step's script was checked by actionlint with shellcheck and by a test that reads it; the
+  commit and push themselves were not exercised.
+
+TESTING
+
+What was tested on which commits, and what was not: releases/3.0.1/testcard.md (attached to this
+release).
