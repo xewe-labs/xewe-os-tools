@@ -8,11 +8,12 @@ tests/
 ├── conftest.py   the only conftest: shared fixtures and helpers (below)
 ├── fakes/        arduino-cli, esptool, clang-format (Python scripts)
 ├── fixtures/     manifest-2.0.0-c3.json (golden), module_properties/ (the six real module.properties),
-│                 setup.sh (a copy of the template's, for the bootstrap string checks),
+│                 setup.sh (a copy of the template's, for the bootstrap string checks), esp32-core/
+│                 (the PartitionScheme menu of the esp32 3.3.12 boards.txt and six of its partition CSVs),
 │                 webui/ (fan-dashboard/, the Flask example of doc/webui.md, and its golden export)
 ├── test_cli.py
 ├── env/          test_setup test_doctor test_clean test_dotenv test_fetch test_arduino test_project test_runscript
-├── build/        test_compile test_flash test_release test_format test_brandlint test_webui
+├── build/        test_compile test_flash test_release test_format test_brandlint test_webui test_partitions
 ├── board/        test_serial test_serial_interactive test_boards test_provision
 ├── modules/      test_registry test_manifest test_lockfile test_tomlw
 └── testing/      test_plugin test_no_board
@@ -58,7 +59,8 @@ Tests import the installed `xewe`: install the checkout once with `pip install -
 - A scratch project: `project` is a set-up project in `tmp_path/xewe-os` (manifest, sketch,
   generated modules from `make_modules_checkout`, `build_config.toml`; cwd is its root, the fake
   arduino-cli and no serial ports are active); `project_with_tests` adds `write_tests` (one unit
-  and one board test). For files only (no `build/`), call `write_project(root, selected=...)`;
+  and one board test); `esp32_core` installs `fixtures/esp32-core` as the project's esp32 core 3.3.12
+  (for the partition-scheme checks). For files only (no `build/`), call `write_project(root, selected=...)`;
   `LOCK` is its manifest text, `make_modules_checkout(dest, layout, board_tests)` a modules
   checkout built from `fixtures/module_properties/`.
 - `FIXTURES` / `FAKES` / `PROPERTIES` are the shared folders.

@@ -47,6 +47,13 @@ def test_compile_argv_per_chip(chip: str, tmp_path: Path) -> None:
     ]
 
 
+def test_compile_argv_partition_scheme(tmp_path: Path) -> None:
+    p = Paths(tmp_path / "xewe-os")
+    argv = arduino.compile_argv("arduino-cli", chips.get("c6"), p, p.root, "huge_app")
+    assert argv[3] == GOLDEN_FQBN["c6"].replace("PartitionScheme=no_ota", "PartitionScheme=huge_app")
+    assert arduino.compile_argv("arduino-cli", chips.get("c6"), p, p.root)[3] == GOLDEN_FQBN["c6"]
+
+
 @pytest.mark.parametrize("chip", ["c3", "c6", "s3"])
 def test_dry_run_prints_exact_command(
     project: Paths, chip: str, capsys: pytest.CaptureFixture[str], fake_cli: object

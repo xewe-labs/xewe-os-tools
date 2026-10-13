@@ -7,7 +7,7 @@ no system package manager: the toolchain (arduino-cli, esp32 core, esptool) and 
 checkout (`sources/xewe-os-modules/<ref>/`) are installed once per machine into
 `~/.xewe-os/build-tools/` (`$XEWE_HOME` overrides `~/.xewe-os`), everything else into the project's
 `build/`. A project is a directory with `xewe.toml`, its committed manifest (name, version, chip,
-core/modules/tools refs, module selection, libraries). The full layout is in
+partition scheme, core/modules/tools refs, module selection, libraries). The full layout is in
 [doc/spec.md](doc/spec.md) §6.
 
 ## Install
@@ -43,7 +43,7 @@ Runtime dependencies: `pyserial`, `pytest`. esptool comes from the pinned esp32 
 | Command | What it does |
 |---|---|
 | `xewe setup [--modules LIST\|all\|none] [--latest] [--force] [--core-source DIR] [--modules-source DIR] [--arduino-data DIR]` | arduino-cli, esp32 core and the modules repo (`sources/xewe-os-modules/<ref>/`, or `XEWE_MODULES_SOURCE` as is) into the shared `~/.xewe-os/build-tools` (once per machine and ref; a branch ref is followed), core library and libraries into `build/`; generates `build/modules/` (the `XeWeModules` library, the selected modules' tests, `modules.lock`) and `src/Modules.h` (zero modules is valid: `--modules none`, or no selection); installs the selected modules' `depends_libraries` from the modules repo's `libraries.toml` unless `xewe.toml` `[libraries]` pins that name (the manifest wins); writes `run.sh`; prints where to put the dotenv file when none is found. |
-| `xewe build [--chip C \| --all-chips] [--define K=V]... [--clean] [--dry-run]` | compile into `build/builds/<chip>/out/`; prints `Sketch uses N bytes (NN%)` (`--dry-run` prints the arduino-cli command only) |
+| `xewe build [--chip C \| --all-chips] [--define K=V]... [--clean] [--dry-run]` | compile into `build/builds/<chip>/out/`; prints `Sketch uses N bytes (NN%)` (`--dry-run` prints the arduino-cli command only). The FQBN's `PartitionScheme` is `xewe.toml [build] partition_scheme` (default `no_ota`); an image larger than that scheme's app partition fails (exit 1), a scheme the installed esp32 core does not offer for the chip in 4 MB is exit 2 |
 | `xewe flash [--chip C] [--port P] [--erase] [--no-build] [--settle S] [--require-board]` | build if stale (sources, version or `--define` values changed), then write the merged image; NVS (name, Wi-Fi, module choices) is kept unless `--erase`. After esptool's reset the port must stay present `--settle` seconds (default 0.5, `XEWE_SETTLE`); a board that comes back under another name (macOS `cu.usbmodem<N>`, same USB serial number) is followed |
 | `xewe serial [--port P] [--send CMD [--expect RE] [--boot-timeout S]] [--duration S] [--no-input] [--timestamps] [--log FILE]` | timestamped console; the tools open the port without resetting the board (`--reset` or flashing resets it); `--send` waits out a boot in progress (see below); without `--send` on a terminal it is interactive: keys typed during flash or boot are discarded, board lines are shown raw (`--timestamps` adds the time; `--log` always has it), each typed line is sent on Enter, Ctrl-C or Ctrl-D exits (`--no-input` or non-terminal stdin: listen only) |
 | `xewe provision [--port P] [--name NAME] [--modules all\|none\|LIST] [--timezone GMT+HH:MM] [--env FILE] [--no-reset] [--log FILE]` | answer the first-boot prompts of a flashed board (settings from the dotenv file) |

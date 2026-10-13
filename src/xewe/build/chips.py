@@ -6,10 +6,21 @@ from dataclasses import dataclass
 
 from xewe.report import EXIT_USAGE, XeWeError
 
-BOARD_OPTIONS = (
-    "CDCOnBoot=cdc,CPUFreq=160,DebugLevel=none,EraseFlash=all,FlashMode=qio,"
-    "FlashSize=4M,PartitionScheme=no_ota,UploadSpeed=921600"
-)
+DEFAULT_PARTITION_SCHEME = "no_ota"
+"""``PartitionScheme`` when ``xewe.toml`` has no ``[build] partition_scheme``."""
+FLASH_SIZE = 0x400000
+"""Bytes of flash the fixed ``FlashSize=4M`` option builds for; a partition scheme must fit in it."""
+
+
+def board_options(scheme: str = DEFAULT_PARTITION_SCHEME) -> str:
+    """The fixed board options with ``PartitionScheme=<scheme>``."""
+    return (
+        "CDCOnBoot=cdc,CPUFreq=160,DebugLevel=none,EraseFlash=all,FlashMode=qio,"
+        f"FlashSize=4M,PartitionScheme={scheme},UploadSpeed=921600"
+    )
+
+
+BOARD_OPTIONS = board_options()
 
 
 @dataclass(frozen=True)
@@ -23,8 +34,12 @@ class Chip:
 
     @property
     def fqbn(self) -> str:
-        """Full FQBN with the fixed board options."""
-        return f"esp32:esp32:{self.board}:{BOARD_OPTIONS}"
+        """Full FQBN with the fixed board options and the default partition scheme."""
+        return self.fqbn_for(DEFAULT_PARTITION_SCHEME)
+
+    def fqbn_for(self, scheme: str) -> str:
+        """Full FQBN with the fixed board options and ``PartitionScheme=<scheme>``."""
+        return f"esp32:esp32:{self.board}:{board_options(scheme)}"
 
 
 CHIPS: dict[str, Chip] = {

@@ -242,6 +242,20 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_cli: Any, no_p
     return p
 
 
+ESP32_CORE = FIXTURES / "esp32-core"
+"""The PartitionScheme menu of the esp32 core 3.3.12 ``boards.txt`` and some of its partition CSVs."""
+
+
+@pytest.fixture
+def esp32_core(project: Paths) -> Path:
+    """``project`` with ``fixtures/esp32-core`` installed as its esp32 core 3.3.12; returns that directory."""
+    from xewe.build import partitions
+
+    dest = partitions.platform_dir(project.default_arduino_data, "3.3.12")
+    shutil.copytree(ESP32_CORE, dest)
+    return dest
+
+
 @pytest.fixture
 def project_with_tests(project: Paths) -> Paths:
     """``project`` plus ``write_tests`` (one unit test, one board test)."""
