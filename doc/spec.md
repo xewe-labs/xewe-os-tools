@@ -67,6 +67,7 @@ xewe-os-tools/
 │   │   ├── compile.py     compile, XeWeBuildInfo generation, builds/<chip>/out/ artifacts
 │   │   ├── flash.py       xewe flash, xewe run
 │   │   ├── release.py     release matrix, static/firmware/releases/<version>/
+│   │   ├── releasecard.py xewe release-card: run record, redaction, tree fingerprint, the card (§14)
 │   │   ├── format.py      xewe format: clang-format (C++) + ruff format (Python)
 │   │   ├── clang-format   the XeWe C++ style (package data; format passes it as --style=file:)
 │   │   ├── brandlint.py   xewe brand-lint
@@ -92,7 +93,8 @@ xewe-os-tools/
     ├── conftest.py        the only conftest: shared fixtures and helpers
     ├── fakes/             arduino-cli, esptool, clang-format (Python scripts) used by the self-tests
     ├── fixtures/          golden manifest.json, the six real module.properties, a copy of the template's setup.sh,
-    │                      webui/ (the fan-dashboard Flask example and its golden export)
+    │                      webui/ (the fan-dashboard Flask example and its golden export),
+    │                      release_matrix_43.csv (a product's 43-row release matrix)
     ├── test_cli.py
     ├── env/  build/  board/  modules/  testing/
 ```
@@ -197,9 +199,13 @@ test, run, boards), `--latest` (setup only).
 |---|---|
 | 0 | success, including "compiled, not run" (no board, no `--require-board`) |
 | 1 | failure of the operation: compile error, flash error, test failure, expect timeout, validation error |
-| 2 | usage error (argparse, conflicting flags, unknown chip/module) |
+| 2 | usage error (argparse, conflicting flags, unknown chip/module, a bad `--define`/`XEWE_TEST_DEFINES` item, `xewe release` without `--notes` and without a terminal) |
 | 3 | not set up / tool missing (`build/config/build_config.toml` absent or stale, `src/Modules.h` or `build/modules/` missing, arduino-cli/esptool missing) |
 | 4 | board access disabled (`--no-board` / `XEWE_NO_BOARD=1`) for a command that needs a board, board required but none found (`--require-board`; for `xewe test` too), explicit `--port` not present, several boards and none chosen, or the port did not come back after esptool reset the board |
+
+`xewe release-card record` maps the exit of the command it records onto the same codes: 0 when it
+exited 0, 1 when it exited non-zero, 3 when it could not be started; the command's own code (127
+when it could not start) is in `run.json` and the `exit N` line (§14).
 
 **Chip selection rule (build/flash/test/run):** `--chip` → chip of the single attached board
 (§5) → `[project] chip` in `xewe.toml` → `c3`. `--all-chips` = c3, c6, s3 in that order.
@@ -220,10 +226,10 @@ Agents in compile-only mode must set `XEWE_NO_BOARD=1`.
 |---|---|---|---|
 | `xewe setup` | `[--latest] [--modules LIST\|all\|none] [--force] [--core-source DIR] [--modules-source DIR] [--arduino-data DIR]` | §6. Installs the shared toolchain (once per machine) and everything else into `build/`, runs `modules generate`, writes `run.sh`; prints the dotenv hint (§13) when no file is found | n/a (never needs a board) |
 | `xewe build` | `[--chip C \| --all-chips] [--define KEY=VALUE]... [--clean]` | §7. Compiles; writes `build/builds/<chip>/out/` | n/a; exit 0 on success |
-| `xewe flash` | `[--chip C] [--port P] [--baud 921600] [--erase] [--no-build] [--require-board] [--no-board]` | Builds if `builds/<chip>/out` is missing, older than any source, or was built with other `--define` values/version/chip/FQBN options (`build.stamp`, §7), then §8 write-flash | prints status line, exit 0 (4 with `--require-board`) |
+| `xewe flash` | `[--chip C] [--port P] [--baud 921600] [--erase] [--no-build] [--define KEY=VALUE]... [--require-board] [--no-board]` | Builds if `builds/<chip>/out` is missing, older than any source, or was built with other `--define` values/version/chip/FQBN options (`build.stamp`, §7), then §8 write-flash. The defines are `--define`, else `XEWE_TEST_DEFINES` (as `xewe test`, §9), so it flashes the image a later `xewe test` with the same defines reuses | prints status line, exit 0 (4 with `--require-board`) |
 | `xewe serial` | `[--port P] [--baud 115200] [--reset] [--send CMD [--expect RE] [--timeout 10] [--boot-timeout 90]] [--duration S] [--no-input] [--timestamps] [--log FILE] [--require-board] [--no-board]` | Listen with timestamps until Ctrl-C/`--duration` (on a terminal without `--no-input`: interactive, typed lines are sent, board lines printed raw unless `--timestamps`; Ctrl-D also exits) (opening the port resets the board on native USB; the boot log is shown), or wait for the boot to finish, send one command and wait for a regex (§8) | `no board attached; nothing to listen to`, exit 0 (4 with `--require-board`) |
 | `xewe provision` | `[--port P] [--name NAME] [--modules all\|none\|LIST] [--timezone GMT+HH:MM] [--env\|--from FILE] [--timeout 60] [--no-reset] [--log FILE] [--no-board]` | §8, §13. Resets the board and answers its first-boot prompts (name, modules, Wi-Fi, timezone); exit 0 also when already provisioned, 2 bad/missing settings (checked before the port is opened), 1 prompt timeout or unexpected sequence | `no board attached; nothing to provision`, exit 4 |
-| `xewe test` | `[--chip C \| --all-chips] [--port P] [--module SLUG]... [--unit-only] [--no-flash] [--require-board] [--no-board] [-v] [-- PYTEST_ARGS]` | §9. Runs pytest over project and selected-module tests | board tests compile and report compiled-not-run, exit 0 |
+| `xewe test` | `[--chip C \| --all-chips] [--port P] [--module SLUG]... [--unit-only] [--no-flash] [--define KEY=VALUE]... [--require-board] [--no-board] [-v] [-- PYTEST_ARGS]` | §9. Runs pytest over project and selected-module tests; builds (when stale for the defines) and flashes with `--define`, else `XEWE_TEST_DEFINES` | board tests compile and report compiled-not-run, exit 0 |
 | `xewe run` | `[--chip C] [--port P] [--define K=V]... [--keep-nvs] [--no-serial] [--no-input] [--timestamps]` | build → erase-flash (default; NVS too, so every run is a true first boot; `--keep-nvs` skips it) → flash → serial, interactive on a terminal (what `run.sh` calls). The `flashed` line ends with `(flash erased: first boot)` or `(nvs kept)` | builds, prints status line, exit 0 |
 | `xewe boards` | `[--no-probe] [--json] [--set-port P [--set-chip C]] [--clear] [--no-board]` | §5. Lists candidate ports and chips; writes `build/config/boards.toml` | `no board attached`, exit 0 (4 with `--require-board`) |
 | `xewe modules list` | `[--json]` | Modules in the modules checkout: slug, id, version, deps, `*` if selected | — |
@@ -238,7 +244,12 @@ Agents in compile-only mode must set `XEWE_NO_BOARD=1`.
 | `xewe webui export` | `FLASK_DIR OUT_DIR` | [webui.md](webui.md). Writes each `.html`/`.css`/`.js` of `templates/` and `static/` as `<stem>_<ext>.h` (PROGMEM raw literal, `url_for('static', ...)` rewritten), copies `app.py` and generates `<name>_app.ino` (one GET route per file) into `OUT_DIR/<name>_<YYYYmmdd_HHMMSS>/`; last line `webui: N headers and <name>_app.ino [+ app.py] in <dir>`. Exit 2 when `FLASK_DIR` is not a directory, 1 when two files map to one array name. Needs no project | n/a |
 | `xewe webui prompt` | | Prints the LLM prompt that ports `app.py` into the generated sketch (`src/xewe/build/webui-prompt.txt`) | n/a |
 | `xewe doctor` | | Checks python, git, venv, the shared toolchain (`XEWE_HOME` resolved; cli and core present), arduino-cli version, core version, esptool, manifest (`xewe.toml`) vs installed, free disk ≥ 6 GB, serial permissions (Linux: user in `dialout`/`uucp`), Rosetta 2 on Apple silicon (the esp32 core's `ctags` is x86_64: "bad CPU type" without it; probe `pgrep -q oahd` or `arch -x86_64 /usr/bin/true`; warns with `softwareupdate --install-rosetta --agree-to-license`), board scan | exit 0 if only warnings |
-| `xewe release` | `--version X.Y.Z [--matrix FILE] [--notes FILE]` | §11 | n/a (no board needed) |
+| `xewe release` | `--version X.Y.Z [--matrix FILE] [--notes FILE] [--chip C \| --assemble]` | §11; without `--notes` and without a terminal (or with `XEWE_NONINTERACTIVE=1`) exit 2 | n/a (no board needed) |
+| `xewe release-card init` | `--dir D --repo OWNER/NAME --version X.Y.Z [--tag T] [--exclude DIR]... [--resume] [--root DIR]` | §14. Starts a run: empties `D` (only a previous run folder of the same repo and version inside the work tree; anything else is exit 2 with nothing deleted) and writes `D/run.json` (run id, base commit, tested-tree fingerprint); `--resume` keeps the run when commit and tree are unchanged | n/a |
+| `xewe release-card record` | `--dir D --kind setup\|validate\|unit\|board\|flash\|build\|check [--chip C] [--name LABEL] [--junit PATH] [--format core-host] [--firmware BIN] [--meta FILE] [--resume] [--root DIR] -- CMD...` | §14. Runs `CMD`, writes its redacted output to `D/<n>-<kind>[-<chip>][-<LABEL>].log`, adds the step to `run.json` (with `CMD`'s own exit code); exits 0 when `CMD` exited 0, 1 when it exited non-zero, 3 when it cannot start. `unit` and `board` need `--junit` or `--format` (exit 2) | n/a |
+| `xewe release-card render` | `--dir D --notes FILE --out FILE [--chips LIST] [--hardware LIST] [--require KINDS] [--title NAME] [--tests PREFIX]... [--root DIR]` | §14. Writes the card, or refuses: exit 1, reasons on stderr, `D/release_card.draft.md` | n/a |
+| `xewe release-card verify` | `--card FILE [--dir D] [--root DIR] [--ci --junit-dir D [--meta-dir D] [--size-tolerance P] [--unit-only]]` | §14. Tag run: the card as `render` wrote it (`card_sha256`), clean tree with the card's fingerprint, local logs with their sha256, no `testcard.md`; `--ci`: the CI comparison (`--unit-only`: core and modules CI). A card without a valid data block on its last line is exit 2 | n/a |
+| `xewe release-card fingerprint` | `[--card FILE [--check]] [--exclude DIR]... [--root DIR]` | §14. Prints the tested-tree fingerprint; `--card --check` exits 1 only when the tree is another one (the CI card jobs skip that card), 2 when the card has no valid data block on its last line | n/a |
 
 **`xewe format`** (`src/xewe/build/format.py`). AI-first style: nothing is column-aligned, because runs
 of alignment whitespace cost tokens, break exact-match edits and turn a one-line change into a
@@ -695,10 +706,12 @@ Steps per chip:
      `build/modules/library.properties`), `modules` (selected+resolved slugs),
      `sketch_size` (bytes, from "Sketch uses N bytes"), `sketch_size_percent` (the "(NN%)" of
      program storage on the same line, `null` if absent), `app_partition_size` (bytes of the scheme's
-     app partition, the limit; `null` when no esp32 core is installed), `warnings` (count). No absolute path is
+     app partition, the limit; `null` when no esp32 core is installed), `static_ram` and `static_ram_max`
+     (bytes, from "Global variables use N bytes … Maximum is M bytes"; without "Maximum is", the maximum is
+     N plus the "leaving" bytes; `null` if absent), `warnings` (count). No absolute path is
      stored; `path_rel_*` are relative to the project parent (`xewe-os/build/builds/c3/out/...`).
    - `build.stamp` — sha256 of chip, full FQBN (board options with the partition scheme), project version and the sorted
-     `--define` list. `flash`/`run` treat the binary as stale when the stamp differs from the
+     `--define` list. `flash`/`run` and the `compiled` fixture of `xewe test` (§9) treat the binary as stale when the stamp differs from the
      inputs of the current call (a build with `--define X=1` followed by a plain `xewe flash`
      rebuilds), in addition to the mtime check against every source (sketch files, `src/`
      including `Modules.h`, `build/libraries/`, `build/modules/library.properties` and `build/modules/src/`).
@@ -739,6 +752,10 @@ its own `builds/<chip>/cache` and `builds/<chip>/gen`, so incremental rebuilds s
   `flash_segments` above); `xewe run` erases by default (`--keep-nvs` skips the erase). The `flashed` line ends with
   `(flash erased: first boot)` or `(nvs kept)`.
 - If the board's detected chip ≠ the selected chip → exit 2 before flashing.
+- Defines (`xewe flash`): `--define KEY=VALUE` (repeatable, checked like `xewe build --define`),
+  else `XEWE_TEST_DEFINES` (environment, else the dotenv file), the precedence of `xewe test` (§9);
+  the image built or reused (`build.stamp`) with them is the one written. `xewe run` takes
+  `--define` only.
 - If esptool fails at 921600, retry once at 460800 (CH340 boards), then exit 1.
 - After each esptool command (erase-flash, write-flash) the hard reset re-enumerates a native
   USB port (it can linger, vanish, then come back): `wait_for_port` waits up to 10 s until the
@@ -876,13 +893,35 @@ or a module's own value prompts such as the template's `Starting level (0-100)?`
   when it runs in the modules repo, and `modules/<slug>/` of the checkout setup recorded
   (`XEWE_MODULES_SOURCE` or the shared `build-tools/sources/xewe-os-modules/<ref>/`) when it runs
   from the copy in `build/modules/tests/<slug>/`.
-- Options passed to the plugin: `--xewe-chip`, `--xewe-port`, `--xewe-require-board`,
+- Options passed to the plugin: `--xewe-chip`, `--xewe-port`, `--xewe-require-board`, `--xewe-define`,
   `--xewe-no-flash` (`xewe test --no-flash`: the `firmware` fixture skips the image write and tests
   what the board runs; still built, still reset; the board reports only `Version <x.y.z>`, no build
   id, so there is no automatic skip), `--xewe-project` (and `--xewe-no-board` for plain pytest; `xewe test --no-board` sets
   `XEWE_NO_BOARD=1`, which the plugin honours). Extra args after `--` go to pytest verbatim.
 - `--unit-only` → `-m unit`. `--all-chips` runs the session once per chip (three `pytest.main`
   calls), aggregating exit codes.
+- Defines: `--define KEY=VALUE` (repeatable; same syntax and check as `xewe build --define`, a bad
+  item is exit 2) becomes `--xewe-define KEY=VALUE` for the plugin. Without any `--define`, the
+  plugin reads `XEWE_TEST_DEFINES` (environment, else the dotenv file, §13): `KEY=VALUE` items
+  separated by whitespace (a value cannot hold a space; a bad item is exit 2 naming the variable).
+  Precedence: `--define` > `XEWE_TEST_DEFINES` in the environment > in the dotenv file; any
+  `--define` replaces the whole variable (no per-key merge). The `compiled` fixture uses these
+  defines, so `build.stamp` (§7) carries them: an image already built with the same defines
+  (`xewe build --define …`) and newer than every source is reused (`build  <chip>  up to date
+  (…)`), anything else is rebuilt with them, and `firmware` flashes that image. A board wired off
+  the default pins (`XEWE_MODULE_LED_PIN_DATA=48`) therefore keeps its pin whether or not the
+  session flashes; a plain `xewe test` with neither set builds and flashes the default-pin image.
+  `xewe flash` takes the same `--define` items and the same `XEWE_TEST_DEFINES` default, so a
+  `xewe flash --chip C --define …` followed by `xewe test --chip C --define …` (or both with only the
+  variable set) flashes once and tests that image. Release scripts keep per-chip values in the
+  git-ignored dotenv file (or export the variable per chip).
+
+JUnit properties: every collected test carries `user_properties` for the release card
+(`xewe_kind`, `xewe_needs`, `xewe_nodeid`, `xewe_chip`; a test that had the board also
+`xewe_board`, `xewe_fw_sha256`, `xewe_fw_match`), written by `--junitxml` with
+`-o junit_family=xunit1`. Their meaning and the result mapping are in §14. With defines,
+`xewe_fw_sha256` is the sha256 of the image `compiled` returned (reused or built), which is the image
+`firmware` flashes, so it equals the card's flash step sha.
 
 Markers (registered by the plugin): `unit` (pure logic; runs on the developer machine, never needs
 a board or a build), `board` (needs firmware on a board). A test that uses `compiled`, `board`,
@@ -893,7 +932,7 @@ folders need no `conftest.py`):
 
 | Fixture | Scope | Behaviour |
 |---|---|---|
-| `compiled` | session | Builds the selected chip once (same code path as `xewe build`); a build failure fails every board test. |
+| `compiled` | session | The selected chip's image for the session's defines (`--xewe-define`, else `XEWE_TEST_DEFINES`): reused when `build.stamp` and the sources say it is up to date (as `xewe flash` decides), else built once (same code path as `xewe build`); a build failure fails every board test. |
 | `board` | session | Depends on `compiled`; detects the board (§5). None, or board access disabled (`XEWE_NO_BOARD`/`--xewe-no-board`; no port is looked at) → `pytest.skip("compiled, not run: no board attached")`; with `--require-board` → `pytest.fail(...)`. Returns `Board(port, chip, serial_number)`. |
 | `firmware` | session | Depends on `board`; flashes `build/builds/<chip>/out/` once per session (not with `--xewe-no-flash`), opens the session's one `Console`, pulses reset and waits up to 90 s for `System Setup Complete` (through a first-boot `Initial Setup Complete`/`Rebooting` and port drops), then 0.5 s of silence. `Name your device` (unprovisioned board) fails with a pointer to `xewe provision` and the runbook's first-boot provisioning. The wait is `serialio.wait_for_banner` (§8), shared with `xewe provision`. The console is closed at session end. Returns `Firmware(bin_path, version, chip, console)`. |
 | `serial` | function | Depends on `firmware`; the session `Console` (never opened/closed per test), drained and with `lines` emptied at test start: `send(cmd)`, `expect(regex, timeout=10) -> re.Match`, `command(cmd, expect, timeout) -> re.Match`, `lines` (captured since the test started), `drain()`, `reset()`, `write(bytes)`, `reopen()`, `probe()`. Expect failures raise `AssertionError` with the last 20 lines. After a board test fails on a timeout or a vanished port, the next `serial` reopens the port once (a stale native-USB endpoint after a restart) and sends `$system uid` (3 tries in 15 s); no `uid64` reply → `pytest.exit("board on <port> is silent after a restart …; power-cycle it")`, exit 1 (the port cannot be reopened → `"board on <port> disappeared from USB …; power-cycle it (unplug and replug)…"`), so one silent board fails one test instead of every later one. A board at `Name your device` is not probed. The `firmware` boot wait does the same when the banner never comes. |
@@ -1060,30 +1099,68 @@ in an `xewe-os` checkout, then `xewe modules validate` (the checkout setup used,
    Legacy `build/release_matrix.csv` is read with a warning to move it.
 3. Release notes: `--notes FILE`, else `$EDITOR` (default `vi`) on a temp file with a 3-line
    header, which is stripped; result saved as `static/firmware/releases/<version>/release_notes.txt`.
+   The editor is opened only when stdin is a terminal and `XEWE_NONINTERACTIVE` is not `1`;
+   otherwise (CI, scripts, `< /dev/null`) a release without `--notes` stops with exit 2 and one
+   line, `error: release notes: pass --notes FILE (…)`, before anything is built or written. The
+   check sits in the editor fallback itself, so it covers a full run, `--chip` and `--assemble`
+   (which needs notes only when the chip runs left no `release_notes.txt`).
 4. For each row: `xewe build --chip <chip> --define …` with the release version, then move
    `build/builds/<chip>/out/{<bin>,manifest.json,meta.json}` into
    `static/firmware/releases/<version>/<col1>/<col2>/…` (folder per non-notes column, values with
    quotes/backslashes stripped, spaces → `_`, empty → `empty`; for the default matrix this is
-   `<version>/c3/`). Write `build_notes.txt` when the row has notes, and
-   `firmware_map.csv` with the header row minus `_BUILD_NOTES`. Rewrite `path_rel_*` in
+   `<version>/c3/`). Write `build_notes.txt` when the row has notes. Rewrite `path_rel_*` in
    `meta.json` to the release location, and record what the release was built from, read from
    `build_config.toml [installed]` (what `./setup.sh` resolved, so a `latest` ref is pinned to the
    commit it meant at release time): `project_commit` (HEAD of the project, read-only
    `git rev-parse`), then each ref with its commit, `core_ref, core_commit, modules_ref,
    modules_commit, tools_ref, tools_commit`, and `libraries = {<name>: {ref, commit}}` at the end.
    An unknown commit (local source that is not a git checkout, nothing recorded) is `-`. CI reads
-   these fields (doc/ci.md).
-5. Write `[project] version = "X.Y.Z"` into `xewe.toml`; create
-   `static/firmware/releases/firmware-X.Y.Z.tar.gz` (tarfile).
-6. Print, do not run:
+   these fields (doc/ci.md). `artifacts` gains `size` and `sha256` (of the bin) and the row's
+   release-asset names `asset_name`, `meta_asset`, `manifest_asset` (step 5).
+5. **Asset names** (`asset_names()`): the prefix is the row's folders joined by `_`. The bin keeps
+   its name when the row has one folder and is `<prefix>_<bin>` otherwise; meta and manifest are
+   always `<prefix>_meta.json` and `<prefix>_manifest.json`.
+
+   | Matrix | Bin | Meta | Manifest |
+   |---|---|---|---|
+   | default (`CHIP` only) | `3.1.0-c3-xewe-os.bin` | `c3_meta.json` | `c3_manifest.json` |
+   | `CHIP,XEWE_MODULE_LED_PIN_DATA,XEWE_MODULE_LED_PIN_CLOCK` | `c6_20_19_3.1.0-c6-xewe-led-os.bin` | `c6_20_19_meta.json` | `c6_20_19_manifest.json` |
+
+6. **`firmware_map.csv`**, one row per built image in matrix order, written with the csv module
+   (minimal quoting): the matrix columns without `_BUILD_NOTES` (cells verbatim), then the reserved
+   columns `_PATH` (folders joined by `/`), `_ASSET`, `_SIZE` (bytes), `_SHA256`, `_META`,
+   `_MANIFEST`, `_BUILD_NOTES`. Reserved columns start with `_`, so a reader that takes the leading
+   matrix columns keeps working.
    ```
-   git add xewe.toml static/firmware/releases/X.Y.Z
+   CHIP,XEWE_MODULE_LED_PIN_DATA,XEWE_MODULE_LED_PIN_CLOCK,_PATH,_ASSET,_SIZE,_SHA256,_META,_MANIFEST,_BUILD_NOTES
+   c6,20,19,c6/20/19,c6_20_19_3.1.0-c6-xewe-led-os.bin,4194304,<64 hex>,c6_20_19_meta.json,c6_20_19_manifest.json,Led Dock V2 pinout
+   ```
+7. Write `[project] version = "X.Y.Z"` into `xewe.toml`; create
+   `static/firmware/releases/firmware-X.Y.Z.tar.gz` (tarfile, the whole version folder in the layout
+   of steps 4 and 6). Then `stage_assets()` empties `build/release/X.Y.Z/assets/` and writes the
+   GitHub Release assets into it, flat: every bin under its asset name, each row's `meta.json` as
+   `<prefix>_meta.json`, an ESP Web Tools manifest per row as `<prefix>_manifest.json` whose part
+   path is the flat bin name (so it resolves next to the manifest in the release),
+   `firmware_map.csv` and the tarball. A bin whose size or sha256 differs from its map row fails
+   (exit 1).
+8. **Per chip** (one CI job per chip): `--chip C` builds only C's rows and writes
+   `static/firmware/releases/X.Y.Z/firmware_map.C.csv` (no `firmware_map.csv`, no tarball, no
+   assets); exit 2 when the matrix has no C row. `--assemble` builds nothing: it merges every
+   `firmware_map.<chip>.csv` in that folder in matrix order, deletes them and goes on with step 7.
+   It fails (exit 1, nothing written) when a matrix row has no build, a part has a row the matrix
+   lacks, or a part was made from another matrix (different header). Without `--notes` it keeps the
+   `release_notes.txt` of the chip runs. `--chip` runs followed by `--assemble` give the same
+   `firmware_map.csv` and assets as one run. The two flags do not go together (exit 2).
+9. Print, do not run (`release_card.md` is added when `releases/X.Y.Z/release_card.md` exists;
+   firmware is never committed: it is release assets only, see doc/ci.md "Releases"):
+   ```
+   git add xewe.toml
    git commit -m "release X.Y.Z"
    git tag -a X.Y.Z -m "Release X.Y.Z"
    git push origin X.Y.Z
-   gh release create X.Y.Z static/firmware/releases/firmware-X.Y.Z.tar.gz --verify-tag --title X.Y.Z --notes-file static/firmware/releases/X.Y.Z/release_notes.txt
+   gh release create X.Y.Z build/release/X.Y.Z/assets/* [releases/X.Y.Z/release_card.md] --verify-tag --title X.Y.Z --notes-file static/firmware/releases/X.Y.Z/release_notes.txt
    ```
-   Time: ~3 min for three chips.
+   Time: ~3 min for three chips; the product's 43 rows take about 45 min locally.
 
 ---
 
@@ -1109,16 +1186,17 @@ shared fixtures and fakes (doc/tests.md); `pytest tests/<area>` runs one area.
 | `env/test_arduino.py` | env vars (no `~/.arduino15`), exact compile argv per chip, FQBN strings (golden), no `JTAGAdapter` |
 | `build/test_compile.py` | `builds/<chip>/out/` contents, bin name, `manifest.json` byte-equal to golden built from 2.0.0 release files, `meta.json` keys (`modules_version`), `XeWeBuildInfo.h` content, `--define`, sketch staging when folder ≠ stem, `--all-chips` continues after failure |
 | `board/test_boards.py` | VID:PID filter, chip-id output parsing (sample esptool 5 output), cache by serial number, override precedence, no-board / one / several decision, `boards.toml` `[override]` preserved |
-| `build/test_flash.py` | esptool argv, `--erase` (port wait after erase and after write), `flash` keeps NVS by default, `run` erases by default and `--keep-nvs` does not, port not back → exit 4, baud fallback, no-board exit 0 vs `--require-board` exit 4, chip mismatch exit 2 |
+| `build/test_flash.py` | esptool argv, `--erase` (port wait after erase and after write), `flash` keeps NVS by default, `run` erases by default and `--keep-nvs` does not, port not back → exit 4, baud fallback, no-board exit 0 vs `--require-board` exit 4, chip mismatch exit 2, `--define` (repeatable) flashes the image built with those defines and reuses one already built with them, `XEWE_TEST_DEFINES` as the default with the precedence of `xewe test` |
 | `board/test_serial.py` | timestamps, `\r` stripping, send/expect match and timeout (exit 1), reconnect, a closed handle after an unplug (`TypeError` from `in_waiting`) → `XeWeError` and `connected` False, reset across a port drop, `wait_for_port` settle and timeout (exit 4); interactive mode: typed line sent, `--no-input` and non-TTY stdin listen only, EOF exit 0, reconnect, raw lines and no `> CMD` echo (timestamped with `--timestamps`, in `--send` mode, listen-only and the log), stdin flushed only when interactive on a TTY (interactive mode in `board/test_serial_interactive.py`) |
 | `board/test_provision.py` | scripted first-boot transcript: answers in order, SSID by number (the S3 list's shape, made-up names), rescan then `-3` custom, `! Invalid number` re-answered, board resuming at the network list, nudge only before the first prompt (fake clock), timezone `y` / `n` + offset, already provisioned sends nothing, unlisted module answered `n` and unknown value / y/n prompts answered with their default (logged), endless unknown prompt exit 1, nudge, port drop at reboot, prompt timeout exit 1 with masked tail, password never in stdout/log, the summary, the rescan log line and the typed custom SSID mask the SSID; settings precedence flags > env > dotenv file > defaults, settings from `<project>/.env` with no flags, exit 2 before the port, exit 4 without a board |
 | `env/test_dotenv.py` | parsing (comments, quotes, `export`, no interpolation), errors without values, real environment wins, resolution order (`--env`, `XEWE_ENV`, project, tools checkout from `build_config.toml` or the package checkout), missing file is not an error, only the key count is logged, `hint()` (both paths, the provisioning keys) |
 | `build/test_brandlint.py` | each banned spelling fails with the exact stderr lines, allowed spellings are clean, skipped directories (caches and `*.egg-info` included), in a git work tree only the files git does not ignore, outside one a directory walk, binary and non-UTF-8 files, `naming.md` in any case, dotenv files, several `DIR`s, a missing `DIR` exits 2, no project needed, the tools repo itself is clean |
 | `build/test_webui.py` | export of `fixtures/webui/fan-dashboard/` byte-equal to the golden `fan-dashboard_export/`, the timestamped folder name, `url_for` rewrite (both quote styles), routes, array names and MIME types, only `.html`/`.css`/`.js` under `templates/` and `static/` (binary, other suffixes and folders skipped; non-UTF-8 warned), duplicate array name exit 1, missing folder exit 2, the prompt printed with placeholder Wi-Fi only |
-| `testing/test_plugin.py` | `pytester`: no board → "compiled, not run" summary and exit 0; `--require-board` → pytest 1, `xewe test` 4; faked board: one port open per session, boot banner wait (first-boot reboot, unprovisioned, timeout, board gone from USB at the boot reset → `disappeared from USB`); `xewe test --no-flash` writes no image; unit tests run; `--unit-only` runs only `unit` tests and builds nothing; board tests found under `modules/<slug>/tests/board/`; compile failure fails board tests; pins from the project `.env` reach `os.environ` (real environment wins) |
+| `testing/test_plugin.py` | `pytester`: no board → "compiled, not run" summary and exit 0; `--require-board` → pytest 1, `xewe test` 4; faked board: one port open per session, boot banner wait (first-boot reboot, unprovisioned, timeout, board gone from USB at the boot reset → `disappeared from USB`); `xewe test --no-flash` writes no image; unit tests run; `--unit-only` runs only `unit` tests and builds nothing; board tests found under `modules/<slug>/tests/board/`; compile failure fails board tests; pins from the project `.env` reach `os.environ` (real environment wins); JUnit `user_properties` (§14) under xunit1 and xunit2, board id, image sha256 and banner match on a fake board, a module test's source node id; `xewe test --define` and `XEWE_TEST_DEFINES`: the flag reaches `build_chip` and `build.stamp`, a bad item is exit 2 with no build, a matching stamp is reused (no rebuild, image bytes unchanged) and other defines rebuild, precedence flag > environment > dotenv file, the define image is the one flashed, and with defines the JUnit `xewe_fw_sha256` equals the sha256 of the flashed image whether `compiled` reused or built it (§14); the prepare flow `record --kind flash -- xewe flash --define …` then `xewe test --define …` agrees on the image (no build, `xewe_fw_sha256` equals the step's `fw_sha256`) |
 | `modules/test_registry.py` | dependency order and cycle error against fixtures copied from the six real `module.properties`; generated `build/modules/` (`library.properties`, `XeWeModules.h`, `tests/<slug>/{board,unit}/`, `modules.lock`) and `src/Modules.h` golden, library version (tag / `0.0.0+<sha7>` / `0.0.0`), empty selection, legacy `src/modules/`, `build/modules-lib/` and `build/config/modules.lock` removal; every validator rule (tests layout included) has a failing fixture |
-| `build/test_release.py` | matrix parsing and typing, folder layout, `firmware_map.csv`, version ≥ check, printed commands (tags without `v`), never calls git (but `status`/`rev-parse`), `meta.json` provenance (`*_commit` next to each ref, libraries, `-` when unknown); `xewe-release.yml`: the tag-to-version step run with bash, the branch commit through Git LFS with `[skip ci]` |
-| `test_cli.py` | every subcommand's `--help` (`brand-lint` included), exit-code table, `--verbose` |
+| `build/test_release.py` | matrix parsing and typing, folder layout, `firmware_map.csv` rows and asset names (the product's 43-row matrix as a fixture, the default matrix), `--chip` runs + `--assemble` equal to one run and its refusals, `stage_assets` listing and checks (two rows with one asset name refused), version ≥ check, printed commands (tags without `v`, no `git add` of firmware), never calls git (but `status`/`rev-parse`), `meta.json` provenance (`*_commit` next to each ref, libraries, `-` when unknown); `xewe-release.yml`: the tag-to-version, matrix-chips (CSV quoting, chip lower-cased) and latest-flag (drafts excluded) steps run with bash (fake `gh`), job order and assets, the branch commit through Git LFS with `[skip ci]`; the `card` jobs find the card of the tree with `xewe release-card fingerprint --card --check` (a read-only fake `git`), with no second fingerprint implementation (only exit 1 with `is not the card's` skips a card; a card with no data block, a block that is not JSON or not on the last line, and any other failure fail the job; ci.yml's card job too), and run `verify --ci --unit-only`; the assemble job's card check runs before the rows are downloaded and assembled; the xewe-build.yml no-committed-firmware lint; `xewe release` without `--notes`: `xewe release` without `--notes`: stdin not a terminal (subprocess, `stdin=DEVNULL`) or `XEWE_NONINTERACTIVE=1` → exit 2 naming `--notes`, no editor, nothing written; a terminal opens `$EDITOR`; `--chip` refused the same way; `--assemble` keeps the chip runs' notes and is refused only when there are none |
+| `build/test_releasecard.py` | golden card (`fixtures/releasecard/golden_card.md`) byte for byte; JUnit fixtures (pass, hardware pass, compile-only pass, compiled-not-run skip, gated skip, xfail, fail, error, strict xpass) and core `ok  `/`FAIL` lines; redaction (dotenv file, environment, `$HOME` as a whole path part; XML-, JSON- and URL-escaped forms; JUnit and meta.json copies value by value, a short SSID never rewriting markup or ids); fingerprint stable and changed (content, mode, added, renamed, deleted, a symlink to a folder, a submodule commit; `*` matching one path part; `releases/` and ignored files left out; read-only git on this checkout); `init` refusing a folder that is not a previous run folder (the release folder, the root, a tracked folder, another version's run) and deleting nothing; `record` mapping the command's exit to 0/1/3 and resolving the root from a subfolder, `unit`/`board` without results exit 2; every refusal rule (stale run id, step before `run.json`, changed log, tree changed, missing kind, failed step and tests, JUnit not written, a test step with no rows, missing hardware chip, fw sha mismatch, banner mismatch and unknown, a board record of another chip, notes with a data block, a hardware pass without a board record) with the draft; `--tests` module card; `--resume` re-run selection and retries; `verify` (clean tree, renames, logs, `testcard.md`, a card edited after render in its body or data block, the data block read from the last line only, a bad last line exit 2) and the CI comparison (block, allow, warn, case-sensitive env gates, size tolerance, `--unit-only` with CI board rows, a module card's `only` scope, `--meta-dir`/`--size-tolerance` checks, the card's chips/hardware/require); the `fingerprint` action (`--card --check`, the card's exclude list) |
+| `test_cli.py` | every subcommand's `--help` (`brand-lint` and `release-card` included), exit-code table, `--verbose` |
 | `env/test_clean.py` | `clean` levels (`--modules`; `--all` keeps `build/tools`, never touches `build-tools`) |
 | `modules/test_manifest.py` | `manifest show` drift marks, `manifest update` (latest tag, `--to`, usage errors); ref `latest`: `latest (main@<sha7>)`, drift when the remote head moved, unreachable remote, freeze with `update` and `--to latest` |
 | `testing/test_no_board.py` | `--no-board` / `XEWE_NO_BOARD=1`: discovery returns nothing (ports never listed), console never opens, flash/run build then exit 4, serial/provision/boards exit 4, `boards --set-port` still works, `xewe test --no-board` compiled-not-run exit 0 (4 with `--require-board`), plugin `--xewe-no-board`; `-v` after the subcommand |
@@ -1148,8 +1226,8 @@ committed (git-ignored in the tools repo and the template).
   single or double quotes around the value; no interpolation; a line without `=` is exit 2 naming
   file and line only.
 - Keys (`dotenv.KEYS`): `XEWE_DEVICE_NAME`, `XEWE_WIFI_SSID`, `XEWE_WIFI_PASSWORD`, `XEWE_TIMEZONE`,
-  `XEWE_PROVISION_MODULES`, `XEWE_TEST_BUTTONS_PIN`, `XEWE_TEST_PINS_ADC_PIN`, `XEWE_PORT`,
-  `XEWE_CHIP` (other `XEWE_*` variables the tools read are accepted; an unknown `XEWE_*` key is a
+  `XEWE_PROVISION_MODULES`, `XEWE_TEST_BUTTONS_PIN`, `XEWE_TEST_PINS_ADC_PIN`,
+  `XEWE_TEST_DEFINES` (§9; `xewe test` and `xewe flash`), `XEWE_PORT`, `XEWE_CHIP` (other `XEWE_*` variables the tools read are accepted; an unknown `XEWE_*` key is a
   warning naming the key). Only `XEWE_*` keys with a non-empty value are applied, through
   `apply()`, which sets `os.environ[key]` only when the variable is not set: the real environment
   wins, flags win over both.
@@ -1158,3 +1236,235 @@ committed (git-ignored in the tools repo and the template).
   project (so module tests read `XEWE_TEST_*` from `os.environ`).
 - Logging: `loaded N keys from <path>` only; values are never logged. The Wi-Fi password is masked
   (`********`) in console output, `--log` files and failure tails (§8).
+
+---
+
+## 14. Release card (`xewe release-card`)
+
+`src/xewe/build/releasecard.py`. Every repo of the ecosystem (tools, core, modules and the module
+set, the harness, products) publishes one generated file per release, `release_card.md`: what was
+tested, on which tree, with which result. It replaces `testcard.md`. The only hand-written input is
+`notes.txt`, embedded verbatim. `scripts/release.sh --prepare <v>` drives the four actions; the
+card is committed with the prepare commit and is the only release file published (the logs are not).
+`release-card` needs no project: it runs in the repo's git work tree (`--root`, default
+`git rev-parse --show-toplevel` of the current directory, for every action) and runs no git write.
+The card guards against mistakes, not against edits to the run folder: `run.json` is the record of
+every exit code and file sha, and the CI comparison cannot see hardware rows.
+
+**Run folder.** `releases/<v>/logs/` (the modules repo: the root's `releases/<v>/logs/` holds the
+shared run), gitignored in every repo:
+
+| File | Written by | Content |
+|---|---|---|
+| `run.json` | `init`, each `record` | `schema` (1), `run_id` (UTC `YYYYmmddTHHMMSSZ` + 4 hex digits), `started`, `repo`, `version`, `tag`, `base_commit` (`git rev-parse HEAD`), `tree`, `exclude`, `tools_version`, `tools_commit` (`<venv>/xewe-tools-commit`, else HEAD of the source checkout, else `-`), `host` (OS, architecture, Python), `steps` (every attempt, in order) |
+| `<n>-<kind>[-<chip>][-<label>].log` | `record` | the step's stdout and stderr, redacted; `n` counts every attempt of the run |
+| `<stem>.xml` | `record --junit PATH` | the JUnit file the command wrote, redacted value by value (below) |
+| `<stem>.build_config.toml` | `record --kind setup` | `build/config/build_config.toml` (pins, toolchain) |
+| `<stem>.meta.json`, `<stem>.compile.log` | `record --kind build\|flash --chip C` | `build/builds/<C>/out/meta.json` (or `--meta`; its string values redacted), and for build the compile log |
+| `release_card.draft.md` | `render` when it refuses | the card with the refusal reasons on top, for diagnosis; never committed |
+
+A step in `run.json`: `n`, `name` (`<n>-<kind>[-<chip>][-<label>]`), `key` (kind, chip, label and the
+redacted argv: what makes two attempts the same step), `kind`, `chip`, `label`, `argv`, `run_id`,
+`start`, `end`, `seconds`, `exit` (the command's own code; 127 when it could not start), `attempt`, `log`, `format`, `junit` (or `junit_missing`),
+`build_config`, `meta`, `compile_log`, for flash `firmware` (relative to the root) and `fw_sha256`
+(of `--firmware`, default the one `*.bin` in `build/builds/<C>/out/`), and `files` (sha256 of every
+file the step wrote into the folder).
+
+**Actions.**
+- `init --dir D --repo OWNER/NAME --version V [--tag T] [--exclude DIR]... [--resume]`: empties `D`
+  and writes `run.json`. `D` must lie inside the work tree (not be its root or above it), hold no
+  tracked file, and be missing, empty or a previous run folder of the same repo and version
+  (`run.json` naming them, and nothing but `run.json`, `run.tmp`, `release_card.draft.md` and step
+  files `<n>-…`, no subfolder); anything else (`--dir releases/<v>` holding `notes.txt`, `--dir .`)
+  is exit 2 and nothing is deleted. Only those files are deleted. `--resume` keeps an existing
+  `run.json` (prints `resuming run <id> (N steps recorded)`) when the base commit and the tree
+  fingerprint are unchanged; otherwise it warns `cannot resume …` and starts a new run.
+- `record --dir D --kind K [--chip C] [--name LABEL] [--junit PATH] [--format core-host] [--firmware
+  BIN] [--meta FILE] [--resume] -- CMD...`: runs `CMD` in the root (stdin inherited; output also
+  echoed, redacted), records the step with `CMD`'s own exit code (127 when it cannot start) and
+  exits 0 when `CMD` exited 0, 1 when it exited non-zero, 3 when it could not start (X-07). The
+  `--junit` file is deleted before `CMD` runs, so a file left by an earlier run never counts. `--chip`
+  is required for `board`, `flash` and `build`; `unit` and `board` need `--junit` or `--format`
+  (exit 2), since a test step without results proves nothing. `--resume`: a step whose latest attempt with the same
+  key exited 0 is not run again (`<name> is already green in run <id>; not run again`, exit 0); any
+  other step runs as a new attempt. pytest runs pass `--junitxml=PATH` themselves (`-o
+  junit_family=xunit1` recommended; the properties below are written in both families);
+  `--format core-host` reads the test rows from the log instead. A chip with a board is recorded
+  as `record --kind flash --chip C -- xewe flash --chip C --define …` followed by `record --kind board
+  --chip C --junit PATH -- xewe test --chip C --define … -- --junitxml=PATH -o junit_family=xunit1`
+  with the same defines (or only `XEWE_TEST_DEFINES`): the session reuses the flashed image, so its
+  `xewe_fw_sha256` is the flash step's `fw_sha256`.
+- `render --dir D --notes FILE --out FILE [--chips LIST] [--hardware LIST] [--require KINDS] [--title
+  NAME] [--tests PREFIX]...`: writes the card, or refuses (below). `--tests` shows only the tests whose
+  id starts with a prefix (one module's card out of the modules repo's shared run, `modules/<m>/`);
+  the hardware rules then look at those rows, while a FAIL or ERROR anywhere in the run still refuses. `--chips`: the chips built in this run (none: a repo
+  without firmware); `--hardware` (a subset of `--chips`): the chips whose board was attached;
+  `--require` defaults to `setup,validate,unit,build,board` with `--chips` and `setup,unit` without.
+  The title is `--title`, else the repo name. Exit 2 for a chip outside c3/c6/s3, a `--hardware` chip
+  not in `--chips`, an unknown kind or a missing notes file. `--chips`, `--hardware` and `--require`
+  are kept in the data block.
+- `verify --card FILE [--dir D]` (the tag run): `D` defaults to `<card folder>/logs`. Exit 1 when the
+  card was edited after render (its `card_sha256`, below, does not match: `… was edited after render`),
+  when a `testcard.md` is in the card's folder, when `git status --porcelain` shows a change outside
+  the excluded folders (a rename counts with both paths), when the fingerprint of HEAD's tree is not
+  the card's, or when a file listed under "Local logs" is missing from `D` or has another sha256 (`…
+  re-run \`--prepare <v>\` here`). Exit 2 when the card cannot be read or its last line is not a data
+  block of valid JSON (every action that reads a card).
+- `verify --ci --card FILE --junit-dir D [--meta-dir D] [--size-tolerance 0.5] [--unit-only]`: the CI
+  comparison (below); `D` holds the CI run's JUnit `*.xml` (and core host output as `*.log`/`*.txt`), the meta
+  dir any number of `meta.json` files. Every file is read whatever its name (subfolders too); the
+  workflows use `tests-<chip>.xml` (xewe-release.yml, one per chip job), `tests-unit.xml`
+  (xewe-modules-tests.yml and the tools' ci.yml), `tests-unit.log` (xewe-core-tests.yml: the `run.sh`
+  output) and `build-<chip>.meta.json` (a meta counts when it has `type` and `sketch_size`). A
+  `--meta-dir` that is not a directory and a negative `--size-tolerance` are exit 2.
+- `fingerprint [--card FILE [--check]] [--exclude DIR]...`: prints the tested-tree fingerprint
+  (below). With `--card` it uses the card's `exclude` list, exactly as `verify` does; `--check` then
+  prints `<card>: tree … matches` and exits 0, or `… is not the card's …` and exits 1, the only
+  exit 1 (`--check` without `--card`, or a card with no valid data block on its last line, is exit
+  2; the card jobs fail on it instead of skipping the card). The `card` jobs of xewe-core-tests.yml and xewe-modules-tests.yml find
+  the card of the commit under test with `fingerprint --card <card> --check`, so CI and the tools
+  share one implementation of the fingerprint.
+
+**Redaction** (inside `record`, so no raw log is stored; also the argv in `run.json` and every copied
+file): each value of the dotenv file (§13, found from the root) and of the environment whose key
+matches `(?i)(PSW|PASS|PASSWORD|SECRET|TOKEN|KEY|SSID)` becomes `«redacted:<KEY>»` (values shorter
+than 4 characters, `true`, `false`, `none`, `null` and `yes` are left alone; the longest value is
+replaced first), in each form it can take in a log: raw, XML-escaped (`&amp;`, `&lt;`, `&gt;`,
+`&quot;`, `&apos;`: a JUnit message), JSON-escaped and URL-encoded (`%XX`, and `+` for a space);
+then `$HOME` becomes `~` where it is a whole path part (`/home/user/x`, not `/home/username`). Logs,
+the argv and `build_config.toml` are redacted as text. The JUnit copy is parsed and redacted value
+by value: element text and attribute values, never tag or attribute names, `<testcase>` `name`,
+`classname`, `file`, `line`, `time`, or the `xewe_kind`, `xewe_needs`, `xewe_nodeid`, `xewe_chip`,
+`xewe_fw_sha256` and `xewe_fw_match` property values; the meta.json copy has its string values
+redacted. In these structured copies a secret shorter than 8 characters is replaced only as a whole
+word, so an SSID such as `test` never rewrites `test_x`. The tools read the dotenv file; nothing
+prints it.
+
+**Tested-tree fingerprint.** `sha256:` + sha256 over the lines `"<mode> <blob> <path>\n"`, sorted by
+path, for every path of `git ls-files -s` outside the excluded folders: `releases/`, the run folder
+and each `--exclude` (`*` matches exactly one path part, e.g. `modules/*/releases`, not
+`modules/a/b/releases`). `mode` is the index mode (what a CI checkout of the commit has, whatever the
+file system says about exec bits). `blob` is `git hash-object --stdin-paths` of the working file for
+a regular file (no `-w`; clean filters apply, so a Git LFS file counts as its pointer), the blob id
+of the link text for a symlink (hashed by the tools, never passed to git), and the index commit for
+a submodule (`160000`); a tracked path missing from the work tree is `000000 deleted <path>`. With `--prepare` refusing a dirty tree,
+the fingerprint of the prepare commit equals the one recorded at `init`. CI computes it only through
+`xewe release-card fingerprint`/`verify` on the pristine checkout (in xewe-release.yml before the
+release rows are downloaded and `xewe release --assemble` rewrites `xewe.toml`).
+
+**JUnit properties** (the test plugin, §9). At collection every test gets `user_properties`:
+`xewe_kind` (`board` with the `board` marker, explicit or automatic, else `unit`), `xewe_needs`
+(`hardware` when it uses `board`, `firmware` or `serial`; `compile` when it uses only `compiled`;
+else `none`), `xewe_nodeid` (the source path: `build/modules/tests/<slug>/` becomes
+`modules/<slug>/tests/`), `xewe_chip` (the session chip; empty outside a project). A test that uses
+the board gets, when its call starts, `xewe_board` = `<chip> sn=<USB serial number or -> port=<port>`
+(for native USB-Serial/JTAG the serial number is the MAC), `xewe_fw_sha256` (sha256 of the image
+`compiled` built for the session, the one flashed) and `xewe_fw_match` (`true` when the last `Build
+Timestamp <t>` line of the boot banner equals `timestamp_param` of the image's meta.json, `false` when
+it differs, `unknown` when either is missing).
+
+**Result vocabulary and mapping** (render, one row per test and chip):
+
+| JUnit testcase | Properties | Result | Detail |
+|---|---|---|---|
+| `<error>` | any | `ERROR` | first line of the message |
+| `<failure>`, or `<skipped message="xfail-marked test passes unexpectedly">` (strict XPASS) | any | `FAIL` | first line of the message |
+| `<skipped type="pytest.xfail">` | any | `XFAIL` | the reason |
+| `<skipped>` whose message contains `compiled, not run` | any | `SKIP (compiled, not run)` | the text after `compiled, not run: ` |
+| other `<skipped>` (an env gate, a missing broker …) | any | `SKIP` | the message |
+| no child | kind `board` with `xewe_board` | `PASS (hardware)` | `board <chip> sn=<id> fw <sha12> <defines>` (defines from that chip's flash meta) |
+| no child | kind `board`, needs `compile` | `PASS (compile only)` | `built for <chip>, no board needed` |
+| no child | kind `board`, needs `hardware`, no `xewe_board` | `ERROR` | `hardware test passed without a board record` |
+| no child | anything else (kind `unit`) | `PASS` | time |
+
+A unit row's chip is `-`. Without `xewe_nodeid` the id is `<file>::<classes>::<name>`. Core host
+output (`--format core-host`): a `== <std>: tests` line names the run, each `ok   <name>` line is
+`PASS` and each `FAIL <name>` line is `FAIL` of `tests/unit/run.sh::<name>[<std>]` (indented `  FAIL
+file:line` check lines are not rows).
+
+**Format** (`releasecard.CARD_TEMPLATE`; golden file `tests/fixtures/releasecard/golden_card.md`):
+
+```
+# <title> <version> release card
+
+| Field | Value |
+|---|---|
+| Repository | <OWNER/NAME> |
+| Release | <version> (tag `<tag>`) |
+| Card generated | <UTC>, run `<run id>`, xewe-os-tools <version> (`<commit>`) |
+| Tested commit | `<base commit>` |
+| Tested tree | `sha256:<64 hex>` |
+| Result | <U> unit passed; <chip>: <H> passed on hardware (board sn=<id>), <C> compile only, <R> compiled, not run; …; <S> skipped[; <X> xfail]; <F> failed |
+
+## 1. Release notes            notes.txt verbatim in a text block
+## 2. Metadata
+### Pins                        Component | Ref | Commit | Source (build_config.toml [installed] of the setup step)
+### Toolchain and host          xewe-os-tools | arduino-cli | esp32 core | Python | Host
+### Images                      Chip | FQBN | Partition scheme | App partition (B) | Flash used (B) | % | Static RAM (B) | RAM max (B) | Warnings | Log
+## 3. Boards                    Chip | Board id | Port | Defines | Firmware sha256 | Meta timestamp | Banner match | Flash step | Flash time
+## 4. Validator and checks      Step | Command | Exit | Time | Summary line; then the last 20 lines of each log
+## 5. Tests
+### Runs                        Run | Command | Chip | Board | Unit passed | Hardware passed | Compile-only passed | Compiled, not run | Skipped (other) | XFAIL | Failed | Exit
+### Every test                  Test | Kind | Chip | Result | Detail (sorted by file, name, chip)
+## 6. Local logs                File | Bytes | sha256 of every file in the run folder (the draft excepted)
+## 7. Not covered               chips without a hardware run; skips grouped by reason (first 3 tests each); manual checks pointer
+## 8. Retries                   Earlier attempt | Attempt | Exit | Time | Log, or "None."
+
+<!-- xewe-card-data {"schema":1,"tree":…,"run":…,"tests":[[id,kind,chip,result]…],"images":{"<chip>":{"sketch_size":…,"static_ram":…,"config":{…}}},"exclude":[…],"logs":{"<file>":"<sha256>"…},"repo":…,"version":…,"commit":…,"chips":[…],"hardware":[…],"require":[…][,"only":["<prefix>"…]],"card_sha256":…} -->
+```
+
+Images come from each chip's latest build step: the copied meta.json, else the last `Sketch uses` and
+`Global variables use` lines of the compile log (`%` is flash used over the app partition). Section 4
+lists the setup, validate and check steps; build and flash steps show in Images and Boards, unit and
+board steps in Runs. A section with nothing to show says so in one sentence (`No firmware images were
+built in this run.`, `No board run (no --hardware chip).`). Table cells escape `|`; the data block is
+one line of JSON with `<` and `>` escaped, always the card's last line, and every action reads it
+from there only, never from the notes or log tails embedded above it. `card_sha256` is the sha256
+of the card body (every byte before the data block's line) followed by the data block's JSON
+without `card_sha256` (keys sorted, no spaces): any edit to either after render changes it.
+
+**Refusal rules.** `render` exits 1, writes no card (`--out` is left as it is), prints `refused:
+<reason>` per reason on stderr and writes `release_card.draft.md` when:
+- a step has another run id, or started before `run.json`;
+- the notes contain `<!-- xewe-card-data` (the data block must be the card's only one);
+- a file a step wrote is missing or changed since (`… changed after it was recorded`);
+- the tree fingerprint is not the one `init` recorded;
+- a required kind is missing (`build` and `board` for every `--chips` chip; `flash` for every `--hardware` chip);
+- a `unit` or `board` step produced no test rows;
+- the latest attempt of any step exited non-zero, or a `--junit` step wrote no JUnit file;
+- any test is `FAIL` or `ERROR`;
+- a `--hardware` chip has no `PASS (hardware)` row;
+- a hardware row's `xewe_fw_sha256` is not that chip's flash step `fw_sha256`, its `xewe_fw_match` is not `true` (`false`, or `unknown` when the boot banner was never seen), or its `xewe_board` names another chip.
+
+A successful render removes an old draft and prints `release-card: <out> (<result line>)`.
+
+**`--resume`.** After a failure (a board that dropped off USB, a flaky step), `release.sh --prepare <v>
+--resume` calls `init --resume` and `record --resume` for every step in the same order: green steps
+are skipped, the others run again as new attempts. The card uses the latest attempt of each step and
+lists the earlier ones under "Retries" with their exit codes.
+
+**CI comparison** (`verify --ci`; exit 1 on any block, before `gh release create`):
+- **Block:** the fingerprint of the CI checkout is not the card's; the set of test ids differs
+  (chips ignored: CI runs every chip); any CI `FAIL` or `ERROR` (marked `(PASS on the card)` when it
+  was); an image size (`sketch_size`, `static_ram`) of a CI meta.json with the card's chip and defines
+  differs by more than `--size-tolerance` percent (default 0.5); a `testcard.md` next to the card;
+  a card edited after render (`card_sha256`).
+- **Allowed** (printed as `allowed: …`): a card PASS that is a CI skip for `compiled, not run` or an
+  env gate (the reason names an `UPPER_SNAKE` environment variable, case-sensitive, says `not set`
+  or names a golden dir); a chip with no CI image built with the card's defines. The card's
+  `chips`, `hardware` and `require` are printed as `allowed: card rendered with chips …, hardware
+  …, require …`.
+- **Warning:** a card PASS that is a CI skip for another reason; an image size difference within the
+  tolerance (`__FILE__` paths differ between the local and the runner checkout).
+- **Scope.** A module card (`render --tests PREFIX`) records the prefixes as `"only"` in its data
+  block; the CI rows outside them are not compared, so each module's card is checked against the
+  modules repo's one CI run.
+- **`--unit-only`** (the `card` jobs of xewe-core-tests.yml and xewe-modules-tests.yml: CI runs
+  `tests/unit/run.sh` or `xewe test --unit-only`, no board session): only the card's rows of kind
+  `unit` are compared, with the CI rows of kind `unit`; the card's board rows are listed as
+  `allowed: N board tests on the card not compared (unit-only CI)`. Within the unit rows every rule
+  above holds: a unit id on the card but not in CI (or the reverse) blocks, so a unit test missing the
+  `unit` marker (which `--unit-only` deselects) blocks too; a CI FAIL/ERROR blocks; image sizes are
+  compared as above (the modules job uploads its c3 build meta). Core's unit rows are its `run.sh`
+  `ok`/`FAIL` lines in both places (no JUnit, so the ids are the same). Harness and product run the
+  full comparison in xewe-release.yml, where every test is collected per chip.

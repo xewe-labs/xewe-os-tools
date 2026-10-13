@@ -233,3 +233,55 @@ def test_flash_follows_a_renamed_port_and_passes_settle(
     assert seen == [2.0]
     assert "flashed  c3  /dev/cu.usbmodem1101" in out
     assert f"{one_board} came back as /dev/cu.usbmodem1101" in err
+
+
+DEFINE = "XEWE_MODULE_LED_PIN_DATA"
+
+
+def _compiles(fake_cli) -> int:
+    return len([c for c in fake_cli() if c["argv"][0] == "compile"])
+
+
+def test_flash_define_flashes_the_define_image(
+    project: Paths, one_board: str, fake_esptool, fake_cli, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`xewe flash --define` (repeatable, as `xewe build`): the image built with those defines is the
+    one written, and an image already built with them is reused (no build)."""
+    project.boards_toml.write_text('schema = 1\n[[board]]\nport = "x"\nserial_number = "SN"\nchip = "c3"\n')
+    assert main(["build", "--chip", "c3", "--define", f"{DEFINE}=48", "--define", "LED_COUNT=8"]) == 0
+    compiles = _compiles(fake_cli)
+    image = (project.root / BIN).read_bytes()
+    capsys.readouterr()
+    assert main(["flash", "--define", f"{DEFINE}=48", "--define", "LED_COUNT=8"]) == 0
+    assert _compiles(fake_cli) == compiles  # reused
+    assert f"build  c3  up to date ({BIN})" in capsys.readouterr().out
+    assert fake_esptool()[-1][-1] == str(project.root / BIN)
+    assert (project.root / BIN).read_bytes() == image
+    header = (project.gen_dir("c3") / "XeWeBuildInfo/src/XeWeBuildInfo.h").read_text()
+    assert f"#define {DEFINE} 48" in header and "#define LED_COUNT 8" in header
+    assert main(["flash", "--define", f"{DEFINE}=13"]) == 0  # other defines: rebuilt, then flashed
+    assert _compiles(fake_cli) == compiles + 1
+    assert f"#define {DEFINE} 13" in (project.gen_dir("c3") / "XeWeBuildInfo/src/XeWeBuildInfo.h").read_text()
+    writes = len(fake_esptool())
+    assert main(["flash", "--define", "1BAD=x"]) == 2  # checked before any build or flash
+    assert len(fake_esptool()) == writes and _compiles(fake_cli) == compiles + 1
+
+
+def test_flash_defines_default_to_xewe_test_defines(
+    project: Paths, fake_cli, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Same precedence as `xewe test`: --define > XEWE_TEST_DEFINES (environment > dotenv file)."""
+    assert main(["build", "--chip", "c3", "--define", f"{DEFINE}=48"]) == 0
+    compiles = _compiles(fake_cli)
+    (project.root / ("." + "env")).write_text(f"XEWE_TEST_DEFINES={DEFINE}=48\n")
+    capsys.readouterr()
+    assert main(["flash"]) == 0  # from the dotenv file: the define image is up to date
+    assert "up to date" in capsys.readouterr().out and _compiles(fake_cli) == compiles
+    monkeypatch.setenv("XEWE_TEST_DEFINES", f"{DEFINE}=13")
+    assert main(["flash"]) == 0  # the environment wins over the dotenv file
+    assert _compiles(fake_cli) == compiles + 1
+    assert f"#define {DEFINE} 13" in (project.gen_dir("c3") / "XeWeBuildInfo/src/XeWeBuildInfo.h").read_text()
+    assert main(["flash", "--define", f"{DEFINE}=48"]) == 0  # the flag replaces the variable
+    assert _compiles(fake_cli) == compiles + 2
+    monkeypatch.setenv("XEWE_TEST_DEFINES", "LED_COUNT")
+    assert main(["flash"]) == 2

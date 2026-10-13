@@ -1,6 +1,6 @@
 # ci.yml: the tools' own checks (pytest, pyflakes, mypy), actionlint on the reusable workflows in
-# this folder, `xewe format --check` and `xewe brand-lint`. Every job blocks. Board-free; no
-# toolchain download.
+# this folder, `xewe format --check`, `xewe brand-lint` and the release card check. Every job
+# blocks. Board-free; no toolchain download.
 name: ci
 
 on:
@@ -36,8 +36,16 @@ jobs:
         run: |
           python -m pip install -q --upgrade pip
           python -m pip install -q . pyflakes mypy types-pyserial
+      # the JUnit file is the release card check's CI evidence (one Python is enough: same ids)
       - name: pytest
-        run: python -m pytest -q
+        run: python -m pytest -q --junitxml="$RUNNER_TEMP/card/junit/tests-unit.xml" -o junit_family=xunit1
+      - name: Upload the card inputs
+        if: matrix.python == '3.12'
+        uses: actions/upload-artifact@v7
+        with:
+          name: card-inputs
+          path: ${{ runner.temp }}/card/
+          retention-days: 14
       - name: pyflakes
         run: python -m pyflakes src tests
       - name: mypy
@@ -83,3 +91,63 @@ jobs:
         run: |
           python -m pip install -q .
           python -m xewe brand-lint .
+
+  # On a prepare commit (HEAD holds releases/<v>/release_card.md and the card's tested tree is
+  # HEAD's tree), the card must agree with this run's pytest results: `xewe release-card verify
+  # --ci`, with the tools of this checkout. On any other commit the job finds no card and its
+  # steps are skipped.
+  card:
+    name: release card check
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install the tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install -q .
+      - name: Release card for this tree
+        id: find
+        shell: bash
+        run: |
+          set -euo pipefail
+          found=()
+          # exit 0: the card's tested tree is this tree; exit 1 with "is not the card's": another
+          # tree, the only result that skips a card. Anything else (a card whose data block is
+          # missing or malformed: exit 2; git missing) fails the job.
+          while IFS= read -r -d '' card; do
+            rc=0
+            out="$("$RUNNER_TEMP/venv/bin/python" -m xewe release-card fingerprint --card "$card" --check)" || rc=$?
+            echo "$out"
+            case "$rc" in
+              0) found+=("$card") ;;
+              1) [[ "$out" == *"is not the card's"* ]] || { echo "::error::xewe release-card fingerprint failed on $card (exit 1)"; exit 1; } ;;
+              *) echo "::error::xewe release-card fingerprint failed on $card (exit $rc)"; exit "$rc" ;;
+            esac
+          done < <(git ls-files -z -- 'releases/*/release_card.md')
+          echo "cards=${found[*]}" >> "$GITHUB_OUTPUT"
+          [[ ${#found[@]} -gt 0 ]] || echo "no release card for this tree; the check is skipped"
+      - uses: actions/download-artifact@v8
+        if: steps.find.outputs.cards != ''
+        with:
+          name: card-inputs
+          path: ${{ runner.temp }}/card
+      # pytest of the tools is all unit tests (no board session); no firmware, so no --meta-dir
+      - name: xewe release-card verify --ci
+        if: steps.find.outputs.cards != ''
+        env:
+          CARDS: ${{ steps.find.outputs.cards }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -ra cards <<< "$CARDS"
+          for card in "${cards[@]}"; do
+            "$RUNNER_TEMP/venv/bin/python" -m xewe release-card verify --ci --unit-only --card "$card" \
+              --junit-dir "$RUNNER_TEMP/card/junit"
+          done

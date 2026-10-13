@@ -1,0 +1,10 @@
+== c++17: probes
+   ok probe_span.cpp
+== c++17: tests
+ok   cli_parses_words
+ok   nvs_round_trip
+== gnu++2b: tests
+  FAIL test/test_nvs.cpp:41: CHECK_EQ(a, b)
+ok   cli_parses_words
+FAIL nvs_round_trip
+2 tests, 1 failed checks

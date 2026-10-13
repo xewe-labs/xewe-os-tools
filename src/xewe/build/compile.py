@@ -5,12 +5,14 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import os
 import re
 import shlex
 import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -24,6 +26,10 @@ from xewe.report import EXIT_FAIL, EXIT_NOT_SETUP, EXIT_OK, EXIT_USAGE, XeWeErro
 
 DEFINE_KEY_RE = re.compile(r"^[A-Za-z_]\w*$")
 SIZE_RE = re.compile(r"Sketch uses (\d+) bytes(?: \((\d+)%\))?")
+RAM_RE = re.compile(
+    r"Global variables use (\d+) bytes(?: \(\d+%\))? of dynamic memory"
+    r"(?:, leaving (\d+) bytes for local variables)?(?:\. Maximum is (\d+) bytes)?"
+)
 STAMP_NAME = "build.stamp"
 SKETCH_SUFFIXES = (".ino", ".h", ".cpp", ".c", ".hpp")
 MANIFEST_TEMPLATE = """{{
@@ -84,6 +90,23 @@ def parse_defines(items: list[str]) -> dict[str, str]:
             raise XeWeError(f"--define expects KEY=VALUE with a C identifier as KEY, got '{item}'", EXIT_USAGE)
         out[key] = value
     return out
+
+
+TEST_DEFINES_VAR = "XEWE_TEST_DEFINES"
+"""Default defines of the image ``xewe test`` and ``xewe flash`` build and flash: space-separated
+``KEY=VALUE`` (environment, else the dotenv file; any ``--define`` replaces it)."""
+
+
+def defines_or_env(flag_items: list[str], environ: Mapping[str, str] | None = None) -> dict[str, str]:
+    """The ``--define`` items when there are any, else ``XEWE_TEST_DEFINES`` split on whitespace (so
+    a value cannot hold a space). Both are checked like ``xewe build --define``; a bad item is exit 2."""
+    if flag_items:
+        return parse_defines(flag_items)
+    env = os.environ if environ is None else environ
+    try:
+        return parse_defines(env.get(TEST_DEFINES_VAR, "").split())
+    except XeWeError as exc:
+        raise XeWeError(f"{TEST_DEFINES_VAR}: {exc}", EXIT_USAGE) from None
 
 
 def typed(value: str) -> Any:
@@ -219,6 +242,18 @@ def parse_size(output: str) -> tuple[int | None, int | None]:
     return int(m[1]), int(m[2]) if m[2] is not None else None
 
 
+def parse_ram(output: str) -> tuple[int | None, int | None]:
+    """(static RAM used, RAM maximum) from arduino-cli's "Global variables use N bytes ... Maximum is M
+    bytes" line; without "Maximum is", the maximum is used + "leaving" (None when neither is printed)."""
+    m = RAM_RE.search(output)
+    if not m:
+        return None, None
+    used = int(m[1])
+    if m[3] is not None:
+        return used, int(m[3])
+    return used, used + int(m[2]) if m[2] is not None else None
+
+
 def _compile(argv: list[str], env_vars: dict[str, str], cwd: Path, log_path: Path) -> tuple[int, str]:
     """Run the compile, writing compile.log; ``--verbose`` streams it to stderr."""
     log.debug("$ %s", shlex.join(argv))
@@ -317,6 +352,7 @@ def build_chip(
         MANIFEST_TEMPLATE.format(name=name, version=version, family=chip.family, binary=bin_name), encoding="utf-8"
     )
     size, percent = parse_size(output)
+    static_ram, static_ram_max = parse_ram(output)
     if size is not None and app_size is not None and size > app_size:
         log.error("sketch uses %d bytes; the app partition of %s holds %d", size, scheme, app_size)
         result(f"FAIL   {chip.name}  {seconds} s  too big for {scheme}")
@@ -351,6 +387,8 @@ def build_chip(
         "sketch_size": size,
         "sketch_size_percent": percent,
         "app_partition_size": app_size,
+        "static_ram": static_ram,
+        "static_ram_max": static_ram_max,
         "warnings": warnings,
     }
     (out / "meta.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")

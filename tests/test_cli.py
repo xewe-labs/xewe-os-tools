@@ -24,6 +24,7 @@ COMMANDS = [
     "doctor",
     "release",
     "webui",
+    "release-card",
 ]
 SUBCOMMANDS = [
     "modules list",
@@ -34,6 +35,11 @@ SUBCOMMANDS = [
     "manifest update",
     "webui export",
     "webui prompt",
+    "release-card init",
+    "release-card record",
+    "release-card render",
+    "release-card verify",
+    "release-card fingerprint",
 ]
 
 

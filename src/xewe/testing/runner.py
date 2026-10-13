@@ -69,8 +69,10 @@ def run_tests(
     require_board: bool = False,
     extra: list[str] | None = None,
     no_flash: bool = False,
+    defines: dict[str, str] | None = None,
 ) -> int:
-    """One pytest session per chip; the worst exit code wins."""
+    """One pytest session per chip; the worst exit code wins. ``defines`` (``xewe test --define``)
+    become ``--xewe-define`` items; without any the plugin takes ``XEWE_TEST_DEFINES``."""
     roots = test_roots(p, lock, only or [])
     if not roots:
         result("no tests found (project tests/ and module tests/ are empty)")
@@ -90,6 +92,8 @@ def run_tests(
             args.append("--xewe-require-board")
         if no_flash:
             args.append("--xewe-no-flash")
+        for key, value in (defines or {}).items():
+            args += ["--xewe-define", f"{key}={value}"]
         if unit_only:
             args += ["-m", "unit"]
         args += extra or []

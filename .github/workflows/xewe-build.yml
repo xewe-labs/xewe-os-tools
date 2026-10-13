@@ -18,7 +18,7 @@ on:
         type: string
         default: "3.12"
       strict_lint:
-        description: "make the lint job (xewe format --check, brand-lint) blocking; flip to true once the whitespace/format commits have landed"
+        description: "make the lint job (no committed firmware, xewe format --check, brand-lint) blocking; flip to true once the whitespace/format commits have landed"
         type: boolean
         default: false
 
@@ -155,3 +155,17 @@ jobs:
           else
             echo "::notice::xewe brand-lint is not in this tools version; skipped"
           fi
+      # Firmware images are GitHub Release assets only (xewe-release.yml); static/firmware/releases/
+      # holds nothing in git but its .gitkeep. Runs even when a step above failed.
+      - name: No committed firmware
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          files="$(git ls-files 'static/firmware/releases/**' ':!:static/firmware/releases/.gitkeep')"
+          if [[ -n "$files" ]]; then
+            echo "::error::committed under static/firmware/releases/ (release assets only; git rm -r --cached them and ignore the folder, see doc/ci.md):"
+            echo "$files"
+            exit 1
+          fi
+          echo "no committed firmware"

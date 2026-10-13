@@ -72,6 +72,10 @@ elif argv[:1] == ["compile"]:
         (build / f"{sketch.resolve().name}.ino.merged.bin").write_bytes(b"\xe9" + board.encode())
     print("src/x.cpp:3:5: warning: unused variable 'x' [-Wunused-variable]")
     print("Sketch uses 1123456 bytes (85%) of program storage space. Maximum is 1310720 bytes.")
+    print(
+        "Global variables use 41234 bytes (12%) of dynamic memory, leaving 286446 bytes for local variables. "
+        "Maximum is 327680 bytes."
+    )
 elif argv[:2] == ["board", "list"]:
     print("[]")
 else:

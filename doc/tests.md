@@ -10,10 +10,12 @@ tests/
 ├── fixtures/     manifest-2.0.0-c3.json (golden), module_properties/ (the six real module.properties),
 │                 setup.sh (a copy of the template's, for the bootstrap string checks), esp32-core/
 │                 (the PartitionScheme menu of the esp32 3.3.12 boards.txt and six of its partition CSVs),
-│                 webui/ (fan-dashboard/, the Flask example of doc/webui.md, and its golden export)
+│                 webui/ (fan-dashboard/, the Flask example of doc/webui.md, and its golden export),
+│                 releasecard/ (JUnit and core host fixtures, golden_card.md),
+│                 release_matrix_43.csv (the xewe-led-os release matrix: c3 7, c6 14, s3 22 rows)
 ├── test_cli.py
 ├── env/          test_setup test_doctor test_clean test_dotenv test_fetch test_arduino test_project test_runscript
-├── build/        test_compile test_flash test_release test_format test_brandlint test_webui test_partitions
+├── build/        test_compile test_flash test_release test_releasecard test_format test_brandlint test_webui test_partitions
 ├── board/        test_serial test_serial_interactive test_boards test_provision
 ├── modules/      test_registry test_manifest test_lockfile test_tomlw
 └── testing/      test_plugin test_no_board

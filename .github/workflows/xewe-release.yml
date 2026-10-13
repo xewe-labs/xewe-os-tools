@@ -1,12 +1,18 @@
 # xewe-release.yml: reusable release for a XeWe OS firmware project, run on a version tag.
-# Runs `xewe release`: build the release matrix into static/firmware/releases/<version>/, then
-# publish it twice:
-#   1. a GitHub Release with the binaries and firmware-<version>.tar.gz (canonical, permanent);
-#      every meta.json records the resolved commits of core, modules, tools and libraries
-#   2. a commit of the same folder to `releases_branch` (static files for the web flasher): an
-#      orphan `releases` branch by default, or the project's own `main`, where the commit adds
-#      static/firmware/releases/<version>/ and keeps the rest of the tree; .bin files go to Git LFS
-#      when the branch's .gitattributes says so
+# Jobs:
+#   plan      version from the tag, the chips that have rows in release_matrix.csv, release notes
+#   build     one job per chip (fail-fast off): ./setup.sh, `xewe release --chip C` (that chip's
+#             matrix rows), the default `xewe build --chip C` and `xewe test --no-board --chip C`
+#             with JUnit output for the release-card check
+#   assemble  `xewe release-card verify --ci` against the committed releases/<v>/release_card.md
+#             (on the pristine checkout), `xewe release --assemble` (firmware_map.csv in matrix
+#             order, the tarball and the flat assets in build/release/<v>/assets/), then the
+#             GitHub Release: every bin, each row's
+#             <prefix>_meta.json and <prefix>_manifest.json, firmware_map.csv, firmware-<v>.tar.gz
+#             and release_card.md. No logs are published.
+# The GitHub Release is the only place binaries live. `publish_branch: true` (deprecated, opt-in)
+# also commits the release folder to `releases_branch`, as before; firmware is never committed to
+# the project's own tree (xewe-build.yml lint).
 # Tags: X.Y.Z (release) or X.Y.Z-<suffix> (pre-release, e.g. 3.1.0-rc1); a leading `v` is
 # accepted. X.Y.Z must equal [project] version in xewe.toml at the tagged commit. See doc/ci.md.
 name: xewe-release
@@ -15,11 +21,11 @@ on:
   workflow_call:
     inputs:
       publish_branch:
-        description: "also commit the release folder to the releases branch"
+        description: "deprecated, opt-in: also commit the release folder (binaries in git) to releases_branch"
         type: boolean
-        default: true
+        default: false
       releases_branch:
-        description: "branch that holds static/firmware/releases/ for the web flasher (`releases`, or `main` to commit next to the source)"
+        description: "with publish_branch: branch that holds static/firmware/releases/ (`releases`, or `main`)"
         type: string
         default: "releases"
       modules:
@@ -29,6 +35,14 @@ on:
       python-version:
         type: string
         default: "3.12"
+      timeout_minutes:
+        description: "timeout of each job (a chip job builds all of that chip's matrix rows)"
+        type: number
+        default: 90
+      require_card:
+        description: "fail when releases/<X.Y.Z>/release_card.md is not in the tagged tree"
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -38,9 +52,15 @@ env:
   PYTHONUNBUFFERED: "1"
 
 jobs:
-  release:
+  plan:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    outputs:
+      tag: ${{ steps.ver.outputs.tag }}
+      version: ${{ steps.ver.outputs.version }}
+      base: ${{ steps.ver.outputs.base }}
+      prerelease: ${{ steps.ver.outputs.prerelease }}
+      chips: ${{ steps.chips.outputs.chips }}
     steps:
       - uses: actions/checkout@v7
 
@@ -58,6 +78,61 @@ jobs:
           [[ "$manifest" == "$base" ]] || { echo "::error::tag $tag does not match [project] version $manifest in xewe.toml; bump xewe.toml first"; exit 1; }
           pre=false; [[ "$full" != "$base" ]] && pre=true
           { echo "tag=$tag"; echo "version=$full"; echo "base=$base"; echo "prerelease=$pre"; } >> "$GITHUB_OUTPUT"
+
+      # the build jobs' matrix: chips in the order of their first release_matrix.csv row (CHIP
+      # column, any case, read as CSV; rows with an empty first cell skipped, as xewe release reads
+      # it; the chip lower-cased, as --chip takes it)
+      - name: Chips in the release matrix
+        id: chips
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - >> "$GITHUB_OUTPUT" <<'PY'
+          import csv, json, pathlib
+          path = pathlib.Path("release_matrix.csv")
+          chips = ["c3", "c6", "s3"]
+          if path.is_file():
+              with path.open(encoding="utf-8", newline="") as f:
+                  head, *rows = list(csv.reader(f))
+              col = next(i for i, h in enumerate(head) if h.strip().lower() == "chip")
+              chips = list(dict.fromkeys(r[col].strip().lower() for r in rows if r and r[0] and col < len(r)))
+          print(f"chips={json.dumps(chips)}")
+          PY
+          tail -n 1 "$GITHUB_OUTPUT"
+
+      - name: Release notes from the tag message
+        shell: bash
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/notes"
+          git fetch -q --force --depth 1 origin "+refs/tags/$TAG:refs/tags/$TAG"
+          git for-each-ref --format='%(contents)' "refs/tags/$TAG" | sed '/-----BEGIN PGP SIGNATURE-----/,$d' > "$RUNNER_TEMP/notes/notes.txt"
+          [[ -n "$(tr -d '[:space:]' < "$RUNNER_TEMP/notes/notes.txt")" ]] || echo "Release $TAG" > "$RUNNER_TEMP/notes/notes.txt"
+          cat "$RUNNER_TEMP/notes/notes.txt"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: notes
+          path: ${{ runner.temp }}/notes/notes.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  build:
+    name: build (${{ matrix.chip }})
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    strategy:
+      fail-fast: false
+      matrix:
+        chip: ${{ fromJSON(needs.plan.outputs.chips) }}
+    env:
+      BASE: ${{ needs.plan.outputs.base }}
+      CHIP: ${{ matrix.chip }}
+    steps:
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v7
         with:
@@ -100,65 +175,156 @@ jobs:
           MODULES: ${{ inputs.modules }}
         run: ./setup.sh ${MODULES:+--modules "$MODULES"} </dev/null
 
-      - name: Release notes from the tag message
+      - uses: actions/download-artifact@v8
+        with:
+          name: notes
+          path: ${{ runner.temp }}/notes
+
+      # this chip's release_matrix.csv rows (default: one row per chip) with version X.Y.Z, and
+      # firmware_map.<chip>.csv for the assemble job
+      - name: xewe release --chip
+        run: build/tools/.venv/bin/python -m xewe release --version "$BASE" --chip "$CHIP" --notes "$RUNNER_TEMP/notes/notes.txt"
+
+      # the default image (no matrix defines), as the card's images table records it
+      - name: xewe build (default image)
         shell: bash
-        env:
-          TAG: ${{ steps.ver.outputs.tag }}
         run: |
           set -euo pipefail
-          git fetch -q --force --depth 1 origin "+refs/tags/$TAG:refs/tags/$TAG"
-          git for-each-ref --format='%(contents)' "refs/tags/$TAG" | sed '/-----BEGIN PGP SIGNATURE-----/,$d' > "$RUNNER_TEMP/notes.txt"
-          [[ -n "$(tr -d '[:space:]' < "$RUNNER_TEMP/notes.txt")" ]] || echo "Release $TAG" > "$RUNNER_TEMP/notes.txt"
-          cat "$RUNNER_TEMP/notes.txt"
+          build/tools/.venv/bin/python -m xewe build --chip "$CHIP"
+          mkdir -p "$RUNNER_TEMP/card/meta" "$RUNNER_TEMP/card/junit"
+          cp "build/builds/$CHIP/out/meta.json" "$RUNNER_TEMP/card/meta/build-$CHIP.meta.json"
 
-      # builds every release_matrix.csv row (default c3, c6, s3) with version X.Y.Z
-      - name: xewe release
+      # unit tests run; board tests are compiled, not run; JUnit as the card's runs record it
+      - name: xewe test --no-board --chip
+        run: >-
+          build/tools/.venv/bin/python -m xewe test --no-board --chip "$CHIP" --
+          --junitxml="$RUNNER_TEMP/card/junit/tests-$CHIP.xml" -o junit_family=xunit1 -o junit_logging=no -ra
+
+      - name: Upload this chip's release rows
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.chip }}
+          path: static/firmware/releases/${{ needs.plan.outputs.base }}/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload this chip's card inputs
+        uses: actions/upload-artifact@v7
+        with:
+          name: card-${{ matrix.chip }}
+          path: ${{ runner.temp }}/card/
+          if-no-files-found: error
+          retention-days: 30
+
+  assemble:
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    env:
+      BASE: ${{ needs.plan.outputs.base }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      PRE: ${{ needs.plan.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      # no toolchain: assembling and the card check only read files
+      - name: Install the tools at the manifest ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -r repo ref < <(python3 -c 'import tomllib; t = tomllib.load(open("xewe.toml", "rb")).get("tools", {}); print(t.get("repo", "https://github.com/xewe-labs/xewe-os-tools"), t.get("ref", "latest"))')
+          dest="$RUNNER_TEMP/xewe-tools"
+          if [[ "$ref" =~ ^[0-9a-f]{7,40}$ ]]; then
+            git init -q "$dest"; git -C "$dest" fetch -q --depth 1 "$repo" "$ref"; git -C "$dest" checkout -q FETCH_HEAD
+          else
+            track="$ref"; [[ "$ref" == latest ]] && track=""
+            git clone -q --depth 1 ${track:+--branch "$track"} "$repo" "$dest"
+          fi
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install -q "$dest"
+
+      - name: Download the chip jobs' card inputs
+        uses: actions/download-artifact@v8
+        with:
+          pattern: card-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/card
+
+      # The committed card must describe this tree and these results (doc/ci.md "Releases"); a
+      # block fails the job before anything is published. It runs on the pristine checkout, before
+      # the release rows are downloaded and `xewe release --assemble` rewrites xewe.toml, so the
+      # tree fingerprint is the tagged tree's.
+      - name: Release card check
+        shell: bash
         env:
-          BASE: ${{ steps.ver.outputs.base }}
-        run: build/tools/.venv/bin/python -m xewe release --version "$BASE" --notes "$RUNNER_TEMP/notes.txt"
+          REQUIRE: ${{ inputs.require_card }}
+        run: |
+          set -euo pipefail
+          card="releases/$BASE/release_card.md"
+          if [[ ! -f "$card" ]]; then
+            if [[ "$REQUIRE" == true ]]; then
+              echo "::error::$card is not in the tagged tree; run scripts/release.sh --prepare $BASE and commit the card"
+              exit 1
+            fi
+            echo "::warning::$card is not in the tagged tree; the release has no card"
+            exit 0
+          fi
+          "$RUNNER_TEMP/venv/bin/python" -m xewe release-card verify --ci --card "$card" \
+            --junit-dir "$RUNNER_TEMP/card/junit" --meta-dir "$RUNNER_TEMP/card/meta"
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: notes
+          path: ${{ runner.temp }}/notes
+
+      - name: Download the chip jobs' release rows
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: static/firmware/releases/${{ needs.plan.outputs.base }}
+
+      - name: xewe release --assemble
+        run: '"$RUNNER_TEMP/venv/bin/python" -m xewe release --version "$BASE" --assemble --notes "$RUNNER_TEMP/notes/notes.txt"'
 
       # Pre-release tags: the folder is renamed to the full tag version (X.Y.Z-rc1) so it never
       # claims X.Y.Z; the binaries inside still report X.Y.Z. meta.json already records what the
       # release was built from (project_commit, core/modules/tools *_ref + *_commit, libraries:
-      # doc/spec.md §11); this step adds release_tag and, for a tools ref older than that change, fills the
-      # commits in from build_config.toml [installed]. The first meta.json's provenance also goes
-      # into the release notes.
+      # doc/spec.md §11); this step adds release_tag to every row's meta.json (and to its staged
+      # asset copy), appends the provenance of the first row to the release notes and rebuilds the
+      # tarball under the full version.
       - name: Finish the release folder
         id: dir
         shell: bash
-        env:
-          BASE: ${{ steps.ver.outputs.base }}
-          VERSION: ${{ steps.ver.outputs.version }}
         run: |
           set -euo pipefail
           rel=static/firmware/releases
+          assets="build/release/$BASE/assets"
           if [[ "$VERSION" != "$BASE" ]]; then
             rm -rf "${rel:?}/$VERSION"
             mv "$rel/$BASE" "$rel/$VERSION"
-            rm -f "$rel/firmware-$BASE.tar.gz"
           fi
-          python3 - "$rel/$VERSION" "$BASE" "$VERSION" <<'PY'
-          import json, os, pathlib, sys, tomllib
-          root, base, version = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
-          with open("build/config/build_config.toml", "rb") as f:
-              installed = tomllib.load(f).get("installed", {})
-          metas = sorted(root.rglob("meta.json"))
-          for meta in metas:
+          rm -f "$rel/firmware-$BASE.tar.gz" "$assets/firmware-$BASE.tar.gz"
+          python3 - "$rel/$VERSION" "$BASE" "$VERSION" "$assets" <<'PY'
+          import csv, json, os, pathlib, shutil, sys
+          root, base, version, assets = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3], pathlib.Path(sys.argv[4])
+          with open(root / "firmware_map.csv", newline="", encoding="utf-8") as f:
+              rows = list(csv.DictReader(f))
+          for row in rows:
+              meta = root / row["_PATH"] / "meta.json"
               data = json.loads(meta.read_text())
               for k, v in data.get("artifacts", {}).items():
                   if k.startswith("path_rel_"):
                       data["artifacts"][k] = v.replace(f"/releases/{base}/", f"/releases/{version}/")
               data["release_tag"] = os.environ["GITHUB_REF_NAME"]
-              if "core_commit" not in data:  # tools before meta.json provenance
-                  data["project_commit"] = os.environ["GITHUB_SHA"]
-                  for name in ("core", "modules", "tools"):
-                      rec = installed.get(name, {})
-                      data[f"{name}_ref"] = rec.get("ref", data.get(f"{name}_ref", ""))
-                      data[f"{name}_commit"] = rec.get("commit", "-")
-                  data["libraries"] = {k: {"ref": v.get("ref", ""), "commit": v.get("commit", "-")}
-                                       for k, v in installed.get("libraries", {}).items()}
               meta.write_text(json.dumps(data, indent=2) + "\n")
-          m = json.loads(metas[0].read_text())
+              shutil.copyfile(meta, assets / row["_META"])
+          m = json.loads((root / rows[0]["_PATH"] / "meta.json").read_text())
           lines = ["", "", "Built from:", f"- project {m['project_commit']}",
                    *(f"- {n} {m[n + '_ref']} @ {m[n + '_commit']}" for n in ("core", "modules", "tools")),
                    *(f"- {k} {v['ref']} @ {v['commit']}" for k, v in m["libraries"].items()),
@@ -167,35 +333,52 @@ jobs:
           notes.write_text(notes.read_text().rstrip("\n") + "\n".join(lines) + "\n")
           PY
           tar -C "$rel" -czf "$rel/firmware-$VERSION.tar.gz" "$VERSION"
+          cp "$rel/firmware-$VERSION.tar.gz" "$assets/"
           echo "path=$rel/$VERSION" >> "$GITHUB_OUTPUT"
-          find "$rel/$VERSION" -type f | sort
+          ls -l "$assets"
           cat "$rel/$VERSION/release_notes.txt"
+
+      # Latest only when this version is >= every non-pre-release already published (a re-hosted
+      # legacy release or a patch of an older line never takes "latest" from a newer one).
+      - name: Choose the latest flag
+        id: latest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          latest=false
+          if [[ "$PRE" != true ]]; then
+            latest=true
+            tags="$(gh release list --exclude-pre-releases --exclude-drafts --limit 1000 --json tagName --jq '.[].tagName')"
+            while IFS= read -r t; do
+              t="${t#v}"; t="${t%%-*}"
+              [[ "$t" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+              if [[ "$(printf '%s\n%s\n' "$t" "$BASE" | sort -V | tail -n 1)" != "$BASE" ]]; then latest=false; fi
+            done <<< "$tags"
+          fi
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "latest=$latest"
 
       - name: GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.ver.outputs.tag }}
-          VERSION: ${{ steps.ver.outputs.version }}
           DIR: ${{ steps.dir.outputs.path }}
-          PRE: ${{ steps.ver.outputs.prerelease }}
+          LATEST: ${{ steps.latest.outputs.latest }}
         run: |
           set -euo pipefail
-          assets="$RUNNER_TEMP/assets"; mkdir -p "$assets"
-          cp "static/firmware/releases/firmware-$VERSION.tar.gz" "$assets/"
-          # one flat file per binary; rows below a nested matrix folder keep that path in the name
-          while IFS= read -r bin; do
-            sub="$(dirname "${bin#"$DIR"/}")"
-            name="$(basename "$bin")"
-            if [[ "$sub" == */* ]]; then cp "$bin" "$assets/${sub//\//_}_$name"; else cp "$bin" "$assets/$name"; fi
-          done < <(find "$DIR" -name '*.bin')
-          flags=(--title "$TAG" --notes-file "$DIR/release_notes.txt" --verify-tag)
+          files=("build/release/$BASE/assets"/*)
+          card="releases/$BASE/release_card.md"
+          if [[ -f "$card" ]]; then files+=("$card"); fi
+          flags=(--title "$TAG" --notes-file "$DIR/release_notes.txt" --verify-tag "--latest=$LATEST")
           if [[ "$PRE" == true ]]; then flags+=(--prerelease); fi
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$assets"/* --clobber
+            gh release upload "$TAG" "${files[@]}" --clobber
           else
-            gh release create "$TAG" "$assets"/* "${flags[@]}"
+            gh release create "$TAG" "${files[@]}" "${flags[@]}"
           fi
+          echo "${#files[@]} assets"
 
       - name: Commit to the releases branch
         if: inputs.publish_branch
@@ -203,10 +386,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           BR: ${{ inputs.releases_branch }}
-          VERSION: ${{ steps.ver.outputs.version }}
-          TAG: ${{ steps.ver.outputs.tag }}
         run: |
           set -euo pipefail
+          echo "::warning::publish_branch is deprecated: binaries are GitHub Release assets; see doc/ci.md"
           w="$RUNNER_TEMP/releases-branch"
           url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           # Git LFS (preinstalled on ubuntu-latest): the clean filter and the pre-push upload for the
@@ -267,10 +449,3 @@ jobs:
           git -C "$w" push -q "$url" "HEAD:refs/heads/$BR"
           echo "pushed $BR: $rel/$VERSION"
           git -C "$w" lfs ls-files | grep -F "$rel/$VERSION/" || true
-
-      - name: Upload the release folder
-        uses: actions/upload-artifact@v7
-        with:
-          name: release-${{ steps.ver.outputs.version }}
-          path: ${{ steps.dir.outputs.path }}
-          retention-days: 30

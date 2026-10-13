@@ -11,7 +11,7 @@ from typing import Any
 
 from xewe import __version__
 from xewe.board import boards, provision, serialio
-from xewe.build import brandlint, chips, flash, release, webui
+from xewe.build import brandlint, chips, flash, release, releasecard, webui
 from xewe.build import format as fmt
 from xewe.build import compile as build
 from xewe.env import clean, config, doctor, dotenv, setup
@@ -147,6 +147,13 @@ def parser() -> argparse.ArgumentParser:
     )
     sp.add_argument("--no-build", action="store_true", help="flash the existing image")
     sp.add_argument(
+        "--define",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="extra #define of the image to build and flash, as in `xewe test` (default: XEWE_TEST_DEFINES)",
+    )
+    sp.add_argument(
         "--settle",
         type=float,
         metavar="S",
@@ -230,6 +237,13 @@ def parser() -> argparse.ArgumentParser:
         "--no-flash",
         action="store_true",
         help="do not write the image first; test whatever firmware is on the board (it is still reset)",
+    )
+    sp.add_argument(
+        "--define",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="extra #define for the build the tests flash, as in `xewe build` (default: XEWE_TEST_DEFINES)",
     )
     _require_board(sp)
     _env_arg(sp)
@@ -353,12 +367,31 @@ def parser() -> argparse.ArgumentParser:
     sp.add_argument("--version", required=True, dest="release_version", metavar="X.Y.Z")
     sp.add_argument("--matrix", type=Path, metavar="FILE")
     sp.add_argument("--notes", type=Path, metavar="FILE")
+    # per-chip release (one CI job per chip), then --assemble: doc/spec.md section 11
+    split = sp.add_mutually_exclusive_group()
+    split.add_argument(
+        "--chip", choices=chips.ALL_CHIPS, help="build only this chip's matrix rows (no tarball, no assets)"
+    )
+    split.add_argument(
+        "--assemble", action="store_true", help="merge the per-chip maps; write the tarball and the assets"
+    )
+
+    _release_card_parser(sub)
 
     for name, choice in sub.choices.items():
         if name in NO_BOARD_COMMANDS:
             _no_board_arg(choice)
     _verbose_everywhere(ap)
     return ap
+
+
+def _release_card_parser(sub: Any) -> None:
+    """``xewe release-card`` (doc/spec.md §14); the actions live in :mod:`xewe.build.releasecard`."""
+    releasecard.add_parser(sub)
+
+
+EXTRA_ARGS_COMMANDS = frozenset({"test", "release-card"})
+"""Commands that take arguments after ``--`` (pytest's; the command ``release-card record`` runs)."""
 
 
 def _require_board_flag(args: argparse.Namespace) -> bool:
@@ -464,6 +497,8 @@ def dispatch(args: argparse.Namespace, extra: list[str]) -> int:
         return brandlint.brand_lint(args.dirs)
     if cmd == "webui":
         return webui.webui_main(args.webui_command, getattr(args, "flask_project", None), getattr(args, "out", None))
+    if cmd == "release-card":
+        return releasecard.main(args, extra)
     p = Paths(find_root(args.project, library=cmd in LIBRARY_COMMANDS))
     if cmd in ENV_COMMANDS:
         dotenv.load_settings(p.root, getattr(args, "env_file", None))
@@ -502,6 +537,7 @@ def dispatch(args: argparse.Namespace, extra: list[str]) -> int:
             args.erase,
             args.no_build,
             _require_board_flag(args),
+            defines=build.defines_or_env(args.define),
             settle=args.settle,
         )
         return code
@@ -544,6 +580,7 @@ def dispatch(args: argparse.Namespace, extra: list[str]) -> int:
             _require_board_flag(args),
             extra,
             args.no_flash,
+            build.parse_defines(args.define),
         )
     if cmd == "run":
         return flash.run(
@@ -565,7 +602,9 @@ def dispatch(args: argparse.Namespace, extra: list[str]) -> int:
     if cmd == "doctor":
         return doctor.doctor(p, lock)
     if cmd == "release":
-        return release.release(p, lock, args.release_version, args.matrix, args.notes)
+        return release.release(
+            p, lock, args.release_version, args.matrix, args.notes, chip=args.chip, assemble=args.assemble
+        )
     raise XeWeError(f"unknown command {cmd}", EXIT_USAGE)
 
 
@@ -578,8 +617,8 @@ def main(argv: list[str] | None = None) -> int:
         argv, extra = argv[:i], argv[i + 1 :]
     args = parser().parse_args(argv)
     setup_logging(args.verbose)
-    if extra and args.command != "test":
-        log.error("arguments after -- are only accepted by `xewe test`")
+    if extra and args.command not in EXTRA_ARGS_COMMANDS:
+        log.error("arguments after -- are only accepted by `xewe test` and `xewe release-card record`")
         return EXIT_USAGE
     try:
         return dispatch(args, extra)

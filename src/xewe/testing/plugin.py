@@ -8,14 +8,25 @@ into failures (``xewe test`` then exits 4, see ``board_missing``). ``--xewe-no-b
 ``XEWE_NO_BOARD=1``, which ``xewe test --no-board`` sets) is the hard switch: no port is looked at
 and board tests are "compiled, not run" as if no board were attached.
 
+Every collected test carries JUnit ``user_properties`` for the release card (doc/spec.md §14):
+``xewe_kind``, ``xewe_needs``, ``xewe_nodeid``, ``xewe_chip``, and once it had the board
+``xewe_board``, ``xewe_fw_sha256`` and ``xewe_fw_match``.
+
 At configure time the project's dotenv file is applied (:mod:`xewe.env.dotenv`; the real environment
 wins), so ``XEWE_TEST_*`` pins, ``XEWE_PORT`` and ``XEWE_CHIP`` reach the tests without exports.
+
+``--xewe-define KEY=VALUE`` (``xewe test --define``) gives the defines the session builds with;
+without it ``XEWE_TEST_DEFINES`` (environment or dotenv file) does. ``compiled`` reuses an image
+whose ``build.stamp`` matches those defines and builds one otherwise, and ``firmware`` flashes it.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
-from collections.abc import Generator, Iterator
+import re
+from collections.abc import Generator, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,7 +42,15 @@ from xewe.env import dotenv
 from xewe.env.project import Paths, find_root
 from xewe.modules import lockfile
 from xewe.modules.lockfile import Lock
-from xewe.report import BOARD_DISABLED, EXIT_NO_BOARD, NO_BOARD, XeWeError, board_disabled, disable_board, log
+from xewe.report import (
+    BOARD_DISABLED,
+    EXIT_NO_BOARD,
+    NO_BOARD,
+    XeWeError,
+    board_disabled,
+    disable_board,
+    log,
+)
 
 NOT_RUN = "compiled, not run"
 BOARD_FIXTURES = frozenset({"compiled", "board", "firmware", "serial"})
@@ -51,10 +70,18 @@ GONE_MESSAGE = (
     "power-cycle it (unplug and replug), then re-run the tests"
 )
 """``pytest.exit`` reason when ``revive`` fails because the port cannot be reopened."""
+DEFINES_VAR = build.TEST_DEFINES_VAR
+"""Default defines of the session's build: space-separated ``KEY=VALUE`` (``--xewe-define`` replaces it)."""
 UNPROVISIONED_MESSAGE = (
     "board on {port} is unprovisioned (first-boot prompt 'Name your device'); "
     "provision it once with `xewe provision` (RUNBOOK section 3, first-boot provisioning), then re-run the tests"
 )
+HARDWARE_FIXTURES = frozenset({"board", "firmware", "serial"})
+"""Fixtures that need a board; a test using only ``compiled`` needs the build alone (release card, §14)."""
+BANNER_TIMESTAMP_RE = re.compile(r"Build Timestamp[:\s]+(\d{4}-\d\d-\d\dT[\d:]+Z?)")
+"""The core's boot banner line ``Build Timestamp <BUILD_TIMESTAMP>``."""
+MODULE_COPY_RE = re.compile(r"^build/modules/tests/([^/]+)/")
+"""Node id prefix of a module test run from its copy; the source is ``modules/<slug>/tests/``."""
 
 
 @dataclass
@@ -88,6 +115,8 @@ class XeWeContext:
         self.no_flash: bool = bool(config.getoption("xewe_no_flash"))
         """Skip the session's image write (``xewe test --no-flash``): the board keeps its firmware."""
         self._chip: str | None = config.getoption("xewe_chip")
+        self.defines: dict[str, str] = {}
+        """Defines of the session's build (``session_defines``), set at configure time."""
         self._lock: Lock | None = None
         self.board_tests: set[str] = set()
         """Node ids marked ``board`` at collection (the summary counts their passes)."""
@@ -97,6 +126,13 @@ class XeWeContext:
         """The session console once ``firmware`` opened it."""
         self.suspect = False
         """Set when a board test failed on a timeout or a vanished port; the next ``serial`` checks the board."""
+        self.binary: Path | None = None
+        """The image ``compiled`` built for this session (its sha256 goes into the JUnit properties)."""
+        self.board: Board | None = None
+        """The board the ``board`` fixture found."""
+        self.fw_match = "unknown"
+        """Banner ``Build Timestamp`` == meta.json ``timestamp_param``: true, false or unknown."""
+        self._fw_sha256: str | None = None
 
     @property
     def active(self) -> bool:
@@ -126,6 +162,29 @@ class XeWeContext:
             self._chip = boards.resolve_chip(None, None, self.lock.chip)
         return self._chip
 
+    def session_chip(self) -> str:
+        """The chip for the JUnit properties: "" outside a project or with an unreadable manifest."""
+        if self._chip is None and self.paths is None:
+            return ""
+        try:
+            return self.chip
+        except (XeWeError, OSError):
+            return ""
+
+    @property
+    def fw_sha256(self) -> str:
+        """sha256 of the session's image ("" before ``compiled`` built it)."""
+        if self._fw_sha256 is None and self.binary is not None and self.binary.is_file():
+            self._fw_sha256 = hashlib.sha256(self.binary.read_bytes()).hexdigest()
+        return self._fw_sha256 or ""
+
+
+def session_defines(flag_items: list[str], environ: Mapping[str, str] = os.environ) -> dict[str, str]:
+    """Defines of the session's build: the ``--xewe-define`` items when there are any, else
+    ``XEWE_TEST_DEFINES`` split on whitespace (so a value cannot hold a space). Both are checked
+    like ``xewe build --define``; a bad item is exit 2."""
+    return build.defines_or_env(flag_items, environ)
+
 
 _KEY = pytest.StashKey[XeWeContext]()
 
@@ -144,6 +203,13 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     group.addoption(
         "--xewe-no-flash", action="store_true", help="do not write the image; test the firmware already on the board"
     )
+    group.addoption(
+        "--xewe-define",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help=f"extra #define for the session's build (repeatable; replaces {DEFINES_VAR})",
+    )
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -158,6 +224,7 @@ def pytest_configure(config: pytest.Config) -> None:
     if ctx.paths is not None:
         try:
             dotenv.load_settings(ctx.paths.root)
+            ctx.defines = session_defines(config.getoption("xewe_define"))
         except XeWeError as exc:
             raise pytest.UsageError(str(exc)) from None
 
@@ -171,6 +238,44 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             item.add_marker(pytest.mark.board)
         if ctx is not None and item.get_closest_marker("board") is not None:
             ctx.board_tests.add(item.nodeid)
+    if ctx is not None:
+        chip = ctx.session_chip()
+        for item in items:
+            item.user_properties.extend(item_properties(item, chip))
+
+
+def item_properties(item: pytest.Item, chip: str) -> list[tuple[str, str]]:
+    """JUnit ``user_properties`` of a collected test (doc/spec.md §14): kind, needs, source node id, chip."""
+    names = set(getattr(item, "fixturenames", ()))
+    kind = "board" if item.get_closest_marker("board") is not None else "unit"
+    needs = "hardware" if HARDWARE_FIXTURES & names else "compile" if "compiled" in names else "none"
+    nodeid = MODULE_COPY_RE.sub(r"modules/\1/tests/", item.nodeid)
+    return [("xewe_kind", kind), ("xewe_needs", needs), ("xewe_nodeid", nodeid), ("xewe_chip", chip)]
+
+
+def board_properties(ctx: XeWeContext) -> list[tuple[str, str]]:
+    """JUnit properties of a test that had the board: board id, image sha256, banner match."""
+    assert ctx.board is not None
+    b = ctx.board
+    return [
+        ("xewe_board", f"{b.chip or ctx.chip} sn={b.serial_number or '-'} port={b.port}"),
+        ("xewe_fw_sha256", ctx.fw_sha256),
+        ("xewe_fw_match", ctx.fw_match),
+    ]
+
+
+def banner_match(lines: list[str], binary: Path) -> str:
+    """Compare the last ``Build Timestamp`` in ``lines`` with ``timestamp_param`` of the meta.json
+    next to ``binary``: "true" when equal, "false" when they differ, "unknown" when either is missing."""
+    seen = [m[1] for line in lines if (m := BANNER_TIMESTAMP_RE.search(line))]
+    try:
+        meta = json.loads((binary.parent / "meta.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "unknown"
+    stamp = meta.get("timestamp_param") if isinstance(meta, dict) else None
+    if not seen or not stamp:
+        return "unknown"
+    return "true" if seen[-1] == stamp else "false"
 
 
 @pytest.fixture(scope="session")
@@ -181,14 +286,21 @@ def xewe(pytestconfig: pytest.Config) -> XeWeContext:
 
 @pytest.fixture(scope="session")
 def compiled(xewe: XeWeContext) -> Path:
-    """Build the selected chip once; a failure fails every board test."""
+    """The selected chip's image for the session's defines: reused when ``build.stamp`` and the
+    sources say it is up to date (as ``xewe flash`` decides), else built once; a build failure
+    fails every board test."""
     p = xewe.project()
     try:
-        res = build.build_chip(p, xewe.lock, xewe.chip)
+        binary, fresh = flash.built_image(p, xewe.lock, xewe.chip, xewe.defines)
+        if fresh:
+            xewe.binary = binary
+            return binary
+        res = build.build_chip(p, xewe.lock, xewe.chip, xewe.defines)
     except XeWeError as exc:
         pytest.fail(f"build failed for {xewe.chip}: {exc}", pytrace=False)
     if not res.ok or res.binary is None:
         pytest.fail(f"build failed for {xewe.chip}; see {p.rel(p.out_dir(xewe.chip) / 'compile.log')}", pytrace=False)
+    xewe.binary = res.binary
     return res.binary
 
 
@@ -210,6 +322,7 @@ def board(xewe: XeWeContext, compiled: Path) -> Board:
         pytest.skip(f"{NOT_RUN}: {NO_BOARD}")
     if found.chip and found.chip != xewe.chip:
         pytest.fail(f"board on {found.port} is {found.chip}, tests were built for {xewe.chip}", pytrace=False)
+    xewe.board = found
     return found
 
 
@@ -301,6 +414,7 @@ def firmware(xewe: XeWeContext, board: Board, compiled: Path) -> Iterator[Firmwa
     xewe.console = console
     try:
         wait_for_boot(console, BOOT_TIMEOUT_SECONDS)
+        xewe.fw_match = banner_match(console.lines, compiled)
         yield Firmware(compiled, xewe.lock.version, xewe.chip, console)
     finally:
         xewe.console = None
@@ -330,7 +444,13 @@ def pytest_runtest_makereport(
     item: pytest.Item, call: pytest.CallInfo[None]
 ) -> Generator[None, pytest.TestReport, pytest.TestReport]:
     """Mark the session suspect when a test using the board failed on ``ExpectTimeout`` or a
-    vanished port (``XeWeError``); the next ``serial`` fixture then checks the board."""
+    vanished port (``XeWeError``); the next ``serial`` fixture then checks the board.
+
+    When a test that uses the board reaches its call, its JUnit properties gain ``board_properties``."""
+    if call.when == "call" and "board" in getattr(item, "fixturenames", ()):
+        ctx = item.config.stash.get(_KEY, None)
+        if ctx is not None and ctx.board is not None:
+            item.user_properties.extend(board_properties(ctx))
     rep = yield
     if (
         call.excinfo is not None

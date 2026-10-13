@@ -1,7 +1,8 @@
 # xewe-core-tests.yml: reusable checks for xewe-os-core (the XeWeCore Arduino library).
 # Host unit tests (tests/unit/run.sh), arduino-lint (strict, Library Manager update: the
 # Library Manager rules of core's doc/library-rules.md), the examples compiled for c3, c6 and s3,
-# `xewe format --check` and `xewe brand-lint`. Every job blocks.
+# `xewe format --check` and `xewe brand-lint`, and on a prepare commit the release-card check
+# (`xewe release-card verify --ci`). Every job blocks.
 # Nothing here publishes: core is released with its own scripts/release.sh (tag X.Y.Z, then the
 # Arduino Library Manager picks it up). See doc/ci.md.
 name: xewe-core-tests
@@ -32,8 +33,83 @@ jobs:
         env:
           REF: ${{ inputs.arduinojson_ref }}
         run: git clone -q --depth 1 --branch "$REF" https://github.com/bblanchon/ArduinoJson "$RUNNER_TEMP/ArduinoJson"
+      # the output is kept for the card job: its `ok`/`FAIL <name>` lines are the unit rows, the same
+      # evidence the card's `record --format core-host` step parsed (no JUnit: the ids would differ)
       - name: tests/unit/run.sh
-        run: ARDUINOJSON_SRC="$RUNNER_TEMP/ArduinoJson/src" tests/unit/run.sh
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/card/junit" "$RUNNER_TEMP/card/meta"
+          ARDUINOJSON_SRC="$RUNNER_TEMP/ArduinoJson/src" tests/unit/run.sh 2>&1 | tee "$RUNNER_TEMP/card/junit/tests-unit.log"
+      - name: Upload the card inputs
+        uses: actions/upload-artifact@v7
+        with:
+          name: card-inputs
+          path: ${{ runner.temp }}/card/
+          retention-days: 14
+
+  # On a prepare commit (HEAD holds releases/<v>/release_card.md and the card's tested tree is
+  # HEAD's tree), the card must agree with these CI results: `xewe release-card verify --ci`.
+  # On any other commit the job finds no card and its steps are skipped.
+  card:
+    name: release card check
+    needs: host
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      # the fingerprint is the tools' own (`xewe release-card fingerprint`, doc/spec.md §14), so
+      # this job and `verify` can never disagree on what "this tree" is
+      - name: Install the tools
+        env:
+          REF: ${{ inputs.tools_ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install -q "git+https://github.com/xewe-labs/xewe-os-tools@$REF"
+      - name: Release card for this tree
+        id: find
+        shell: bash
+        run: |
+          set -euo pipefail
+          found=()
+          # exit 0: the card's tested tree is this tree; exit 1 with "is not the card's": another
+          # tree, the only result that skips a card. Anything else (a card whose data block is
+          # missing or malformed: exit 2; tools_ref older than 3.1.0; git missing) fails the job.
+          while IFS= read -r -d '' card; do
+            rc=0
+            out="$("$RUNNER_TEMP/venv/bin/python" -m xewe release-card fingerprint --card "$card" --check)" || rc=$?
+            echo "$out"
+            case "$rc" in
+              0) found+=("$card") ;;
+              1) [[ "$out" == *"is not the card's"* ]] || { echo "::error::xewe release-card fingerprint failed on $card (exit 1)"; exit 1; } ;;
+              *) echo "::error::xewe release-card fingerprint failed on $card (exit $rc)"; exit "$rc" ;;
+            esac
+          done < <(git ls-files -z -- 'releases/*/release_card.md' 'modules/*/releases/*/release_card.md')
+          echo "cards=${found[*]}" >> "$GITHUB_OUTPUT"
+          [[ ${#found[@]} -gt 0 ]] || echo "no release card for this tree; the check is skipped"
+      - uses: actions/download-artifact@v8
+        if: steps.find.outputs.cards != ''
+        with:
+          name: card-inputs
+          path: ${{ runner.temp }}/card
+      # CI runs the unit tests only, so the card's board rows are not compared (--unit-only, §14)
+      - name: xewe release-card verify --ci
+        if: steps.find.outputs.cards != ''
+        env:
+          CARDS: ${{ steps.find.outputs.cards }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -ra cards <<< "$CARDS"
+          for card in "${cards[@]}"; do
+            "$RUNNER_TEMP/venv/bin/python" -m xewe release-card verify --ci --unit-only --card "$card" \
+              --junit-dir "$RUNNER_TEMP/card/junit" --meta-dir "$RUNNER_TEMP/card/meta"
+          done
 
   # Run from the checkout root (no path): arduino-lint reads a relative "." as the folder name and
   # fails LS003 on it.

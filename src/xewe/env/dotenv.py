@@ -45,6 +45,8 @@ KEYS: dict[str, str] = {
     "XEWE_TEST_BUTTONS_PIN": "free GPIO for the buttons module's board test (skipped when empty); "
     "first provision: not used",
     "XEWE_TEST_PINS_ADC_PIN": "ADC GPIO the pins module's board test reads (default 1); first provision: not used",
+    "XEWE_TEST_DEFINES": "space-separated KEY=VALUE defines `xewe test` builds and flashes with when no "
+    "--define is given; first provision: not used",
     "XEWE_PORT": "serial port of the board (default: detected); first provision: optional",
     "XEWE_CHIP": "chip of the board, c3, c6 or s3 (default: detected); first provision: optional",
 }

@@ -2,7 +2,8 @@
 # (run_tests/00_setup.sh): a template clone with every module selected and the modules source
 # pointed at the commit under test, then the validator, the module unit tests and one compile.
 # Plus `xewe format --check` over modules/ and tools/ (blocking with strict_lint: true) and
-# `xewe brand-lint` (blocking).
+# `xewe brand-lint` (blocking), and on a prepare commit the release-card check
+# (`xewe release-card verify --ci`, blocking).
 name: xewe-modules-tests
 
 on:
@@ -93,13 +94,90 @@ jobs:
       - name: tools/validate.py
         run: harness/build/tools/.venv/bin/python modules/tools/validate.py --harness harness
 
+      # JUnit as the release card records it (the card job compares the two)
       - name: module unit tests
-        run: harness/build/tools/.venv/bin/python -m xewe --project harness test --unit-only
+        run: >-
+          harness/build/tools/.venv/bin/python -m xewe --project harness test --unit-only --
+          --junitxml="$RUNNER_TEMP/card/junit/tests-unit.xml" -o junit_family=xunit1 -o junit_logging=no -ra
 
       - name: compile the all-modules harness
         env:
           CHIP: ${{ inputs.chip }}
-        run: harness/build/tools/.venv/bin/python -m xewe --project harness build --chip "$CHIP"
+        run: |
+          harness/build/tools/.venv/bin/python -m xewe --project harness build --chip "$CHIP"
+          mkdir -p "$RUNNER_TEMP/card/meta"
+          cp "harness/build/builds/$CHIP/out/meta.json" "$RUNNER_TEMP/card/meta/build-$CHIP.meta.json"
+
+      - name: Upload the card inputs
+        uses: actions/upload-artifact@v7
+        with:
+          name: card-inputs
+          path: ${{ runner.temp }}/card/
+          retention-days: 14
+
+  # On a prepare commit (HEAD holds releases/<v>/release_card.md or modules/<m>/releases/<v>/
+  # release_card.md and the card's tested tree is HEAD's tree), every such card must agree with
+  # these CI results: `xewe release-card verify --ci`. On any other commit the job finds no card
+  # and its steps are skipped.
+  card:
+    name: release card check
+    needs: harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ inputs.python-version }}
+      # the fingerprint is the tools' own (`xewe release-card fingerprint`, doc/spec.md §14), so
+      # this job and `verify` can never disagree on what "this tree" is
+      - name: Install the tools
+        env:
+          REF: ${{ inputs.tools_ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install -q "git+https://github.com/xewe-labs/xewe-os-tools@$REF"
+      - name: Release card for this tree
+        id: find
+        shell: bash
+        run: |
+          set -euo pipefail
+          found=()
+          # exit 0: the card's tested tree is this tree; exit 1 with "is not the card's": another
+          # tree, the only result that skips a card. Anything else (a card whose data block is
+          # missing or malformed: exit 2; tools_ref older than 3.1.0; git missing) fails the job.
+          while IFS= read -r -d '' card; do
+            rc=0
+            out="$("$RUNNER_TEMP/venv/bin/python" -m xewe release-card fingerprint --card "$card" --check)" || rc=$?
+            echo "$out"
+            case "$rc" in
+              0) found+=("$card") ;;
+              1) [[ "$out" == *"is not the card's"* ]] || { echo "::error::xewe release-card fingerprint failed on $card (exit 1)"; exit 1; } ;;
+              *) echo "::error::xewe release-card fingerprint failed on $card (exit $rc)"; exit "$rc" ;;
+            esac
+          done < <(git ls-files -z -- 'releases/*/release_card.md' 'modules/*/releases/*/release_card.md')
+          echo "cards=${found[*]}" >> "$GITHUB_OUTPUT"
+          [[ ${#found[@]} -gt 0 ]] || echo "no release card for this tree; the check is skipped"
+      - uses: actions/download-artifact@v8
+        if: steps.find.outputs.cards != ''
+        with:
+          name: card-inputs
+          path: ${{ runner.temp }}/card
+      # CI runs the unit tests only, so the card's board rows are not compared (--unit-only, §14)
+      - name: xewe release-card verify --ci
+        if: steps.find.outputs.cards != ''
+        env:
+          CARDS: ${{ steps.find.outputs.cards }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -ra cards <<< "$CARDS"
+          for card in "${cards[@]}"; do
+            "$RUNNER_TEMP/venv/bin/python" -m xewe release-card verify --ci --unit-only --card "$card" \
+              --junit-dir "$RUNNER_TEMP/card/junit" --meta-dir "$RUNNER_TEMP/card/meta"
+          done
 
   # The tools at tools_ref, plus ruff and clang-format at fixed versions so a newer release
   # never turns a formatted tree red. XEWE_CLANG_FORMAT picks the pip one over the runner's.

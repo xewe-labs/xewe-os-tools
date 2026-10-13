@@ -32,6 +32,8 @@ META_KEYS = [
     "sketch_size",
     "sketch_size_percent",
     "app_partition_size",
+    "static_ram",
+    "static_ram_max",
     "warnings",
 ]
 
@@ -63,6 +65,7 @@ def test_build_outputs(project: Paths, capsys: pytest.CaptureFixture[str]) -> No
     assert "JTAGAdapter" not in meta["fqbn"]
     assert meta["partition_scheme"] == "no_ota" and "PartitionScheme=no_ota" in meta["fqbn"]
     assert meta["app_partition_size"] is None  # no esp32 core installed: arduino-cli checks the size
+    assert meta["static_ram"] == 41234 and meta["static_ram_max"] == 327680
 
 
 def test_build_info_header_and_defines(project: Paths) -> None:
@@ -101,6 +104,13 @@ def test_parse_size_from_compile_log(tmp_path: Path) -> None:
     assert build.parse_size(log.read_text()) == (223406, 17)
     assert build.parse_size("Sketch uses 10 bytes of program storage space.\n") == (10, None)
     assert build.parse_size("no size here") == (None, None)
+    assert build.parse_ram(log.read_text()) == (13240, 13240 + 314440)
+    assert build.parse_ram(
+        "Global variables use 41234 bytes (12%) of dynamic memory, leaving 286446 bytes for local variables. "
+        "Maximum is 327680 bytes.\n"
+    ) == (41234, 327680)
+    assert build.parse_ram("Global variables use 7 bytes of dynamic memory.\n") == (7, None)
+    assert build.parse_ram("no ram here") == (None, None)
 
 
 def test_build_key_covers_defines_version_chip() -> None:
