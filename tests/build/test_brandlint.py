@@ -56,6 +56,8 @@ def test_skipped_places(tree: Path, capsys: pytest.CaptureFixture[str]) -> None:
         "doc/naming.md",
         "NAMING.md",
         "Naming.MD",
+        "releases/3.1.0/release_card.md",
+        "releases/3.1.0/logs/release_card.draft.md",
         dotenv.FILENAME,
         dotenv.FILENAME + ".local",
     ):

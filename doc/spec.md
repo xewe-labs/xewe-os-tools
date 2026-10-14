@@ -44,8 +44,8 @@ xewe-os-tools/
 ├── .agents/               the agent workspace (AGENTS.md, RULES.md, PREFERENCES.md, handoffs/, skills/)
 ├── .github/workflows/     ci.yml (this repo) and the reusable xewe-*.yml (doc/ci.md)
 ├── doc/                   spec.md (this page), ci.md, tests.md, webui.md
-├── scripts/release.sh     releases the tools (README "Releasing"): --prepare, then tag and GitHub Release
-├── releases/<version>/    notes.txt (GitHub Release text) and testcard.md (what was tested) per release
+├── scripts/release.sh     releases the tools (§11, README "Releasing"): --prepare (checks, card), then tag and GitHub Release
+├── releases/<version>/    notes.txt (GitHub Release text) and the generated release_card.md (§14); logs/ is the gitignored run folder
 ├── src/xewe/              the `xewe` package
 │   ├── __init__.py        __version__ = "3.0.1"
 │   ├── __main__.py        python -m xewe
@@ -288,7 +288,9 @@ caches never count; elsewhere the directory is walked. Skipped either way: the d
 `build`, `.venv`, `static`, `__pycache__`, `history`, `test_logs`, `.pytest_cache`, `.mypy_cache`,
 `.ruff_cache` and `*.egg-info`; symlinks; binary files (a NUL byte or not UTF-8); any
 file named `naming.md` in any case (the naming page lists the banned spellings as examples); the
-dotenv file and `<dotenv file>.*` (their lines are never printed). Clean: `brand-lint: clean` on
+generated `release_card.md` and `release_card.draft.md` (§14: they quote test ids and tool output
+verbatim, such as the banned-spelling cases of brand-lint's own tests); the dotenv file and
+`<dotenv file>.*` (their lines are never printed). Clean: `brand-lint: clean` on
 stdout, exit 0. Hits: `brand-lint: banned spellings found (see xewe-os/doc/naming.md):` and one
 `<path>:<line>:<text>` per hit on stderr, exit 1. A `DIR` that does not exist: exit 2. Every
 repo's CI runs `python -m xewe brand-lint .` (doc/ci.md).
@@ -1162,6 +1164,40 @@ in an `xewe-os` checkout, then `xewe modules validate` (the checkout setup used,
    ```
    Time: ~3 min for three chips; the product's 43 rows take about 45 min locally.
 
+**The tools' own release** (`scripts/release.sh`; the tools build no firmware, so `xewe release`
+and xewe-release.yml are not used). Two runs with the owner's commit in between; tags are `X.Y.Z`.
+- `scripts/release.sh --prepare <v> [--resume] [--dry-run]` makes no git change. 1 preflight:
+  refuses a detached HEAD, a merge, rebase, cherry-pick or revert in progress, unmerged paths, a
+  change outside the version lines of `VERSION_LOCATIONS` and `releases/<v>/`, a
+  `releases/<v>/testcard.md`, and a `.gitignore` that does not ignore `releases/*/logs/`; it finds
+  each Python of ci.yml's test matrix installed here (`PATH`, else `uv python find`; a missing one
+  is a warning). 2 sets the versions. 3 `releases/<v>/notes.txt`: a missing file gets a skeleton
+  whose first line is the `XEWE-NOTES-SKELETON` marker, and while the marker is there the run stops
+  with exit 2 (a card is never rendered from an unfilled skeleton). 4 a venv with the tree's tools
+  (`build/release-venv/card`, `pip install .`) runs `xewe release-card init --dir
+  releases/<v>/logs --repo xewe-labs/xewe-os-tools --version <v> --tag <v>`. 5 `record --kind
+  setup`: per Python a venv `build/release-venv/py<X.Y>` with `pip install . pyflakes mypy
+  types-pyserial` (the 3.12 one also `ruff==0.17.0 clang-format==23.1.3 actionlint-py
+  shellcheck-py`). 6 per Python `record --kind unit --name py<X.Y> --junit …` of `env
+  XEWE_NO_BOARD=1 python -m pytest -q --junitxml=… -o junit_family=xunit1` (one run each on the
+  card), `record --kind check` of `python -m pyflakes src tests` and `python -m mypy`; then `xewe
+  format --check` (with that clang-format), `xewe brand-lint .` and `actionlint -ignore xewe-board`;
+  a failed step does not stop the others. 7 `render --notes releases/<v>/notes.txt --out
+  releases/<v>/release_card.md --require setup,unit,check --title xewe-os-tools` (no `--chips`); a
+  refusal is exit 1 with the draft in the logs folder, and `--prepare <v> --resume` then re-runs
+  only the steps that are not green. It prints the commit command (the changed version files,
+  `notes.txt` and `release_card.md`, committed as "prepare <v>" and pushed).
+- `scripts/release.sh <v> [--dry-run] [--ci-timeout MIN] [--skip-ci]`, the tag run: 1 preflight (on
+  `main`, clean, level with `origin/main`; tag free; `notes.txt` without the marker and
+  `release_card.md` committed; no `testcard.md`; every version location says `<v>`; `gh` logged
+  in); 2 `xewe release-card verify --card releases/<v>/release_card.md` (the card as rendered, its
+  tree the clean HEAD's, the local logs present); 3 waits for ci.yml on HEAD to pass, its `card`
+  job's `verify --ci` step included (run, not skipped); 4 an annotated tag `<v>` on HEAD, pushed,
+  then `gh release create <v> --verify-tag --notes-file releases/<v>/notes.txt
+  releases/<v>/release_card.md` (the card is the only asset); 5 prints how consumers pick it up.
+  `--dry-run` runs only the read-only parts (git and gh queries, `verify`) and prints the rest. A
+  tag without a GitHub Release resumes at stage 4 with the tagged commit's notes and card.
+
 ---
 
 ## 12. Self-tests of the package
@@ -1190,7 +1226,7 @@ shared fixtures and fakes (doc/tests.md); `pytest tests/<area>` runs one area.
 | `board/test_serial.py` | timestamps, `\r` stripping, send/expect match and timeout (exit 1), reconnect, a closed handle after an unplug (`TypeError` from `in_waiting`) → `XeWeError` and `connected` False, reset across a port drop, `wait_for_port` settle and timeout (exit 4); interactive mode: typed line sent, `--no-input` and non-TTY stdin listen only, EOF exit 0, reconnect, raw lines and no `> CMD` echo (timestamped with `--timestamps`, in `--send` mode, listen-only and the log), stdin flushed only when interactive on a TTY (interactive mode in `board/test_serial_interactive.py`) |
 | `board/test_provision.py` | scripted first-boot transcript: answers in order, SSID by number (the S3 list's shape, made-up names), rescan then `-3` custom, `! Invalid number` re-answered, board resuming at the network list, nudge only before the first prompt (fake clock), timezone `y` / `n` + offset, already provisioned sends nothing, unlisted module answered `n` and unknown value / y/n prompts answered with their default (logged), endless unknown prompt exit 1, nudge, port drop at reboot, prompt timeout exit 1 with masked tail, password never in stdout/log, the summary, the rescan log line and the typed custom SSID mask the SSID; settings precedence flags > env > dotenv file > defaults, settings from `<project>/.env` with no flags, exit 2 before the port, exit 4 without a board |
 | `env/test_dotenv.py` | parsing (comments, quotes, `export`, no interpolation), errors without values, real environment wins, resolution order (`--env`, `XEWE_ENV`, project, tools checkout from `build_config.toml` or the package checkout), missing file is not an error, only the key count is logged, `hint()` (both paths, the provisioning keys) |
-| `build/test_brandlint.py` | each banned spelling fails with the exact stderr lines, allowed spellings are clean, skipped directories (caches and `*.egg-info` included), in a git work tree only the files git does not ignore, outside one a directory walk, binary and non-UTF-8 files, `naming.md` in any case, dotenv files, several `DIR`s, a missing `DIR` exits 2, no project needed, the tools repo itself is clean |
+| `build/test_brandlint.py` | each banned spelling fails with the exact stderr lines, allowed spellings are clean, skipped directories (caches and `*.egg-info` included), in a git work tree only the files git does not ignore, outside one a directory walk, binary and non-UTF-8 files, `naming.md` in any case, the generated `release_card.md` and its draft, dotenv files, several `DIR`s, a missing `DIR` exits 2, no project needed, the tools repo itself is clean |
 | `build/test_webui.py` | export of `fixtures/webui/fan-dashboard/` byte-equal to the golden `fan-dashboard_export/`, the timestamped folder name, `url_for` rewrite (both quote styles), routes, array names and MIME types, only `.html`/`.css`/`.js` under `templates/` and `static/` (binary, other suffixes and folders skipped; non-UTF-8 warned), duplicate array name exit 1, missing folder exit 2, the prompt printed with placeholder Wi-Fi only |
 | `testing/test_plugin.py` | `pytester`: no board → "compiled, not run" summary and exit 0; `--require-board` → pytest 1, `xewe test` 4; faked board: one port open per session, boot banner wait (first-boot reboot, unprovisioned, timeout, board gone from USB at the boot reset → `disappeared from USB`); `xewe test --no-flash` writes no image; unit tests run; `--unit-only` runs only `unit` tests and builds nothing; board tests found under `modules/<slug>/tests/board/`; compile failure fails board tests; pins from the project `.env` reach `os.environ` (real environment wins); JUnit `user_properties` (§14) under xunit1 and xunit2, board id, image sha256 and banner match on a fake board, a module test's source node id; `xewe test --define` and `XEWE_TEST_DEFINES`: the flag reaches `build_chip` and `build.stamp`, a bad item is exit 2 with no build, a matching stamp is reused (no rebuild, image bytes unchanged) and other defines rebuild, precedence flag > environment > dotenv file, the define image is the one flashed, and with defines the JUnit `xewe_fw_sha256` equals the sha256 of the flashed image whether `compiled` reused or built it (§14); the prepare flow `record --kind flash -- xewe flash --define …` then `xewe test --define …` agrees on the image (no build, `xewe_fw_sha256` equals the step's `fw_sha256`) |
 | `modules/test_registry.py` | dependency order and cycle error against fixtures copied from the six real `module.properties`; generated `build/modules/` (`library.properties`, `XeWeModules.h`, `tests/<slug>/{board,unit}/`, `modules.lock`) and `src/Modules.h` golden, library version (tag / `0.0.0+<sha7>` / `0.0.0`), empty selection, legacy `src/modules/`, `build/modules-lib/` and `build/config/modules.lock` removal; every validator rule (tests layout included) has a failing fixture |

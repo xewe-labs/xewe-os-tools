@@ -113,6 +113,15 @@ valid JSON is exit 2, so a malformed card can never turn the comparison off. The
 the checkout (`pip install .`) and the pytest JUnit file of its `test` job (Python 3.12) as the CI
 results (no `--meta-dir`: the tools build no firmware).
 
+**The tools' own release** has no tag workflow: `scripts/release.sh` ([spec.md](spec.md) §11).
+`--prepare <v>` runs the checks of ci.yml locally (per installed matrix Python: `pip install .`,
+pytest with JUnit, pyflakes, mypy; then `xewe format --check`, `xewe brand-lint .`, actionlint),
+each recorded with `xewe release-card record`, and renders `releases/<v>/release_card.md`. The
+owner commits it ("prepare <v>"); on that commit ci.yml's `card` job compares the card with its
+own pytest run. The tag run (`scripts/release.sh <v>`) runs `xewe release-card verify` on the
+clean HEAD, waits for that ci.yml run to pass with the card job's `verify --ci` step run (not
+skipped), then tags `<v>` and creates the GitHub Release with the card as its only asset.
+
 **GitHub Pages.** Release download URLs answer with a redirect that may lack CORS headers, so a
 browser flasher on another origin may not fetch them directly (to be checked before relying on
 it). `xewe-pages.yml` rebuilds a static site from every release's `firmware-<v>.tar.gz`; enable it

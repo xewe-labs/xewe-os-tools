@@ -65,7 +65,9 @@ apply where this file is silent.
 - `.github/workflows/`: `ci.yml` (this repo) and the reusable `xewe-*.yml` that the other repos
   call (`doc/ci.md`).
 - `scripts/release.sh` releases the tools; `releases/<version>/` holds each release's
-  `notes.txt` and `testcard.md` (README "Releasing"). Agents may run `--dry-run` only, and
+  `notes.txt` and the generated `release_card.md` (no hand-written test card; the run logs are in
+  `releases/<version>/logs/`, gitignored) (README "Releasing", `doc/spec.md` §11 and §14).
+  `--prepare` runs the checks and renders the card; agents may run `--dry-run` only, and
   `--prepare` only on a scratch copy unless asked; the owner commits, tags and pushes.
 
 ### Check your work

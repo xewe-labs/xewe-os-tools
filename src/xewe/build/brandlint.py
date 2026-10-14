@@ -5,7 +5,9 @@ each line with a banned spelling. Inside a git work tree it scans the files git 
 (tracked plus untracked), so caches such as ``.pytest_cache`` are never read; elsewhere it walks the
 directory. Skipped: the directories ``EXCLUDE_DIRS`` and ``*.egg-info``, symlinks, binary files (a
 NUL byte or not UTF-8), the naming page itself (``naming.md`` in any case; it lists the banned
-spellings as examples) and dotenv files, whose lines are never printed.
+spellings as examples), the generated release card (``release_card.md`` and its draft: they quote
+test ids and tool output verbatim, such as this module's own banned-spelling test cases) and dotenv
+files, whose lines are never printed.
 Exit 0 and ``brand-lint: clean`` on stdout when nothing matched; exit 1 with the hits on stderr
 otherwise; exit 2 when a ``DIR`` does not exist.
 """
@@ -39,10 +41,17 @@ EXCLUDE_DIRS = frozenset(
     }
 )
 NAMING_PAGE = "naming.md"
+GENERATED = frozenset({"release_card.md", "release_card.draft.md"})
+"""Files ``xewe release-card render`` writes (doc/spec.md §14); their text is not authored."""
 
 
 def _skipped_file(name: str) -> bool:
-    return name.lower() == NAMING_PAGE or name == dotenv.FILENAME or name.startswith(dotenv.FILENAME + ".")
+    return (
+        name.lower() == NAMING_PAGE
+        or name in GENERATED
+        or name == dotenv.FILENAME
+        or name.startswith(dotenv.FILENAME + ".")
+    )
 
 
 def _skipped_dir(name: str) -> bool:

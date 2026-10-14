@@ -54,7 +54,7 @@ Runtime dependencies: `pyserial`, `pytest`. esptool comes from the pinned esp32 
 | `xewe manifest show\|update` | `xewe.toml` refs vs installed refs; move refs to new tags. `ref = "latest"` tracks the newest commit of the repo's default branch (re-fetched on every setup); a tag freezes it (`xewe manifest update` replaces `latest` with the newest tag, `--to latest` sets it back) |
 | `xewe clean [--all] [--modules]` | delete generated output (`build/builds`, `build/tmp`; `--all`: all of `build/` but `tools/`; `--modules`: also `build/modules` and `src/Modules.h`; never `~/.xewe-os/build-tools`) |
 | `xewe format [--check] [PATH...]` | clang-format `*.h *.hpp *.c *.cpp *.ino` (root, `src/`, `examples/`, `tests/unit/`; never `build/`) with the XeWe style shipped with the tools (no column alignment: it costs tokens and turns one-line changes into realigned blocks; a `.clang-format` in the project is not read), and `ruff format` the Python when ruff is installed; `--check` exits 1 listing files that would change. Runs in a project, a library, or any other directory (the current one is then the root; the modules repo passes `modules tools`). clang-format: `XEWE_CLANG_FORMAT`, `PATH` or the tools venv (`pip install clang-format`), version 14 or newer |
-| `xewe brand-lint [DIR...]` | fail (exit 1) on banned spellings of the brand in the text files under each `DIR` (default `.`; rules: `xewe-os/doc/naming.md`); in a git work tree only the files git does not ignore; skips `.git`, `build`, `.venv`, `static`, `__pycache__`, `history`, `test_logs`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `*.egg-info`, binary files, `naming.md` and dotenv files. Needs no project |
+| `xewe brand-lint [DIR...]` | fail (exit 1) on banned spellings of the brand in the text files under each `DIR` (default `.`; rules: `xewe-os/doc/naming.md`); in a git work tree only the files git does not ignore; skips `.git`, `build`, `.venv`, `static`, `__pycache__`, `history`, `test_logs`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `*.egg-info`, binary files, `naming.md`, the generated `release_card.md` (and its draft) and dotenv files. Needs no project |
 | `xewe webui export FLASK_DIR OUT_DIR` \| `xewe webui prompt` | export the `.html`/`.css`/`.js` of a Flask prototype's `templates/` and `static/` as PROGMEM headers plus `app.py` and a sketch with one route per file into `OUT_DIR/<name>_<timestamp>/`; `prompt` prints the LLM prompt that ports `app.py` into that sketch ([doc/webui.md](doc/webui.md)). Needs no project, nor Flask |
 | `xewe doctor` | check the environment (on Apple silicon also Rosetta 2, which the esp32 core's `ctags` needs) |
 | `xewe release --version X.Y.Z [--matrix FILE] [--notes FILE]` | release matrix into `static/firmware/releases/<version>/`, each `meta.json` recording the resolved core, modules, tools and library commits plus the bin's size, sha256 and release-asset names; `firmware_map.csv` with one row per image; the tarball and the flat GitHub Release assets in `build/release/<version>/assets/` (binaries are release assets only, never committed); writes `[project] version` and prints the git and gh commands (CI runs it on a version tag: [doc/ci.md](doc/ci.md)). Without `--notes` it opens `$EDITOR` only on a terminal; with stdin not a terminal or `XEWE_NONINTERACTIVE=1` it exits 2 asking for `--notes` |
@@ -174,23 +174,36 @@ must set `XEWE_NO_BOARD=1`.
 ## Releasing
 
 Maintainers only. Tags are `X.Y.Z` with no `v` (the older `v0.1.0` and `v0.1.1` stay as they are).
-A release is a "prepare" commit, then one command:
+A release is prepare, commit, tag: the prepare run tests the tree and writes the release card
+([doc/spec.md](doc/spec.md) §11 and §14), the owner commits it, the tag run publishes it:
 
 ```sh
-scripts/release.sh --prepare 3.0.0   # sets every version location, creates releases/3.0.0/ skeletons; no git change
-# fill releases/3.0.0/notes.txt and testcard.md, then commit "prepare 3.0.0" and push main
-scripts/release.sh 3.0.0 --dry-run   # prints every step and HEAD's CI state, changes nothing
-scripts/release.sh 3.0.0
+scripts/release.sh --prepare 3.1.0 --dry-run   # the stage plan and every command; changes nothing
+scripts/release.sh --prepare 3.1.0   # versions, then the checks, then releases/3.1.0/release_card.md; no git change
+# first time: it writes a releases/3.1.0/notes.txt skeleton and stops (exit 2); fill it, delete the marker line, run again
+# a step failed: fix it, then scripts/release.sh --prepare 3.1.0 --resume (re-runs only what is not green)
+# commit what it lists as "prepare 3.1.0" and push main; ci.yml checks the card against its own pytest run
+scripts/release.sh 3.1.0 --dry-run   # preflight, card verify and HEAD's CI state; changes nothing
+scripts/release.sh 3.1.0             # verify, CI gate, tag, GitHub Release with release_card.md
 ```
 
-The version locations are `pyproject.toml`, `src/xewe/__init__.py`, `DEFAULT_TOOLS_REF` in
-`src/xewe/env/pins.py` and the examples in `doc/spec.md`, `doc/ci.md` and this file
-(`VERSION_LOCATIONS` in the script). The release itself runs five numbered stages: 1 preflight
-(version `X.Y.Z`; on `main`, clean and level with `origin/main` after a fetch; the tag free here and on origin;
-`releases/<version>/` committed; every version location says the version, or it lists the ones
-that do not; `gh` logged in); 2 waits for the `ci` workflow on HEAD to pass; 3 runs the pytest
-suite; 4 tags HEAD `<version>` (annotated), pushes the tag and creates the GitHub Release from
-`notes.txt` with `testcard.md` attached; 5 prints how consumers pick it up:
+`--prepare` refuses a detached HEAD, a merge or rebase in progress, conflicted paths and any change
+outside the version lines and `releases/<version>/`. It runs, each recorded by `xewe release-card
+record` into the gitignored `releases/<version>/logs/`: per Python of ci.yml's matrix that is
+installed here, a venv with the tree installed (`pip install .`), `pytest` (JUnit), `pyflakes` and
+`mypy`; then `xewe format --check`, `xewe brand-lint .` and `actionlint`. The card is rendered from
+that run and `notes.txt`; there is no hand-written test card. The version locations are
+`pyproject.toml`, `src/xewe/__init__.py`, `DEFAULT_TOOLS_REF` in `src/xewe/env/pins.py` and the
+examples in `doc/spec.md`, `doc/ci.md` and this file (`VERSION_LOCATIONS` in the script).
+
+The tag run has five numbered stages: 1 preflight (version `X.Y.Z`; on `main`, clean and level
+with `origin/main` after a fetch; the tag free here and on origin; `notes.txt` and
+`release_card.md` committed; every version location says the version, or it lists the ones that
+do not; `gh` logged in); 2 `xewe release-card verify` (the card is as rendered, HEAD's clean tree
+is the tested tree, the local logs are present); 3 waits for the `ci` workflow on HEAD to pass,
+including its card check; 4 tags HEAD `<version>` (annotated), pushes the tag and creates the
+GitHub Release from `notes.txt` with `release_card.md` as its only asset; 5 prints how consumers
+pick it up:
 
 ```toml
 [tools]
@@ -202,9 +215,10 @@ and workflow callers `uses: xewe-labs/xewe-os-tools/.github/workflows/xewe-build
 
 Options: `--ci-timeout <min>` (default 30) bounds the CI wait; `--skip-ci` skips it, for
 emergencies only, with a loud warning. If the tag exists but the GitHub Release does not, the same
-command only creates the release (pushing the tag first if origin lacks it), provided the tagged
-commit's files say the version (otherwise it lists the stale locations); the branch, clean-tree and
-origin checks are skipped then.
+command only creates the release from the tagged commit's `notes.txt` and `release_card.md`
+(pushing the tag first if origin lacks it), provided the tagged commit's files say the version
+(otherwise it lists the stale locations); the branch, clean-tree, card and CI checks are skipped
+then. Exit codes: 0 done, 1 a refusal or a failed check, 2 `notes.txt` still to fill.
 
 ## License
 
