@@ -46,7 +46,7 @@ def test_esptool_argv(project: Paths, one_board: str, fake_esptool, capsys: pyte
         "--baud",
         "921600",
         "--before",
-        "default-reset",
+        "usb-reset",  # native USB-Serial/JTAG (303a:1001)
         "--after",
         "hard-reset",
         "write-flash",
@@ -54,6 +54,31 @@ def test_esptool_argv(project: Paths, one_board: str, fake_esptool, capsys: pyte
         str(project.root / BIN),
     ]
     assert "flashed  c3" in capsys.readouterr().out
+
+
+def test_esptool_argv_bridge_board_uses_default_reset(
+    project: Paths, ports: list[Port], port_node: str, fake_esptool
+) -> None:
+    ports.append(Port(port_node, 0x1A86, 0x55D3, "SN", "USB Single Serial"))  # CH343 bridge
+    project.boards_toml.write_text('schema = 1\n[[board]]\nport = "x"\nserial_number = "SN"\nchip = "s3"\n')
+    assert main(["flash", "--chip", "s3", "--erase"]) == 0
+    calls = fake_esptool()
+    assert calls[0] == ["--chip", "esp32s3", "--port", port_node, "--before", "default-reset", "erase-flash"]
+    assert calls[-1][calls[-1].index("--before") + 1] == "default-reset"
+
+
+def test_esptool_argv_native_usb_on_a_mirrored_node(
+    project: Paths, no_ports: None, tmp_path: Path, fake_esptool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A node pyserial does not know (host-mirrored) still gets usb-reset: its USB ids come from sysfs."""
+    node = tmp_path / "c3"
+    node.write_text("")
+    monkeypatch.setattr(boards, "sysfs_board", lambda port, sys_dev=None: boards.Board(port, vid="303a", pid="1001"))
+    assert main(["flash", "--port", str(node), "--erase"]) == 0
+    calls = fake_esptool()
+    assert calls[0][calls[0].index("--before") + 1] == "usb-reset" and "chip-id" in calls[0]
+    for call in calls[1:]:
+        assert call[call.index("--before") + 1] == "usb-reset"
 
 
 def test_erase_and_probe(
@@ -70,7 +95,7 @@ def test_erase_and_probe(
     assert main(["flash", "--erase"]) == 0
     calls = fake_esptool()
     assert "chip-id" in calls[0]
-    assert calls[1] == ["--chip", "esp32c3", "--port", one_board, "erase-flash"]
+    assert calls[1] == ["--chip", "esp32c3", "--port", one_board, "--before", "usb-reset", "erase-flash"]
     assert calls[2] == ["WAIT", one_board]  # port back and stable before write-flash
     assert "write-flash" in calls[3]
     assert calls[4] == ["WAIT", one_board]
@@ -92,7 +117,7 @@ def test_run_erases_by_default(
 ) -> None:
     assert main(["run", "--no-serial"]) == 0
     calls = [c for c in fake_esptool() if "chip-id" not in c]
-    assert calls[0] == ["--chip", "esp32c3", "--port", one_board, "erase-flash"]
+    assert calls[0] == ["--chip", "esp32c3", "--port", one_board, "--before", "usb-reset", "erase-flash"]
     assert "write-flash" in calls[1]
     assert "(flash erased: first boot)" in capsys.readouterr().out
 

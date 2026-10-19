@@ -133,11 +133,14 @@ def write_image(
     (``wait_for_port``, ``settle`` seconds in a row; exit 4 when it does not return). When the
     board comes back under another name (macOS ``cu.usbmodem<N>``, matched by USB serial number),
     ``board.port`` is updated to it and a warning says so.
+
+    A board on the native USB-Serial/JTAG gets ``--before usb-reset`` (``boards.before_reset``).
     """
     esp_chip = chips.get(chip).esptool_id
+    before = boards.before_reset(board)
     base = ["--chip", esp_chip, "--port", board.port]
     if erase:
-        proc = esptool.run(cmd, [*base, "erase-flash"])
+        proc = esptool.run(cmd, [*base, "--before", before, "erase-flash"])
         if proc.returncode != 0:
             raise XeWeError(f"esptool erase-flash failed:\n{proc.stdout.strip()[-2000:]}")
         _settle(board, settle)
@@ -160,7 +163,7 @@ def write_image(
                 "--baud",
                 str(rate),
                 "--before",
-                "default-reset",
+                before,
                 "--after",
                 "hard-reset",
                 "write-flash",

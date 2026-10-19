@@ -76,9 +76,12 @@ resets on the control-line state DTR=0 & RTS=1 (native USB, ESP32-S3/C3/C6 USB-S
 DTR and RTS on open and pyserial applies DTR before RTS, so `Console.open` configures DTR high and
 RTS low for the open (1/1 -> 1/0) and drops DTR afterwards (-> 0/0), never passing through 0/1.
 A reset re-enumerates a native USB port and a slow passthrough can lose it, which is why opening
-must not reset. After a reset, `xewe serial` shows the ROM lines (`ESP-ROM:...`, `rst:0x...`) and
-the boot log. With `--send`, the command is sent right away when nothing boot-like arrives within
-2 s of opening (the normal case), or, if a boot is in progress, after `System Setup Complete` (up
+must not reset. `flash`, `run` and the `boards` probe pass esptool `--before usb-reset` for a
+`303a:1001` board and `--before default-reset` otherwise. On Linux a port's USB ids are read from
+sysfs by device number, so nodes a host mirrors into a container under other names
+(`/dev/xewe-usb/*`, listed by `xewe boards`) are recognised too (`doc/spec.md` §5). After a
+reset, `xewe serial` shows the ROM lines (`ESP-ROM:...`, `rst:0x...`) and the boot log. With
+`--send`, the command is sent right away when nothing boot-like arrives within 2 s of opening (the normal case), or, if a boot is in progress, after `System Setup Complete` (up
 to `--boot-timeout`, default 90 s: Wi-Fi + NTP can take ~30 s). An unprovisioned board
 (`Name your device`) exits 1 without sending: run `xewe provision`. A `boot: ...` line records
 which case happened.

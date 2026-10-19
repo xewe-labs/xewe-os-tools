@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import stat
 import tomllib
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
@@ -29,6 +30,15 @@ KNOWN_USB: dict[str, set[str] | None] = {
     "1a86": {"7523", "55d3"},  # CH340, CH343
     "0403": {"6001", "6010", "6015"},  # FTDI
 }
+USB_SERIAL_JTAG = ("303a", "1001")
+"""VID, PID of the Espressif native USB-Serial/JTAG (C3, C6, S3): esptool resets it with
+``--before usb-reset`` instead of DTR/RTS."""
+
+SYS_DEV_CHAR = Path("/sys/dev/char")
+"""Linux sysfs index of character devices by ``<major>:<minor>``."""
+MIRROR_DIR = Path("/dev/xewe-usb")
+"""Board nodes a host mirrors into a container under stable names (no ``/sys/class/tty`` entry
+of that name, so pyserial does not list them); scanned besides pyserial's ports."""
 
 
 @dataclass
@@ -72,6 +82,84 @@ def _port_board(info: Any) -> Board:
     )
 
 
+def _read(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+def _char_dev(port: str) -> tuple[int, int] | None:
+    """(major, minor) of the character device ``port`` names (symlinks followed), or None."""
+    if not hasattr(os, "major"):  # Windows
+        return None
+    try:
+        st = os.stat(port)
+    except OSError:
+        return None
+    if not stat.S_ISCHR(st.st_mode):
+        return None
+    return os.major(st.st_rdev), os.minor(st.st_rdev)
+
+
+def sysfs_board(port: str, sys_dev: Path | None = None) -> Board | None:
+    """``port`` with the USB ids of the device behind it, looked up by device number.
+
+    ``/sys/dev/char/<major>:<minor>`` of the node leads to its sysfs device; its parents are
+    walked up to the USB device (the first with ``idVendor`` and ``idProduct``), which gives
+    VID, PID, ``serial`` and ``product``. This works whatever the node is called (a host-mirrored
+    ``/dev/xewe-usb/<name>`` too), where pyserial only knows the kernel's name. None without
+    sysfs (macOS, Windows), for a node that is not a character device, or one not on USB.
+    """
+    dev = _char_dev(port)
+    if dev is None:
+        return None
+    try:
+        node = ((sys_dev or SYS_DEV_CHAR) / f"{dev[0]}:{dev[1]}").resolve(strict=True)
+    except OSError:
+        return None
+    for d in (node, *node.parents):
+        vid, pid = _read(d / "idVendor"), _read(d / "idProduct")
+        if vid and pid:
+            return Board(
+                port=port,
+                vid=vid.lower(),
+                pid=pid.lower(),
+                serial_number=_read(d / "serial"),
+                description=_read(d / "product"),
+                last_seen=_now(),
+            )
+    return None
+
+
+def _mirrored() -> list[str]:
+    """Device nodes in ``MIRROR_DIR`` (sorted; [] when it does not exist)."""
+    try:
+        return sorted(str(e) for e in MIRROR_DIR.iterdir() if not e.is_dir())
+    except OSError:
+        return []
+
+
+def listed_boards() -> list[Board]:
+    """Every serial port with its USB ids: pyserial's list, then the mirrored nodes that are USB
+    devices (``sysfs_board``), one entry per device number."""
+    found = [_port_board(info) for info in list_ports.comports()]
+    seen = {_char_dev(b.port) for b in found} - {None}
+    for port in _mirrored():
+        dev = _char_dev(port)
+        board = sysfs_board(port) if dev not in seen else None
+        if board is not None:
+            seen.add(dev)
+            found.append(board)
+    return found
+
+
+def before_reset(board: Board) -> str:
+    """esptool ``--before`` mode for ``board``: ``usb-reset`` on the native USB-Serial/JTAG, so
+    esptool does not have to recognise the port from its name, else ``default-reset``."""
+    return "usb-reset" if (board.vid, board.pid) == USB_SERIAL_JTAG else "default-reset"
+
+
 def read_toml(p: Paths) -> dict[str, Any]:
     """Contents of boards.toml ({} when missing or unreadable)."""
     try:
@@ -103,14 +191,15 @@ def renamed_port(board: Board) -> str | None:
 
     macOS names a native-USB board ``/dev/cu.usbmodem<N>``; after a reset re-enumerates it the
     number can change (another USB location, or the old node still held open). Linux reuses
-    ``/dev/ttyACM0`` when nothing holds the old node, else takes ``ttyACM1``. None when the board
+    ``/dev/ttyACM0`` when nothing holds the old node, else takes ``ttyACM1``. Mirrored nodes
+    (``MIRROR_DIR``) are matched through sysfs (``listed_boards``). None when the board
     has no serial number, board access is disabled, or no other port carries it.
     """
     if not board.serial_number or board_disabled():
         return None
-    for info in list_ports.comports():
-        if info.serial_number == board.serial_number and info.device != board.port:
-            return str(info.device)
+    for other in listed_boards():
+        if other.serial_number == board.serial_number and other.port != board.port:
+            return other.port
     return None
 
 
@@ -122,6 +211,9 @@ def scan(
     settle: float | None = None,
 ) -> list[Board]:
     """Candidate boards: known VID:PID ports (or just ``port``), chip from cache or esptool probe.
+
+    Ports come from ``listed_boards`` (pyserial plus the mirrored nodes); a ``port`` not listed
+    gets its USB ids from sysfs (``sysfs_board``) when it can.
 
     The esptool probe hard-resets the board, which re-enumerates a native-USB port; after each
     probe the port is waited for (``wait_for_port`` with ``settle``) and a rename is followed, so
@@ -137,8 +229,7 @@ def scan(
         if b.get("serial_number") and b.get("chip")
     }
     boards: list[Board] = []
-    for info in list_ports.comports():
-        board = _port_board(info)
+    for board in listed_boards():
         if port is not None:
             if board.port != port:
                 continue
@@ -146,13 +237,13 @@ def scan(
             continue
         boards.append(board)
     if port is not None and not boards:
-        boards.append(Board(port=port, last_seen=_now()))
+        boards.append(sysfs_board(port) or Board(port=port, last_seen=_now()))
     for board in boards:
         if board.serial_number in cached:
             board.chip, board.detected_by = cached[board.serial_number], "cache"
         elif probe and esptool_cmd is not None:
             try:
-                chip = esptool.chip_id(esptool_cmd(), board.port)
+                chip = esptool.chip_id(esptool_cmd(), board.port, before_reset(board))
             except XeWeError as exc:
                 log.warning("cannot probe %s: %s", board.port, exc)
                 chip = None

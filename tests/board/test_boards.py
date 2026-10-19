@@ -50,17 +50,17 @@ def test_vid_pid_filter(p: Paths, ports: list[Port]) -> None:
 
 def test_probe_then_cache_by_serial_number(p: Paths, ports: list[Port], monkeypatch: pytest.MonkeyPatch) -> None:
     ports.append(Port("/dev/ttyACM0", 0x303A, 0x1001, "F0:F5"))
-    calls: list[str] = []
+    calls: list[tuple[str, str]] = []
 
-    def probe(cmd: list[str], port: str) -> str:
-        calls.append(port)
+    def probe(cmd: list[str], port: str, before: str = "default-reset") -> str:
+        calls.append((port, before))
         return "c6"
 
     monkeypatch.setattr(esptool, "chip_id", probe)
     assert boards.scan(p, esptool_cmd=lambda: ["esptool"])[0].chip == "c6"
     again = boards.scan(p, esptool_cmd=lambda: ["esptool"])[0]
     assert again.chip == "c6" and again.detected_by == "cache"
-    assert calls == ["/dev/ttyACM0"]
+    assert calls == [("/dev/ttyACM0", "usb-reset")]  # native USB-Serial/JTAG
     data = tomllib.loads(p.boards_toml.read_text())
     assert data["board"][0]["serial_number"] == "F0:F5" and data["board"][0]["vid"] == "303a"
 
@@ -160,7 +160,89 @@ def test_probe_waits_for_the_port_and_follows_a_rename(
         return "/dev/cu.usbmodem1101"
 
     monkeypatch.setattr(boards, "wait_for_port", wait)
-    monkeypatch.setattr(esptool, "chip_id", lambda cmd, port: "s3")
+    monkeypatch.setattr(esptool, "chip_id", lambda cmd, port, before="default-reset": "s3")
     found = boards.scan(p, esptool_cmd=lambda: ["esptool"], settle=1.5)
     assert waits == [("/dev/cu.usbmodem101", 1.5)]
     assert found[0].port == "/dev/cu.usbmodem1101" and found[0].chip == "s3"
+
+
+def fake_sysfs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, nodes: dict[str, tuple[int, int]]) -> Path:
+    """A sysfs tree with one native-USB board (166:0, ``ttyACM0``) and one serial port off USB
+    (4:64, ``ttyS0``); ``nodes`` maps port paths to the device number ``os.stat`` would give."""
+    root = tmp_path / "sys"
+    usb = root / "devices" / "pci0000:00" / "0000:00:14.0" / "usb1" / "1-3"
+    for name, value in {"idVendor": "303a", "idProduct": "1001", "serial": "AC:27:6E:73:C0:B4"}.items():
+        (usb / name).parent.mkdir(parents=True, exist_ok=True)
+        (usb / name).write_text(value + "\n")
+    (usb / "product").write_text("USB JTAG/serial debug unit\n")
+    tty = usb / "1-3:1.0" / "tty" / "ttyACM0"
+    tty.mkdir(parents=True)
+    serial8250 = root / "devices" / "platform" / "serial8250" / "tty" / "ttyS0"
+    serial8250.mkdir(parents=True)
+    char = root / "dev" / "char"
+    char.mkdir(parents=True)
+    (char / "166:0").symlink_to(tty)
+    (char / "4:64").symlink_to(serial8250)
+    monkeypatch.setattr(boards, "SYS_DEV_CHAR", char)
+    monkeypatch.setattr(boards, "_char_dev", lambda port: nodes.get(port))
+    return char
+
+
+def test_sysfs_board_by_device_number(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_sysfs(tmp_path, monkeypatch, {"/dev/xewe-usb/c3": (166, 0), "/dev/ttyS0": (4, 64), "/dev/gone": (166, 9)})
+    board = boards.sysfs_board("/dev/xewe-usb/c3")
+    assert board is not None
+    assert (board.port, board.vid, board.pid) == ("/dev/xewe-usb/c3", "303a", "1001")
+    assert (board.serial_number, board.description) == ("AC:27:6E:73:C0:B4", "USB JTAG/serial debug unit")
+    assert boards.sysfs_board("/dev/ttyS0") is None  # not on USB
+    assert boards.sysfs_board("/dev/gone") is None  # no sysfs entry
+    assert boards.sysfs_board("/dev/not-a-char-device") is None
+
+
+def test_sysfs_board_without_sysfs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    node = tmp_path / "node"
+    node.write_text("")
+    assert boards._char_dev(str(node)) is None  # a regular file has no device number
+    assert boards._char_dev(str(tmp_path / "missing")) is None
+    monkeypatch.setattr(boards, "_char_dev", lambda port: (166, 0))
+    assert boards.sysfs_board("/dev/cu.usbmodem101") is None  # no /sys (macOS): the old behaviour
+
+
+def test_mirrored_nodes_are_listed_once(
+    tmp_path: Path, p: Paths, ports: list[Port], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mirror = tmp_path / "xewe-usb"
+    mirror.mkdir()
+    (mirror / "AC-27-6E-73-C0-B4").write_text("")
+    (mirror / "c3").symlink_to(mirror / "AC-27-6E-73-C0-B4")
+    monkeypatch.setattr(boards, "MIRROR_DIR", mirror)
+    nodes = {str(mirror / "AC-27-6E-73-C0-B4"): (166, 0), str(mirror / "c3"): (166, 0)}
+    fake_sysfs(tmp_path, monkeypatch, nodes)
+    found = boards.scan(p, probe=False)
+    assert [(b.port, b.vid, b.pid, b.serial_number) for b in found] == [
+        (str(mirror / "AC-27-6E-73-C0-B4"), "303a", "1001", "AC:27:6E:73:C0:B4")
+    ]
+    ports.append(Port("/dev/ttyACM0", 0x303A, 0x1001, "AC:27:6E:73:C0:B4"))  # the host's own name
+    nodes["/dev/ttyACM0"] = (166, 0)
+    assert [b.port for b in boards.scan(p, probe=False)] == ["/dev/ttyACM0"]
+
+
+def test_explicit_mirrored_port_gets_usb_ids(tmp_path: Path, p: Paths, ports: list[Port], monkeypatch) -> None:
+    node = tmp_path / "c3"
+    node.write_text("")
+    fake_sysfs(tmp_path, monkeypatch, {str(node): (166, 0)})
+    board = boards.select(p, port=str(node), probe=False)
+    assert (board.port, board.serial_number) == (str(node), "AC:27:6E:73:C0:B4")
+    assert boards.before_reset(board) == "usb-reset"
+    assert boards.before_reset(boards.Board(str(node), vid="1a86", pid="55d3")) == "default-reset"
+    assert boards.before_reset(boards.Board(str(node))) == "default-reset"  # USB ids unknown
+
+
+def test_renamed_port_follows_a_mirrored_node(tmp_path: Path, ports: list[Port], monkeypatch) -> None:
+    mirror = tmp_path / "xewe-usb"
+    mirror.mkdir()
+    (mirror / "board-b").write_text("")
+    monkeypatch.setattr(boards, "MIRROR_DIR", mirror)
+    fake_sysfs(tmp_path, monkeypatch, {str(mirror / "board-b"): (166, 0)})
+    board = boards.Board(str(mirror / "board-a"), serial_number="AC:27:6E:73:C0:B4")
+    assert boards.renamed_port(board) == str(mirror / "board-b")

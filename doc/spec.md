@@ -432,9 +432,18 @@ last_seen = "2026-10-08T12:00:00Z"
    `303a:*` (Espressif native USB-Serial/JTAG and USB-OTG CDC; C3, C6, S3 all report `303a:1001`),
    `10c4:ea60` (CP210x), `1a86:7523` (CH340), `1a86:55d3` (CH343), `0403:6001/6010/6015` (FTDI).
    Ports with no VID (e.g. `/dev/ttyS*`) are dropped. `--port P` bypasses the filter.
+   pyserial finds a port's USB ids by its kernel name (`/sys/class/tty/<name>`), so on Linux the
+   nodes in `/dev/xewe-usb/` (when it exists: stable names a host mirrors into a container, with
+   no `ttyACM*` of their own) are listed too, and a `--port` pyserial does not list gets its ids
+   the same way: by device number. `os.stat(port).st_rdev` (symlinks followed) gives
+   `<major>:<minor>`; `/sys/dev/char/<major>:<minor>` is walked up to the USB device, whose
+   `idVendor`, `idProduct`, `serial` and `product` fill `vid`, `pid`, `serial_number` and
+   `description`. Several names of one device number are listed once (pyserial's name first, then
+   the mirrored names sorted). Without sysfs (macOS, Windows) only pyserial's list is used.
 2. Chip: VID:PID cannot tell C3/C6/S3 apart, so look up `serial_number` in the previous
    `boards.toml` (`detected_by = "cache"`); otherwise probe with the core esptool:
-   `esptool --port P --before default-reset --after hard-reset chip-id` (timeout 20 s), parse
+   `esptool --port P --before <reset> --after hard-reset chip-id` (timeout 20 s; `<reset>` is
+   `usb-reset` for the native USB-Serial/JTAG `303a:1001`, else `default-reset`, §8), parse
    `ESP32-(C3|C6|S3)` from its output. Probing resets the board; `--no-probe` skips it (chip stays
    unknown unless overridden). A chip outside C3/C6/S3 is reported and treated as unsupported.
 3. `arduino-cli board list --format json` is not used for decisions (it only knows VID:PID); `xewe
@@ -739,9 +748,14 @@ its own `builds/<chip>/cache` and `builds/<chip>/gen`, so incremental rebuilds s
 
 ```
 <esptool> --chip esp32c3 --port /dev/ttyACM0 --baud 921600 \
-          --before default-reset --after hard-reset \
+          --before usb-reset --after hard-reset \
           write-flash 0x0 <piece at 0x0> 0xe000 <piece at 0xe000>
 ```
+- `--before usb-reset` when the board is on the native USB-Serial/JTAG (VID:PID `303a:1001`, from
+  pyserial or the sysfs lookup of §5), else `--before default-reset` (DTR/RTS on EN and IO0:
+  bridge boards, and any board whose USB ids are unknown). esptool picks the USB reset itself only
+  when it recognises the port by name, which a renamed or host-mirrored node defeats; passing the
+  mode does not depend on the name. The same mode goes to `erase-flash` and the `chip-id` probe.
 - The merged image spans the whole flash. Written as one piece at `0x0` it would fill every data
   partition with the image's 0xFF, so a flash without `--erase` would still wipe NVS (the
   provisioning). `flash_segments` reads the partition table at `0x8000` of the image and leaves
@@ -749,7 +763,7 @@ its own `builds/<chip>/cache` and `builds/<chip>/gen`, so incremental rebuilds s
   rest (bootloader, partition table, otadata, app) is written in one `write-flash` call. An image
   without a readable partition table is written whole at `0x0`. Provisioning survives the flash
   (verified on an ESP32-S3).
-- `--erase` runs `<esptool> --chip … --port … erase-flash` first, then waits for the port (below) (wipes NVS; what
+- `--erase` runs `<esptool> --chip … --port … --before <reset> erase-flash` first, then waits for the port (below) (wipes NVS; what
   `EraseFlash=all` would do via `arduino-cli upload`, which we do not use). `xewe flash` keeps NVS by default (see
   `flash_segments` above); `xewe run` erases by default (`--keep-nvs` skips the erase). The `flashed` line ends with
   `(flash erased: first boot)` or `(nvs kept)`.
@@ -765,7 +779,8 @@ its own `builds/<chip>/cache` and `builds/<chip>/gen`, so incremental rebuilds s
   `XEWE_SETTLE`; raise it for a slow hub or VM passthrough), so the next esptool call / `run` /
   tests open a stable port. If the port does not return but a port with the same USB serial
   number appears under another name (macOS can give a re-enumerated board another
-  `/dev/cu.usbmodem<N>`; Linux takes `ttyACM1` while `ttyACM0` is still held), that port is used
+  `/dev/cu.usbmodem<N>`; Linux takes `ttyACM1` while `ttyACM0` is still held; mirrored nodes are
+  matched through sysfs, §5), that port is used
   after the same settle, with a warning `<old> came back as <new>`, and the `flashed` line names it.
   Not back in time → exit 4; the message names the new port (`pass --port <new>`) when one was seen.
   `xewe boards` waits the same way after each esptool probe (the probe hard-resets the board).
@@ -1221,8 +1236,8 @@ shared fixtures and fakes (doc/tests.md); `pytest tests/<area>` runs one area.
 | `build/test_format.py` | fake clang-format (`tests/fakes/clang-format`): default file set (no `build/`, hidden dirs, `src/Modules.h`, `tests/board/*.cpp`), `--check` exit 1 and lists without writing, apply then clean check, mode kept, always the shipped style file (a project `.clang-format` is ignored), the style's rules, the style is package data, format in a library and in a directory that is neither (the current directory), `PATH` arguments, nested `build` Python packages kept, ruff's old and new `--check` output, failure exit 1, binary search order (`XEWE_CLANG_FORMAT`, `PATH`, venv, toolchain, exit 3 hint), ruff skipped when missing and called with `--check`/`--quiet` |
 | `env/test_arduino.py` | env vars (no `~/.arduino15`), exact compile argv per chip, FQBN strings (golden), no `JTAGAdapter` |
 | `build/test_compile.py` | `builds/<chip>/out/` contents, bin name, `manifest.json` byte-equal to golden built from 2.0.0 release files, `meta.json` keys (`modules_version`), `XeWeBuildInfo.h` content, `--define`, sketch staging when folder ≠ stem, `--all-chips` continues after failure |
-| `board/test_boards.py` | VID:PID filter, chip-id output parsing (sample esptool 5 output), cache by serial number, override precedence, no-board / one / several decision, `boards.toml` `[override]` preserved |
-| `build/test_flash.py` | esptool argv, `--erase` (port wait after erase and after write), `flash` keeps NVS by default, `run` erases by default and `--keep-nvs` does not, port not back → exit 4, baud fallback, no-board exit 0 vs `--require-board` exit 4, chip mismatch exit 2, `--define` (repeatable) flashes the image built with those defines and reuses one already built with them, `XEWE_TEST_DEFINES` as the default with the precedence of `xewe test` |
+| `board/test_boards.py` | VID:PID filter, chip-id output parsing (sample esptool 5 output), USB ids by device number from a fake sysfs tree (mirrored nodes listed once, an explicit mirrored `--port`, not on USB, no sysfs), `--before` reset mode, cache by serial number, override precedence, no-board / one / several decision, `boards.toml` `[override]` preserved |
+| `build/test_flash.py` | esptool argv (`--before usb-reset` for a native USB-Serial/JTAG board, also on a mirrored node; `default-reset` for a bridge board), `--erase` (port wait after erase and after write), `flash` keeps NVS by default, `run` erases by default and `--keep-nvs` does not, port not back → exit 4, baud fallback, no-board exit 0 vs `--require-board` exit 4, chip mismatch exit 2, `--define` (repeatable) flashes the image built with those defines and reuses one already built with them, `XEWE_TEST_DEFINES` as the default with the precedence of `xewe test` |
 | `board/test_serial.py` | timestamps, `\r` stripping, send/expect match and timeout (exit 1), reconnect, a closed handle after an unplug (`TypeError` from `in_waiting`) → `XeWeError` and `connected` False, reset across a port drop, `wait_for_port` settle and timeout (exit 4); interactive mode: typed line sent, `--no-input` and non-TTY stdin listen only, EOF exit 0, reconnect, raw lines and no `> CMD` echo (timestamped with `--timestamps`, in `--send` mode, listen-only and the log), stdin flushed only when interactive on a TTY (interactive mode in `board/test_serial_interactive.py`) |
 | `board/test_provision.py` | scripted first-boot transcript: answers in order, SSID by number (the S3 list's shape, made-up names), rescan then `-3` custom, `! Invalid number` re-answered, board resuming at the network list, nudge only before the first prompt (fake clock), timezone `y` / `n` + offset, already provisioned sends nothing, unlisted module answered `n` and unknown value / y/n prompts answered with their default (logged), endless unknown prompt exit 1, nudge, port drop at reboot, prompt timeout exit 1 with masked tail, password never in stdout/log, the summary, the rescan log line and the typed custom SSID mask the SSID; settings precedence flags > env > dotenv file > defaults, settings from `<project>/.env` with no flags, exit 2 before the port, exit 4 without a board |
 | `env/test_dotenv.py` | parsing (comments, quotes, `export`, no interpolation), errors without values, real environment wins, resolution order (`--env`, `XEWE_ENV`, project, tools checkout from `build_config.toml` or the package checkout), missing file is not an error, only the key count is logged, `hint()` (both paths, the provisioning keys) |

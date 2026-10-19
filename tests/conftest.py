@@ -15,7 +15,7 @@ import pytest
 import serial as pyserial
 from serial.tools import list_ports
 
-from xewe.board import serialio
+from xewe.board import boards, serialio
 from xewe.board.boards import Board
 from xewe.env import config, dotenv
 from xewe.env.project import Paths
@@ -137,6 +137,9 @@ def _isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[N
     # Never read the dotenv file of this checkout (the developer's credentials): no tools checkout
     # is found unless a test sets one up.
     monkeypatch.setattr(dotenv, "package_checkout", lambda module_file=None: None)
+    # Never list a board the test machine really has: no mirrored nodes, an empty sysfs.
+    monkeypatch.setattr(boards, "MIRROR_DIR", tmp_path / "xewe-usb")
+    monkeypatch.setattr(boards, "SYS_DEV_CHAR", tmp_path / "sys" / "dev" / "char")
     saved = dict(os.environ)  # dotenv.apply writes os.environ directly; undo it after each test
     yield
     os.environ.clear()

@@ -63,10 +63,10 @@ def parse_chip(output: str) -> str | None:
     return m[1].lower()
 
 
-def chip_id(cmd: list[str], port: str) -> str | None:
-    """Probe the chip on ``port`` (resets the board)."""
+def chip_id(cmd: list[str], port: str, before: str = "default-reset") -> str | None:
+    """Probe the chip on ``port`` (resets the board; ``before`` is esptool's ``--before`` mode)."""
     try:
-        proc = run(cmd, ["--port", port, "--before", "default-reset", "--after", "hard-reset", "chip-id"], timeout=20)
+        proc = run(cmd, ["--port", port, "--before", before, "--after", "hard-reset", "chip-id"], timeout=20)
     except subprocess.TimeoutExpired:
         log.warning("esptool chip-id on %s timed out", port)
         return None
