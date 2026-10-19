@@ -49,8 +49,9 @@ in that order. Read it as described below before doing anything else in the repo
 
 The Python package `xewe`: setup, build, flash, serial, provision, test, format, release and
 brand-lint for XeWe OS firmware projects. Human
-documentation: `README.md` and `doc/` (`doc/spec.md` is the full specification, `doc/ci.md` the
-reusable workflows, `doc/tests.md` the self-tests). Project rules are X-01 … X-08 at the end of
+documentation: `README.md` is the index; `src/xewe/README.md` the command table, `doc/spec.md` the
+full specification, `doc/ci.md` the reusable workflows, `doc/webui.md` the web UI export,
+`scripts/README.md` releasing, `tests/README.md` the self-tests. Project rules are X-01 … X-08 at the end of
 `RULES.md`. Organization rules: `https://github.com/xewe-labs/.github/blob/main/AGENTS.md`; they
 apply where this file is silent.
 
@@ -66,7 +67,7 @@ apply where this file is silent.
   call (`doc/ci.md`).
 - `scripts/release.sh` releases the tools; `releases/<version>/` holds each release's
   `notes.txt` and the generated `release_card.md` (no hand-written test card; the run logs are in
-  `releases/<version>/logs/`, gitignored) (README "Releasing", `doc/spec.md` §11 and §14).
+  `releases/<version>/logs/`, gitignored) (`scripts/README.md`, `doc/spec.md` §11 and §14).
   `--prepare` runs the checks and renders the card; agents may run `--dry-run` only, and
   `--prepare` only on a scratch copy unless asked; the owner commits, tags and pushes.
 

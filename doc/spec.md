@@ -1,6 +1,6 @@
 # xewe-os-tools — specification
 
-What the `xewe` command does, file by file and step by step. The README is the short user view;
+What the `xewe` command does, file by file and step by step. The directory READMEs are the user view;
 this page is the reference the code is checked against. Sections are cited as §N in the code.
 
 ---
@@ -40,13 +40,13 @@ only without eager re-exports); `xewe.testing` also holds `module_dir`.
 ```
 xewe-os-tools/
 ├── pyproject.toml
-├── README.md  LICENSE.txt  .gitignore
+├── README.md              the documentation index; LICENSE.txt  .gitignore
 ├── .agents/               the agent workspace (AGENTS.md, RULES.md, PREFERENCES.md, handoffs/, skills/)
-├── .github/workflows/     ci.yml (this repo) and the reusable xewe-*.yml (doc/ci.md)
-├── doc/                   spec.md (this page), ci.md, tests.md, webui.md
-├── scripts/release.sh     releases the tools (§11, README "Releasing"): --prepare (checks, card), then tag and GitHub Release
-├── releases/<version>/    notes.txt (GitHub Release text) and the generated release_card.md (§14); logs/ is the gitignored run folder
-├── src/xewe/              the `xewe` package
+├── .github/workflows/     ci.yml (this repo) and the reusable xewe-*.yml (doc/ci.md); README.md lists them
+├── doc/                   README.md (index), spec.md (this page), ci.md, webui.md, tests.md (pointer to tests/README.md)
+├── scripts/release.sh     releases the tools (§11, scripts/README.md): --prepare (checks, card), then tag and GitHub Release
+├── releases/<version>/    notes.txt (GitHub Release text) and the generated release_card.md (§14); logs/ is the gitignored run folder (releases/README.md)
+├── src/xewe/              the `xewe` package; README.md is the command table, every area has a README.md
 │   ├── __init__.py        __version__ = "3.1.0"
 │   ├── __main__.py        python -m xewe
 │   ├── cli.py             argparse: subcommands, global flags, exit codes
@@ -88,8 +88,8 @@ xewe-os-tools/
 │       ├── __init__.py    module_dir(): the module folder of a module test
 │       ├── plugin.py      pytest plugin: fixtures board/firmware/serial, markers, summary
 │       └── runner.py      xewe test
-└── tests/                 self-tests (§12, doc/tests.md), mirroring src/xewe/: tests/<area>/test_<module>.py
-    ├── README.md          pointer to doc/tests.md
+└── tests/                 self-tests (§12, tests/README.md), mirroring src/xewe/: tests/<area>/test_<module>.py
+    ├── README.md          the self-test layout, fakes and fixtures (fixtures/ has its own README.md)
     ├── conftest.py        the only conftest: shared fixtures and helpers
     ├── fakes/             arduino-cli, esptool, clang-format (Python scripts) used by the self-tests
     ├── fixtures/          golden manifest.json, the six real module.properties, a copy of the template's setup.sh,
