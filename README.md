@@ -1,212 +1,12 @@
 # xewe-os-tools
 
-One Python package, one command (`xewe`), for XeWe OS firmware projects: setup, build, flash,
-serial, provision, test, boards, modules, manifest, format and release, plus `brand-lint` for
-every repo and `webui` (a Flask web UI prototype exported as C++ headers: [doc/webui.md](doc/webui.md)). Linux and macOS, x86_64 and arm64. No sudo and
-no system package manager: the toolchain (arduino-cli, esp32 core, esptool) and the modules repo
-checkout (`sources/xewe-os-modules/<ref>/`) are installed once per machine into
-`~/.xewe-os/build-tools/` (`$XEWE_HOME` overrides `~/.xewe-os`), everything else into the project's
-`build/`. A project is a directory with `xewe.toml`, its committed manifest (name, version, chip,
-partition scheme, core/modules/tools refs, module selection, libraries). The full layout is in
-[doc/spec.md](doc/spec.md) §6.
+The Python package behind every XeWe OS firmware project: one command, `xewe`, sets up, builds,
+flashes, tests and releases a project. It also holds the reusable GitHub workflows that the other
+XeWe OS repositories call. Python >= 3.11, Linux and macOS.
 
-## Install
+## Use it in a project
 
-A project's `./setup.sh` does this for you. The file belongs to the template repo (`xewe-os`);
-projects copy it from there. It creates `build/tools/.venv`, installs this package into it from
-`$XEWE_TOOLS_SOURCE` (a local checkout) or from the `[tools]` ref in `xewe.toml` cloned into
-`build/tools` (a tag, a branch that is followed on every run, `latest`, or a commit SHA), then runs
-`xewe setup "$@"`. `xewe setup` writes the project's `./run.sh` on every run (it is not committed)
-and, when no dotenv file is found, prints where to put one and which keys (it never writes one).
-
-For development of the tools themselves (Python >= 3.11):
-
-```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install -e '.[dev]' pyflakes mypy types-pyserial
-.venv/bin/python -m pytest -q
-.venv/bin/python -m pyflakes src tests
-.venv/bin/python -m mypy
-```
-
-`src/xewe/` is the package (`xewe.env`, `xewe.build`, `xewe.board`, `xewe.modules`,
-`xewe.testing`; [doc/spec.md](doc/spec.md) §2). The self-tests mirror it
-(`tests/<area>/test_<module>.py`, one shared `tests/conftest.py`); run one area with
-`.venv/bin/python -m pytest tests/board` ([doc/tests.md](doc/tests.md)). The reusable GitHub
-workflows in `.github/workflows/` are described in [doc/ci.md](doc/ci.md).
-
-Runtime dependencies: `pyserial`, `pytest`. esptool comes from the pinned esp32 core
-(`XEWE_ESPTOOL` overrides it). The `dev` extra adds `ruff` (`xewe format` on Python).
-
-## Commands
-
-| Command | What it does |
-|---|---|
-| `xewe setup [--modules LIST\|all\|none] [--latest] [--force] [--core-source DIR] [--modules-source DIR] [--arduino-data DIR]` | arduino-cli, esp32 core and the modules repo (`sources/xewe-os-modules/<ref>/`, or `XEWE_MODULES_SOURCE` as is) into the shared `~/.xewe-os/build-tools` (once per machine and ref; a branch ref is followed), core library and libraries into `build/`; generates `build/modules/` (the `XeWeModules` library, the selected modules' tests, `modules.lock`) and `src/Modules.h` (zero modules is valid: `--modules none`, or no selection); installs the selected modules' `depends_libraries` from the modules repo's `libraries.toml` unless `xewe.toml` `[libraries]` pins that name (the manifest wins); writes `run.sh`; prints where to put the dotenv file when none is found. |
-| `xewe build [--chip C \| --all-chips] [--define K=V]... [--clean] [--dry-run]` | compile into `build/builds/<chip>/out/`; prints `Sketch uses N bytes (NN%)` (`--dry-run` prints the arduino-cli command only). The FQBN's `PartitionScheme` is `xewe.toml [build] partition_scheme` (default `no_ota`); an image larger than that scheme's app partition fails (exit 1), a scheme the installed esp32 core does not offer for the chip in 4 MB is exit 2 |
-| `xewe flash [--chip C] [--port P] [--erase] [--no-build] [--define K=V]... [--settle S] [--require-board]` | build if stale (sources, version or `--define` values changed), then write the merged image; the defines are `--define`, else `XEWE_TEST_DEFINES` (as `xewe test`), so `xewe flash --define …` then `xewe test --define …` flash and test one image; NVS (name, Wi-Fi, module choices) is kept unless `--erase`. After esptool's reset the port must stay present `--settle` seconds (default 0.5, `XEWE_SETTLE`); a board that comes back under another name (macOS `cu.usbmodem<N>`, same USB serial number) is followed |
-| `xewe serial [--port P] [--send CMD [--expect RE] [--boot-timeout S]] [--duration S] [--no-input] [--timestamps] [--log FILE]` | timestamped console; the tools open the port without resetting the board (`--reset` or flashing resets it); `--send` waits out a boot in progress (see below); without `--send` on a terminal it is interactive: keys typed during flash or boot are discarded, board lines are shown raw (`--timestamps` adds the time; `--log` always has it), each typed line is sent on Enter, Ctrl-C or Ctrl-D exits (`--no-input` or non-terminal stdin: listen only) |
-| `xewe provision [--port P] [--name NAME] [--modules all\|none\|LIST] [--timezone GMT+HH:MM] [--env FILE] [--no-reset] [--log FILE]` | answer the first-boot prompts of a flashed board (settings from the dotenv file) |
-| `xewe test [--chip C \| --all-chips] [--module SLUG]... [--unit-only] [--no-flash] [--define K=V]... [--no-board] [-- PYTEST_ARGS]` | pytest over `tests/` (`tests/unit/`, `tests/board/`) and the selected modules' tests in `build/modules/tests/<slug>/`; the image is written once per session unless `--no-flash` (test the firmware already on the board). It is built with `--define` (as `xewe build`), else with `XEWE_TEST_DEFINES` (space-separated `K=V`, environment or dotenv file; any `--define` replaces it), and reused when already built with those defines, so with the same defines (or `XEWE_TEST_DEFINES`) `xewe flash` and `xewe test` never write a default-pin image to a board on non-default pins |
-| `xewe run [--chip C] [--define K=V]... [--keep-nvs] [--no-serial] [--no-input] [--timestamps] [--settle S]` | build, erase the whole flash (NVS too, so every run is a true first boot; `--keep-nvs` skips the erase), flash, then the console (interactive on a terminal, like `xewe serial`). The `flashed` line ends with `(flash erased: first boot)` or `(nvs kept)` |
-| `xewe boards [--no-probe] [--json] [--set-port P [--set-chip C]] [--clear] [--settle S]` | list boards, set an override (the esptool probe resets each board; its port is waited for, `--settle`) |
-| `xewe modules list\|select\|validate\|generate` | the modules repo checkout, `build/modules/`, `src/Modules.h` and the module blocks in `Config.h` |
-| `xewe manifest show\|update` | `xewe.toml` refs vs installed refs; move refs to new tags. `ref = "latest"` tracks the newest commit of the repo's default branch (re-fetched on every setup); a tag freezes it (`xewe manifest update` replaces `latest` with the newest tag, `--to latest` sets it back) |
-| `xewe clean [--all] [--modules]` | delete generated output (`build/builds`, `build/tmp`; `--all`: all of `build/` but `tools/`; `--modules`: also `build/modules` and `src/Modules.h`; never `~/.xewe-os/build-tools`) |
-| `xewe format [--check] [PATH...]` | clang-format `*.h *.hpp *.c *.cpp *.ino` (root, `src/`, `examples/`, `tests/unit/`; never `build/`) with the XeWe style shipped with the tools (no column alignment: it costs tokens and turns one-line changes into realigned blocks; a `.clang-format` in the project is not read), and `ruff format` the Python when ruff is installed; `--check` exits 1 listing files that would change. Runs in a project, a library, or any other directory (the current one is then the root; the modules repo passes `modules tools`). clang-format: `XEWE_CLANG_FORMAT`, `PATH` or the tools venv (`pip install clang-format`), version 14 or newer |
-| `xewe brand-lint [DIR...]` | fail (exit 1) on banned spellings of the brand in the text files under each `DIR` (default `.`; rules: `xewe-os/doc/naming.md`); in a git work tree only the files git does not ignore; skips `.git`, `build`, `.venv`, `static`, `__pycache__`, `history`, `test_logs`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `*.egg-info`, binary files, `naming.md`, the generated `release_card.md` (and its draft) and dotenv files. Needs no project |
-| `xewe webui export FLASK_DIR OUT_DIR` \| `xewe webui prompt` | export the `.html`/`.css`/`.js` of a Flask prototype's `templates/` and `static/` as PROGMEM headers plus `app.py` and a sketch with one route per file into `OUT_DIR/<name>_<timestamp>/`; `prompt` prints the LLM prompt that ports `app.py` into that sketch ([doc/webui.md](doc/webui.md)). Needs no project, nor Flask |
-| `xewe doctor` | check the environment (on Apple silicon also Rosetta 2, which the esp32 core's `ctags` needs) |
-| `xewe release --version X.Y.Z [--matrix FILE] [--notes FILE]` | release matrix into `static/firmware/releases/<version>/`, each `meta.json` recording the resolved core, modules, tools and library commits plus the bin's size, sha256 and release-asset names; `firmware_map.csv` with one row per image; the tarball and the flat GitHub Release assets in `build/release/<version>/assets/` (binaries are release assets only, never committed); writes `[project] version` and prints the git and gh commands (CI runs it on a version tag: [doc/ci.md](doc/ci.md)). Without `--notes` it opens `$EDITOR` only on a terminal; with stdin not a terminal or `XEWE_NONINTERACTIVE=1` it exits 2 asking for `--notes` |
-| `xewe release --version X.Y.Z --chip C` \| `--assemble` | per chip (one CI job per chip): build only C's matrix rows into `firmware_map.C.csv` (no tarball, no assets); then `--assemble` merges the per-chip maps in matrix order and writes the map, tarball and assets, the same as one run |
-| `xewe release-card init\|record\|render\|verify\|fingerprint` | the generated release card ([doc/spec.md](doc/spec.md) §14): `init` starts a run in `releases/<v>/logs/` (`run.json`: run id, base commit, tested-tree fingerprint; it empties only a previous run folder of the same repo and version, anything else is exit 2), `record --kind setup\|validate\|unit\|board\|flash\|build\|check [--chip C] [--junit PATH] -- CMD` runs one step and keeps its redacted log (dotenv and environment secrets, also XML-, JSON- and URL-escaped, `$HOME` → `~`), `render` writes `releases/<v>/release_card.md` or refuses (exit 1; draft in the logs folder), `verify` checks that the card is as rendered (`card_sha256`) and matches the clean tree and the local logs, or with `--ci` against a CI run (`--unit-only` for core and modules CI), `fingerprint` prints the tested-tree fingerprint (`--card --check`: is this the card's tree? used by the CI card jobs) (`--resume` on `init`/`record` re-runs only the steps that are not green). Needs no project |
-
-Global flags (before the command): `--project DIR`, `--verbose`/`-v`, `--version`. `-v`/`--verbose`
-is also accepted after the command (`xewe test --unit-only -v`); pytest's own flags go after `--`
-(`xewe test -- -vv -k wifi`).
-Exit codes: 0 ok, 1 failure, 2 usage, 3 not set up / tool missing, 4 board required but missing.
-`xewe release-card record` maps the command it records onto them: 0 when it exited 0, 1 when it
-exited non-zero, 3 when it could not start (the command's own code is kept in `run.json`).
-
-## Serial and resets
-
-The tools open the port without resetting the board; `--reset` or flashing resets it. The chip
-resets on the control-line state DTR=0 & RTS=1 (native USB, ESP32-S3/C3/C6 USB-Serial/JTAG
-`303a:1001`: `rst:0x15 (USB_UART_CHIP_RESET)`; bridge boards: EN pulled low). The kernel raises
-DTR and RTS on open and pyserial applies DTR before RTS, so `Console.open` configures DTR high and
-RTS low for the open (1/1 -> 1/0) and drops DTR afterwards (-> 0/0), never passing through 0/1.
-A reset re-enumerates a native USB port and a slow passthrough can lose it, which is why opening
-must not reset. `flash`, `run` and the `boards` probe pass esptool `--before usb-reset` for a
-`303a:1001` board and `--before default-reset` otherwise. On Linux a port's USB ids are read from
-sysfs by device number, so nodes a host mirrors into a container under other names
-(`/dev/xewe-usb/*`, listed by `xewe boards`) are recognised too (`doc/spec.md` §5). After a
-reset, `xewe serial` shows the ROM lines (`ESP-ROM:...`, `rst:0x...`) and the boot log. With
-`--send`, the command is sent right away when nothing boot-like arrives within 2 s of opening (the normal case), or, if a boot is in progress, after `System Setup Complete` (up
-to `--boot-timeout`, default 90 s: Wi-Fi + NTP can take ~30 s). An unprovisioned board
-(`Name your device`) exits 1 without sending: run `xewe provision`. A `boot: ...` line records
-which case happened.
-
-The board's USB console queues at most 1024 received bytes and has no flow control, so the tools
-split any write longer than 900 bytes into pieces 50 ms apart. During `xewe test`, a board test
-that fails on a timeout makes the next test reopen the port once and send `$system uid`; a board
-that still does not answer ends the session (`board on <port> is silent after a restart …;
-power-cycle it`, exit 1) instead of failing every later test; a port that cannot be reopened ends it
-with `board on <port> disappeared from USB …; power-cycle it`. A native-USB board can drop off USB
-at the reset after a flash; `xewe test --no-flash` skips the write when the board already runs the
-image (the board reports no build id, so the tools cannot check that for you).
-
-## Provision
-
-Flashing keeps NVS: a board flashed with `xewe flash` (no `--erase`) keeps its name, Wi-Fi and
-module choices and asks nothing it has stored. `xewe run` (what `./run.sh` calls) erases the flash
-first by default, so its board starts with a first boot (`--keep-nvs` keeps NVS). A board with
-erased NVS stops at `Name your device`; then, in the sketch's declaration order, each module that
-can be disabled asks `Would you like to enable <Name> module?` and an enabled module runs its own
-setup (Wi-Fi: the network list and password; Time: whether the detected time is right; a template
-module may ask its own values); then `Initial Setup Complete` and a restart. Only selected modules
-are in the image: with `selected = []` there is no Wi-Fi or Time prompt at all (setup, build and
-run print a `warning:` line). `xewe provision` resets the board and answers those prompts:
-
-```sh
-build/tools/.venv/bin/python -m xewe provision                # settings from the dotenv file
-build/tools/.venv/bin/python -m xewe provision --port /dev/ttyACM0
-```
-
-Values come from flags, then the environment (`XEWE_DEVICE_NAME`, `XEWE_WIFI_SSID`,
-`XEWE_WIFI_PASSWORD`, `XEWE_TIMEZONE`, `XEWE_PROVISION_MODULES`), then the dotenv file (next
-section), then defaults (name from `xewe.toml`, all modules, accept the detected timezone). The
-password has no flag and is printed as `********`. A prompt the tool has no value for gets the
-prompt's default instead of failing, and each such auto-answer is logged: the "enable?" question
-of a module not in `XEWE_PROVISION_MODULES`/`--modules` is answered `n`, any other unknown prompt
-`n` at `(y/n) > ` and Enter at `> `.
-
-A board whose earlier provisioning stopped part-way keeps what it stored and starts at a later
-prompt after the reset, such as the Wi-Fi network list; the tool answers whatever prompt comes
-first. The SSID is picked by its number in the list; an SSID not in the scan gets one rescan
-(`-2`), then is entered as a custom SSID (`-3`). `! Invalid number` is answered again. One empty
-"nudge" line is sent when no prompt appears within 10 s of the reset, never after the first
-prompt. Exit 0 when provisioned or already provisioned, 2 for missing or bad settings (before the
-port is touched), 1 when the board stops answering as expected, 4 without a board.
-
-## Credentials and settings: the dotenv file
-
-Credentials and per-bench settings live in a dotenv file named `.env` that is never committed
-(git-ignored here and in the template). You create it; nothing writes it. `./setup.sh` prints one
-line naming where to put it and the provisioning keys when it finds none. Put it in the tools
-checkout to share it between projects, or in the project to override that one: a project file wins
-as a whole, so an empty or partial one hides the tools checkout's keys. The first provision needs
-`XEWE_WIFI_SSID` and `XEWE_WIFI_PASSWORD` when the wifi module is enabled. Which file is used, first
-found wins:
-
-1. `--env FILE` (`xewe provision --from FILE` is an alias), else the `XEWE_ENV` variable (must
-   exist; exit 2 otherwise);
-2. `.env` in the project directory (where `xewe.toml` is);
-3. `.env` in the xewe-os-tools source checkout: the `local:<path>` source that `./setup.sh`
-   recorded for tools in `build/config/build_config.toml` (`XEWE_TOOLS_SOURCE`), else the
-   checkout this package is installed from (an install from a path).
-
-No file is fine. Keys: `XEWE_DEVICE_NAME`, `XEWE_WIFI_SSID`, `XEWE_WIFI_PASSWORD`, `XEWE_TIMEZONE`,
-`XEWE_PROVISION_MODULES` (provision), `XEWE_TEST_BUTTONS_PIN`, `XEWE_TEST_PINS_ADC_PIN` (module
-tests), `XEWE_TEST_DEFINES` (the defines `xewe test` builds and flashes with), `XEWE_PORT`, `XEWE_CHIP` (board selection). Format: `KEY=VALUE`, `#` comments, blank
-lines, optional `export ` prefix, optional single or double quotes, no interpolation; an empty
-value counts as unset. Variables already in the environment win over the file, flags win over both.
-
-`xewe provision`, `xewe test` (and the pytest plugin, so module tests see the pins without
-exports), `xewe serial`, `xewe flash`, `xewe run` and `xewe boards` read it. The tools log only
-`loaded N keys from <path>`, never a value; the Wi-Fi password is masked as `********` in all
-output, and the tools' own lines show the SSID as its first character and `***` (the board's own
-lines are left as it printed them).
-
-## Without a board
-
-Every hardware command still compiles, then prints
-
-```
-compiled, not run: no board attached (c3, build/builds/c3/out/2.0.15-c3-xewe-os.bin)
-```
-
-and exits 0. `xewe test` runs unit tests and reports board tests as "compiled, not run".
-`--require-board` (or `XEWE_REQUIRE_BOARD=1`) turns this into exit 4 (`xewe test` too).
-
-`--no-board` (or `XEWE_NO_BOARD=1`) is the hard switch for machines that must never touch a
-board: no port is listed, probed or opened. `flash`/`run` build and then exit 4, `serial`,
-`provision` and `boards` exit 4, all with `board access disabled (--no-board / XEWE_NO_BOARD)`;
-`xewe test` reports board tests as "compiled, not run" and exits 0. Agents in compile-only mode
-must set `XEWE_NO_BOARD=1`.
-
-## Releasing
-
-Maintainers only. Tags are `X.Y.Z` with no `v` (the older `v0.1.0` and `v0.1.1` stay as they are).
-A release is prepare, commit, tag: the prepare run tests the tree and writes the release card
-([doc/spec.md](doc/spec.md) §11 and §14), the owner commits it, the tag run publishes it:
-
-```sh
-scripts/release.sh --prepare 3.1.0 --dry-run   # the stage plan and every command; changes nothing
-scripts/release.sh --prepare 3.1.0   # versions, then the checks, then releases/3.1.0/release_card.md; no git change
-# first time: it writes a releases/3.1.0/notes.txt skeleton and stops (exit 2); fill it, delete the marker line, run again
-# a step failed: fix it, then scripts/release.sh --prepare 3.1.0 --resume (re-runs only what is not green)
-# commit what it lists as "prepare 3.1.0" and push main; ci.yml checks the card against its own pytest run
-scripts/release.sh 3.1.0 --dry-run   # preflight, card verify and HEAD's CI state; changes nothing
-scripts/release.sh 3.1.0             # verify, CI gate, tag, GitHub Release with release_card.md
-```
-
-`--prepare` refuses a detached HEAD, a merge or rebase in progress, conflicted paths and any change
-outside the version lines and `releases/<version>/`. It runs, each recorded by `xewe release-card
-record` into the gitignored `releases/<version>/logs/`: per Python of ci.yml's matrix that is
-installed here, a venv with the tree installed (`pip install .`), `pytest` (JUnit), `pyflakes` and
-`mypy`; then `xewe format --check`, `xewe brand-lint .` and `actionlint`. The card is rendered from
-that run and `notes.txt`; there is no hand-written test card. The version locations are
-`pyproject.toml`, `src/xewe/__init__.py`, `DEFAULT_TOOLS_REF` in `src/xewe/env/pins.py` and the
-examples in `doc/spec.md`, `doc/ci.md` and this file (`VERSION_LOCATIONS` in the script).
-
-The tag run has five numbered stages: 1 preflight (version `X.Y.Z`; on `main`, clean and level
-with `origin/main` after a fetch; the tag free here and on origin; `notes.txt` and
-`release_card.md` committed; every version location says the version, or it lists the ones that
-do not; `gh` logged in); 2 `xewe release-card verify` (the card is as rendered, HEAD's clean tree
-is the tested tree, the local logs are present); 3 waits for the `ci` workflow on HEAD to pass,
-including its card check; 4 tags HEAD `<version>` (annotated), pushes the tag and creates the
-GitHub Release from `notes.txt` with `release_card.md` as its only asset; 5 prints how consumers
-pick it up:
+A project pins the tools in its `xewe.toml`; its `./setup.sh` installs them into `build/tools/`:
 
 ```toml
 [tools]
@@ -214,15 +14,27 @@ repo = "https://github.com/xewe-labs/xewe-os-tools"
 ref = "3.1.0"   # the tools tag
 ```
 
-and workflow callers `uses: xewe-labs/xewe-os-tools/.github/workflows/xewe-build.yml@3.1.0`.
+Workflow callers pin the same tag:
+`uses: xewe-labs/xewe-os-tools/.github/workflows/xewe-build.yml@3.1.0`.
 
-Options: `--ci-timeout <min>` (default 30) bounds the CI wait; `--skip-ci` skips it, for
-emergencies only, with a loud warning. If the tag exists but the GitHub Release does not, the same
-command only creates the release from the tagged commit's `notes.txt` and `release_card.md`
-(pushing the tag first if origin lacks it), provided the tagged commit's files say the version
-(otherwise it lists the stale locations); the branch, clean-tree, card and CI checks are skipped
-then. Exit codes: 0 done, 1 a refusal or a failed check, 2 `notes.txt` still to fill.
+## Documentation
+
+| What | Where |
+|---|---|
+| Commands, flags, exit codes | [src/xewe/README.md](src/xewe/README.md) |
+| [Settings](src/xewe/env/README.md): the dotenv file and the [dotenv keys](src/xewe/env/README.md#keys), setup, doctor, pins | [src/xewe/env/README.md](src/xewe/env/README.md) |
+| Serial, board resets, provision | [src/xewe/board/README.md](src/xewe/board/README.md) |
+| Build | [src/xewe/build/README.md](src/xewe/build/README.md) |
+| Modules | [src/xewe/modules/README.md](src/xewe/modules/README.md) |
+| The test runner | [src/xewe/testing/README.md](src/xewe/testing/README.md) |
+| Releasing the tools | [scripts/README.md](scripts/README.md) |
+| What a release folder holds | [releases/README.md](releases/README.md) |
+| CI and the reusable workflows | [doc/ci.md](doc/ci.md), [.github/workflows/README.md](.github/workflows/README.md) |
+| The full specification | [doc/spec.md](doc/spec.md) |
+| Web UI export | [doc/webui.md](doc/webui.md) |
+| Self-tests | [tests/README.md](tests/README.md) |
+| All of `doc/` | [doc/README.md](doc/README.md) |
 
 ## License
 
-GPL-3.0-only (see `LICENSE.txt`).
+GPL-3.0-only (see [LICENSE.txt](LICENSE.txt)).
