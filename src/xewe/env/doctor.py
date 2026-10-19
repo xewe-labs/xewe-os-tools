@@ -14,8 +14,6 @@ try:
 except ImportError:  # Windows
     grp = None  # type: ignore[assignment]
 
-from serial.tools import list_ports
-
 from xewe.board import boards
 from xewe.build import compile as build
 from xewe.env import arduino, config, esptool, pins
@@ -151,8 +149,8 @@ def checks(p: Paths, lock: Lock) -> list[Check]:
     out.append(Check(OK if free >= pins.MIN_FREE_DISK_BYTES else WARN, "disk", f"{free / 1024**3:.1f} GB free"))
     out.append(_serial_permissions())
 
-    ports = [i for i in list_ports.comports() if i.vid is not None and boards.is_known(f"{i.vid:04x}", f"{i.pid:04x}")]
-    out.append(Check(OK, "boards", ", ".join(i.device for i in ports) if ports else NO_BOARD))
+    ports = [b.port for b in boards.listed_boards() if boards.is_known(b.vid, b.pid)]
+    out.append(Check(OK, "boards", ", ".join(ports) if ports else NO_BOARD))
     if verbose() and cli_version is not None:
         proc = arduino.run([str(cli), "board", "list", "--format", "json"], env_vars)
         log.debug("arduino-cli board list (cross-check):\n%s", proc.stdout.strip())

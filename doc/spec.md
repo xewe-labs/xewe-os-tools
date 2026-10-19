@@ -357,7 +357,7 @@ selected = ["wifi", "web-interface"]   # dependencies are added at generate time
 
 [tools]
 repo = "https://github.com/xewe-labs/xewe-os-tools"
-ref = "3.0.0"
+ref = "3.1.0"
 
 [libraries]             # extra Arduino libraries, cloned into build/libraries/<name>
 ArduinoJson = { repo = "https://github.com/bblanchon/ArduinoJson", ref = "v7.4.3" }
