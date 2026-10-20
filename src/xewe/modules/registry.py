@@ -347,41 +347,34 @@ SECTIONS = (SECTION_RUNTIME, SECTION_FIRST_BOOT, SECTION_CONSTANTS)
 """The section marker lines of a module (or core) ``Config.h``, in their order."""
 CORE_SLUG = "core"
 """Slug of the core's block in the project ``Config.h``."""
-_IFNDEF_RE = re.compile(r"^\s*#\s*ifndef\s+(\w+)\s*$")
-_DEFINE_RE = re.compile(r"^\s*#\s*define\s+(\w+)(?:\s+(.*?))?\s*$")
+_IFNDEF_RE = re.compile(r"^\s*#\s*ifndef\s+\w+\s*$")
+_COND_RE = re.compile(r"^\s*#\s*if(?:n?def)?\b")
 _ENDIF_RE = re.compile(r"^\s*#\s*endif\b")
+_PROMPT_RE = re.compile(r"^\s*#\s*define\s+\w+_PROMPT\s+1\s*$")
 
 
-def _comment_first_boot(lines: list[str]) -> list[str]:
-    """``lines`` with each ``#ifndef N`` / ``#define N v`` / ``#define N_PROMPT 1`` / ``#endif`` group
-    of the first-boot section turned into ``// #define N v`` (the fallback guard and ``N_PROMPT``
-    dropped); the comment lines and the other sections are kept as they are."""
+def _comment_out_entries(lines: list[str]) -> list[str]:
+    """``lines`` with every entry turned into its comment line plus its definition commented out:
+    the outer ``#ifndef N`` and its matching ``#endif`` and any ``#define N_PROMPT 1`` are dropped,
+    every other directive line of the group (``#define``, a chip ``#if`` / ``#elif`` / ``#else`` /
+    ``#endif``) gets a ``// `` prefix. Section markers, comment lines and blank lines stay."""
     out: list[str] = []
-    section = ""
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        if line.strip() in SECTIONS:
-            section = line.strip()
-        guard = _IFNDEF_RE.match(line) if section == SECTION_FIRST_BOOT else None
-        if guard is None:
+    depth = 0  # open conditionals inside the current entry, its outer #ifndef included
+    for line in lines:
+        if not line.strip() or line.lstrip().startswith("//"):
             out.append(line)
-            i += 1
+        elif depth == 0 and _IFNDEF_RE.match(line):
+            depth = 1
+        elif depth and _ENDIF_RE.match(line):
+            depth -= 1
+            if depth:
+                out.append(f"// {line}")
+        elif _PROMPT_RE.match(line):
             continue
-        name = guard[1]
-        j = i + 1
-        value: str | None = None
-        while j < len(lines) and not _ENDIF_RE.match(lines[j]):
-            define = _DEFINE_RE.match(lines[j])
-            if define and define[1] == name:
-                value = define[2] or ""
-            j += 1
-        if j == len(lines):  # no #endif: not a group, keep the rest as it is
-            out += lines[i:]
-            break
-        if value is not None:
-            out.append(f"// #define {name} {value}".rstrip())
-        i = j + 1
+        else:
+            if depth and _COND_RE.match(line):
+                depth += 1
+            out.append(f"// {line}")
     return out
 
 
@@ -393,13 +386,15 @@ def config_block(module: Module, text: str) -> str:
 def config_block_for(slug: str, what: str, text: str) -> str:
     """The markers around a module's (or the core's) ``Config.h``. With section markers (the three
     ``SECTIONS``) the block starts at the first marker, the runtime-default and compile-time groups
-    are copied as they are and each first-boot group becomes ``// #define N v``
-    (``_comment_first_boot``). Without them the file is copied without its header (everything up to
+    are copied as the comment line plus the definition commented out
+    (``_comment_out_entries``), so nothing in the block is active. Without them the file is copied without its header (everything up to
     ``#pragma once``, else the SPDX lines)."""
     lines = text.splitlines()
     marked = [i for i, ln in enumerate(lines) if ln.strip() in SECTIONS]
+    header = f"// Values of {what}. Edit the numbers; keep this marker and the end marker."
     if marked:
-        lines = _comment_first_boot(lines[marked[0] :])
+        header = f"// Values of {what}. Uncomment a line to override; keep both markers."
+        lines = _comment_out_entries(lines[marked[0] :])
     elif "#pragma once" in lines:
         lines = lines[lines.index("#pragma once") + 1 :]
     else:
@@ -409,11 +404,7 @@ def config_block_for(slug: str, what: str, text: str) -> str:
     while lines and not lines[-1].strip():
         lines.pop()
     body = "\n".join(lines)
-    return (
-        f"\n{CONFIG_MARK.format(slug=slug)}\n"
-        f"// Values of {what}. Edit the numbers; keep this marker and the end marker.\n"
-        f"{body}\n{CONFIG_END.format(slug=slug)}\n"
-    )
+    return f"\n{CONFIG_MARK.format(slug=slug)}\n{header}\n{body}\n{CONFIG_END.format(slug=slug)}\n"
 
 
 def core_config_h(p: Paths) -> Path | None:

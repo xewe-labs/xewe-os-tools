@@ -490,9 +490,7 @@ SECTIONED_CONFIG_H = """\
 SECTIONED_BLOCK_BODY = """\
 // ---- runtime defaults ----
 // Scan timeout, ms (1000..30000).
-#ifndef XEWE_WIFI_SCAN_MS
-#define XEWE_WIFI_SCAN_MS 5000
-#endif
+// #define XEWE_WIFI_SCAN_MS 5000
 
 // ---- first-boot values ----
 // Network name, text.
@@ -502,9 +500,7 @@ SECTIONED_BLOCK_BODY = """\
 
 // ---- compile-time constants ----
 // Debug output, 0 or 1.
-#ifndef XEWE_WIFI_DEBUG
-#define XEWE_WIFI_DEBUG 0
-#endif
+// #define XEWE_WIFI_DEBUG 0
 """
 
 
@@ -512,11 +508,54 @@ def test_config_block_comments_out_first_boot_values() -> None:
     module = modules.Module(Path("/x"), "wifi", {"slug": "wifi", "folder": "Wifi"})
     assert modules.config_block(module, SECTIONED_CONFIG_H) == (
         "\n// ---- wifi (xewe modules generate) ----\n"
-        "// Values of the wifi module. Edit the numbers; keep this marker and the end marker.\n"
+        "// Values of the wifi module. Uncomment a line to override; keep both markers.\n"
         f"{SECTIONED_BLOCK_BODY}// ---- end wifi ----\n"
     )
     block = modules.config_block(module, SECTIONED_CONFIG_H)
     assert "_PROMPT" not in block and "SPDX" not in block
+    assert "#ifndef" not in block and "#endif" not in block
+    assert all(ln.startswith("//") or not ln for ln in block.splitlines())  # nothing is active
+
+
+LED_CONFIG_H = """\
+#pragma once
+// ---- runtime defaults ----
+// ---- first-boot values ----
+// ---- compile-time constants ----
+
+// GPIO of the data line
+#ifndef XEWE_LED_PIN_DATA
+#if defined(XEWE_CHIP_C3)
+#define XEWE_LED_PIN_DATA 4
+#else
+#define XEWE_LED_PIN_DATA 48
+#endif
+#endif
+"""
+
+
+def test_config_block_comments_out_a_chip_conditional_entry() -> None:
+    module = modules.Module(Path("/x"), "led", {"slug": "led", "folder": "Led"})
+    assert modules.config_block(module, LED_CONFIG_H) == (
+        "\n// ---- led (xewe modules generate) ----\n"
+        "// Values of the led module. Uncomment a line to override; keep both markers.\n"
+        "// ---- runtime defaults ----\n// ---- first-boot values ----\n// ---- compile-time constants ----\n\n"
+        "// GPIO of the data line\n"
+        "// #if defined(XEWE_CHIP_C3)\n// #define XEWE_LED_PIN_DATA 4\n// #else\n"
+        "// #define XEWE_LED_PIN_DATA 48\n// #endif\n"
+        "// ---- end led ----\n"
+    )
+
+
+def test_config_block_with_empty_sections_keeps_the_markers() -> None:
+    module = modules.Module(Path("/x"), "empty", {"slug": "empty", "folder": "Empty"})
+    text = "#pragma once\n" + "\n".join(modules.SECTIONS) + "\n"
+    assert modules.config_block(module, text) == (
+        "\n// ---- empty (xewe modules generate) ----\n"
+        "// Values of the empty module. Uncomment a line to override; keep both markers.\n"
+        + "\n".join(modules.SECTIONS)
+        + "\n// ---- end empty ----\n"
+    )
 
 
 def test_generate_appends_the_core_block_first(
@@ -543,8 +582,8 @@ def test_generate_appends_the_core_block_first(
         == PROJECT_CONFIG_H
         + (
             "\n// ---- core (xewe modules generate) ----\n"
-            "// Values of the core. Edit the numbers; keep this marker and the end marker.\n"
-            "// ---- runtime defaults ----\n// Baud.\n#ifndef XEWE_CORE_SERIAL_BAUD\n#define XEWE_CORE_SERIAL_BAUD 115200\n#endif\n"
+            "// Values of the core. Uncomment a line to override; keep both markers.\n"
+            "// ---- runtime defaults ----\n// Baud.\n// #define XEWE_CORE_SERIAL_BAUD 115200\n"
             '// ---- first-boot values ----\n// Device name.\n// #define XEWE_CORE_DEVICE_NAME "xewe"\n'
             "// ---- compile-time constants ----\n// ---- end core ----\n"
         )

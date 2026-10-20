@@ -1123,17 +1123,20 @@ everything after the first `=`.
    ```c
 
    // ---- wifi (xewe modules generate) ----
-   // Values of the wifi module. Edit the numbers; keep this marker and the end marker.
+   // Values of the wifi module. Uncomment a line to override; keep both markers.
    <the module's Config.h from its first section marker on>
    // ---- end wifi ----
    ```
-   (the core block reads `// Values of the core.`). In the copy the section marker lines stay,
-   runtime-default and compile-time groups are copied as they are, and each first-boot group
-   becomes its comment line plus `// #define NAME value` (the `#ifndef`, `#endif` and `NAME_PROMPT`
-   dropped), so the first boot still asks; uncommenting the line pre-answers the prompt, and
-   `#define NAME INJECTED_FROM_DOTENV` takes the value from the dotenv file at build time (§7). A
+   (the core block reads `// Values of the core. Uncomment ...`). The copy is a catalogue of commented-out
+   overrides: the section marker lines and each entry's comment line stay, the outer `#ifndef NAME`
+   and its `#endif` and any `NAME_PROMPT` line are dropped, and every other line of the entry gets a
+   `// ` prefix (`// #define NAME value`; a chip-conditional entry keeps its `#if` / `#else` /
+   `#endif` lines, each prefixed), so nothing in the block is active. Uncommenting a first-boot
+   line pre-answers its prompt, and `#define NAME INJECTED_FROM_DOTENV` takes the value from the
+   dotenv file at build time (§7). A
    `Config.h` without section markers is copied as it is, without its header (everything up to
-   `#pragma once`, else the SPDX lines).
+   `#pragma once`, else the SPDX lines), under the header line `// Values of the <slug> module.
+   Edit the numbers; keep this marker and the end marker.`
    A block is never removed or rewritten: the user's edits in it survive every generate, and a
    block whose module is no longer selected stays with one `note:` line (the core block never
    gets one). `Config.h` is never
