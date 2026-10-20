@@ -81,11 +81,11 @@ as `X-NN`. They are not part of the WAX reference.
   Tests that need the dotenv file name take it from `dotenv.FILENAME` and assert on content in
   Python.
 - **X-05 Docs are part of the change.** A new or changed command, flag, output line, exit code or
-  file goes into `doc/spec.md` (and the README table) in the same change.
+  file goes into `doc/spec.md` (and the command table in `src/xewe/README.md`) in the same change.
 - **X-06 Generated files stay generated.** `run.sh`, `src/Modules.h`, `build/**` and the
-  `Config.h` module blocks are written by the tools; their text lives in the code
+  `Config.h` core and module blocks are written by the tools; their text lives in the code
   (`runscript.py`, `registry.py`), never hand-copied into other repos.
 - **X-07 Exit codes are an interface.** 0 to 4 as in `doc/spec.md` §3; changing what a command
-  returns is announced in the README.
+  returns is announced in `src/xewe/README.md`.
 - **X-08 Comments describe the code.** A comment says what the code does or why. No agent or
   session names, dates, decision ids, phase names or "used to" history.
