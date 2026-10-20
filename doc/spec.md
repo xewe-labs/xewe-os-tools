@@ -1106,37 +1106,50 @@ everything after the first `=`.
    and one for the core, the names, the sections, the override ladder, the dotenv sentinel) is
    described in `doc/config.md` of xewe-os-core; this step is the tools' part of it. Defines are
    named `XEWE_<SLUG>_<VAR>` (slug upper case, `-` as `_`; the core is `CORE`). A module's
-   `src/<Folder>/Config.h` (`Module.config_h`) is pure preprocessor; each value is a comment line
-   and an `#ifndef NAME` / `#define NAME value` / `#endif` group, in three sections, each opened by
-   its marker line, in this order:
+   `src/<Folder>/Config.h` (`Module.config_h`) is pure preprocessor. Every text line is a
+   single-line block comment `/* ... */`; `//` appears only in the three SPDX header lines. It has
+   two section markers, in this order:
    ```c
-   // ---- runtime defaults ----
-   // ---- first-boot values ----
-   // ---- compile-time constants ----
+   /* ---- default runtime values ---- */
+   /* ---- compile time defined constants ---- */
    ```
-   A first-boot group also carries `#define NAME_PROMPT 1` inside its `#ifndef`.
+   and each entry is one `/* ... */` comment line above an `#ifndef NAME` group holding
+   `#define NAME value` (a chip-conditional group nests `#if` / `#elif` / `#else` / `#endif`; a
+   value the first boot asks for also holds `#define NAME_PROMPT 1`).
 
    First the core: when `build/libraries/XeWeCore/src/XeWeCore/Config.h` exists and the project's
-   `Config.h` has no `// ---- core (xewe modules generate) ----` line, its block is appended. Then,
-   for every module of the resolved order that has a `Config.h`, look for the marker line
-   `// ---- <slug> (xewe modules generate) ----`. Present: leave the file alone. Absent: append
+   `Config.h` has no `/* ---- core (xewe modules generate) ---- */` line, its block is appended.
+   Then, for every module of the resolved order that has a `Config.h`, look for the marker line
+   `/* ---- <slug> (xewe modules generate) ---- */`. A project written by an earlier version
+   holds the `//` form of the markers (`// ---- <slug> (xewe modules generate) ----`, `// ---- end
+   <slug> ----`); both forms count as present. Present: leave the file alone. Absent: append
    ```c
 
-   // ---- wifi (xewe modules generate) ----
-   // Values of the wifi module. Uncomment a line to override; keep both markers.
-   <the module's Config.h from its first section marker on>
-   // ---- end wifi ----
+   /* ---- wifi (xewe modules generate) ---- */
+   /* Values of the wifi module. Uncomment a line to override; keep both markers. */
+   <the module's Config.h from its first section marker on, as below>
+   /* ---- end wifi ---- */
    ```
-   (the core block reads `// Values of the core. Uncomment ...`). The copy is a catalogue of commented-out
-   overrides: the section marker lines and each entry's comment line stay, the outer `#ifndef NAME`
-   and its `#endif` and any `NAME_PROMPT` line are dropped, and every other line of the entry gets a
-   `// ` prefix (`// #define NAME value`; a chip-conditional entry keeps its `#if` / `#else` /
-   `#endif` lines, each prefixed), so nothing in the block is active. Uncommenting a first-boot
-   line pre-answers its prompt, and `#define NAME INJECTED_FROM_DOTENV` takes the value from the
-   dotenv file at build time (§7). A
-   `Config.h` without section markers is copied as it is, without its header (everything up to
-   `#pragma once`, else the SPDX lines), under the header line `// Values of the <slug> module.
-   Edit the numbers; keep this marker and the end marker.`
+   (the core block reads `/* Values of the core. Uncomment ... */`). The copy is a catalogue of
+   commented-out overrides:
+   - A section marker is recognised by the pattern `/* ---- <text> ---- */` (a file not yet
+     converted: `// ---- <text> ----`) and copied as `/* ---- <text> ---- */`; any number of
+     sections, in the order found, an empty section included. Everything before the first marker is
+     dropped.
+   - The comment line above an entry is copied as it is when it is a `/* ... */` line, and
+     converted to `/* ... */` when it is a `// ...` line; a comment line longer than 100 columns (the
+     column limit of `xewe format`) is split at spaces into several `/* ... */` lines; blank lines stay.
+   - The outer `#ifndef NAME` and its `#endif` and any `#define NAME_PROMPT 1` line are dropped;
+     every other directive line gets a `// ` prefix (`// #define NAME value`; a chip-conditional
+     entry keeps its `#if` / `#elif` / `#else` / `#endif` lines, each prefixed), so nothing in the
+     block is active.
+
+   Uncommenting a first-boot line pre-answers its prompt, and `#define NAME INJECTED_FROM_DOTENV`
+   takes the value from the dotenv file at build time (§7). A `Config.h` without any section marker
+   is copied as it is, without its header (everything up to `#pragma once`, else the SPDX lines),
+   between `/* ---- <slug> (xewe modules generate) ---- */` and `/* ---- end <slug> ---- */`, under
+   the header line `// Values of the <slug> module. Edit the numbers; keep this marker and the end
+   marker.`
    A block is never removed or rewritten: the user's edits in it survive every generate, and a
    block whose module is no longer selected stays with one `note:` line (the core block never
    gets one). `Config.h` is never
@@ -1310,7 +1323,7 @@ shared fixtures and fakes (doc/tests.md); `pytest tests/<area>` runs one area.
 | `build/test_brandlint.py` | each banned spelling fails with the exact stderr lines, allowed spellings are clean, skipped directories (caches and `*.egg-info` included), in a git work tree only the files git does not ignore, outside one a directory walk, binary and non-UTF-8 files, `naming.md` in any case, the generated `release_card.md` and its draft, dotenv files, several `DIR`s, a missing `DIR` exits 2, no project needed, the tools repo itself is clean |
 | `build/test_webui.py` | export of `fixtures/webui/fan-dashboard/` byte-equal to the golden `fan-dashboard_export/`, the timestamped folder name, `url_for` rewrite (both quote styles), routes, array names and MIME types, only `.html`/`.css`/`.js` under `templates/` and `static/` (binary, other suffixes and folders skipped; non-UTF-8 warned), duplicate array name exit 1, missing folder exit 2, the prompt printed with placeholder Wi-Fi only |
 | `testing/test_plugin.py` | `pytester`: no board → "compiled, not run" summary and exit 0; `--require-board` → pytest 1, `xewe test` 4; faked board: one port open per session, boot banner wait (first-boot reboot, unprovisioned, timeout, board gone from USB at the boot reset → `disappeared from USB`); `xewe test --no-flash` writes no image; unit tests run; `--unit-only` runs only `unit` tests and builds nothing; board tests found under `modules/<slug>/tests/board/`; compile failure fails board tests; pins from the project `.env` reach `os.environ` (real environment wins); JUnit `user_properties` (§14) under xunit1 and xunit2, board id, image sha256 and banner match on a fake board, a module test's source node id; `xewe test --define` and `XEWE_TEST_DEFINES`: the flag reaches `build_chip` and `build.stamp`, a bad item is exit 2 with no build, a matching stamp is reused (no rebuild, image bytes unchanged) and other defines rebuild, precedence flag > environment > dotenv file, the define image is the one flashed, and with defines the JUnit `xewe_fw_sha256` equals the sha256 of the flashed image whether `compiled` reused or built it (§14); the prepare flow `record --kind flash -- xewe flash --define …` then `xewe test --define …` agrees on the image (no build, `xewe_fw_sha256` equals the step's `fw_sha256`) |
-| `modules/test_registry.py` | dependency order and cycle error against fixtures copied from the six real `module.properties`; generated `build/modules/` (`library.properties`, `XeWeModules.h`, `tests/<slug>/{board,unit}/`, `modules.lock`) and `src/Modules.h` golden, library version (tag / `0.0.0+<sha7>` / `0.0.0`), empty selection, `Config.h` blocks (first-boot groups commented out, verbatim copy without section markers, the core block first and once), legacy `src/modules/`, `build/modules-lib/` and `build/config/modules.lock` removal; every validator rule (tests layout included) has a failing fixture |
+| `modules/test_registry.py` | dependency order and cycle error against fixtures copied from the six real `module.properties`; generated `build/modules/` (`library.properties`, `XeWeModules.h`, `tests/<slug>/{board,unit}/`, `modules.lock`) and `src/Modules.h` golden, library version (tag / `0.0.0+<sha7>` / `0.0.0`), empty selection, `Config.h` blocks (block-comment and `//` sources, both marker forms detected, chip-conditional and empty sections, verbatim copy without section markers, the core block first and once), legacy `src/modules/`, `build/modules-lib/` and `build/config/modules.lock` removal; every validator rule (tests layout included) has a failing fixture |
 | `build/test_release.py` | an active `INJECTED_FROM_DOTENV` line refused (full run, `--chip`, `--assemble`), matrix parsing and typing, folder layout, `firmware_map.csv` rows and asset names (the product's 43-row matrix as a fixture, the default matrix), `--chip` runs + `--assemble` equal to one run and its refusals, `stage_assets` listing and checks (two rows with one asset name refused), version ≥ check, printed commands (tags without `v`, no `git add` of firmware), never calls git (but `status`/`rev-parse`), `meta.json` provenance (`*_commit` next to each ref, libraries, `-` when unknown); `xewe-release.yml`: the tag-to-version, matrix-chips (CSV quoting, chip lower-cased) and latest-flag (drafts excluded) steps run with bash (fake `gh`), job order and assets, the branch commit through Git LFS with `[skip ci]`; the `card` jobs find the card of the tree with `xewe release-card fingerprint --card --check` (a read-only fake `git`), with no second fingerprint implementation (only exit 1 with `is not the card's` skips a card; a card with no data block, a block that is not JSON or not on the last line, and any other failure fail the job; ci.yml's card job too), and run `verify --ci --unit-only`; the assemble job's card check runs before the rows are downloaded and assembled; the xewe-build.yml no-committed-firmware lint; `xewe release` without `--notes`: `xewe release` without `--notes`: stdin not a terminal (subprocess, `stdin=DEVNULL`) or `XEWE_NONINTERACTIVE=1` → exit 2 naming `--notes`, no editor, nothing written; a terminal opens `$EDITOR`; `--chip` refused the same way; `--assemble` keeps the chip runs' notes and is refused only when there are none |
 | `build/test_releasecard.py` | golden card (`fixtures/releasecard/golden_card.md`) byte for byte; JUnit fixtures (pass, hardware pass, compile-only pass, compiled-not-run skip, gated skip, xfail, fail, error, strict xpass) and core `ok  `/`FAIL` lines; redaction (dotenv file, environment, `$HOME` as a whole path part; XML-, JSON- and URL-escaped forms; JUnit and meta.json copies value by value, a short SSID never rewriting markup or ids); fingerprint stable and changed (content, mode, added, renamed, deleted, a symlink to a folder, a submodule commit; `*` matching one path part; `releases/` and ignored files left out; read-only git on this checkout); `init` refusing a folder that is not a previous run folder (the release folder, the root, a tracked folder, another version's run) and deleting nothing; `record` mapping the command's exit to 0/1/3 and resolving the root from a subfolder, `unit`/`board` without results exit 2; every refusal rule (stale run id, step before `run.json`, changed log, tree changed, missing kind, failed step and tests, JUnit not written, a test step with no rows, missing hardware chip, fw sha mismatch, banner mismatch and unknown, a board record of another chip, notes with a data block, a hardware pass without a board record) with the draft; `--tests` module card; `--resume` re-run selection and retries; `verify` (clean tree, renames, logs, `testcard.md`, a card edited after render in its body or data block, the data block read from the last line only, a bad last line exit 2) and the CI comparison (block, allow, warn, case-sensitive env gates, size tolerance, `--unit-only` with CI board rows, a module card's `only` scope, `--meta-dir`/`--size-tolerance` checks, the card's chips/hardware/require); the `fingerprint` action (`--card --check`, the card's exclude list) |
 | `test_cli.py` | every subcommand's `--help` (`brand-lint` and `release-card` included), exit-code table, `--verbose` |

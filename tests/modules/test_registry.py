@@ -67,13 +67,13 @@ PINS_CONFIG_H = """\
 #endif
 """
 PINS_BLOCK = """
-// ---- pins (xewe modules generate) ----
+/* ---- pins (xewe modules generate) ---- */
 // Values of the pins module. Edit the numbers; keep this marker and the end marker.
 // Claim slots.
 #ifndef XEWE_PINS_CLAIMS_MAX
 #define XEWE_PINS_CLAIMS_MAX 8
 #endif
-// ---- end pins ----
+/* ---- end pins ---- */
 """
 PROJECT_CONFIG_H = "#pragma once\n#include <XeWeBuildInfo.h>\n"
 
@@ -164,9 +164,9 @@ def test_generate_appends_config_blocks(tmp_path: Path, checkout: Path, capsys: 
     modules.generate(p, Registry.load(checkout), ["pins", "buttons", "wifi"], "s", "r", "c")
     text = config_h.read_text()
     assert text == PROJECT_CONFIG_H + PINS_BLOCK + (
-        "\n// ---- wifi (xewe modules generate) ----\n"
+        "\n/* ---- wifi (xewe modules generate) ---- */\n"
         "// Values of the wifi module. Edit the numbers; keep this marker and the end marker.\n"
-        "#ifndef XEWE_WIFI_DEBUG\n#define XEWE_WIFI_DEBUG 0\n#endif\n// ---- end wifi ----\n"
+        "#ifndef XEWE_WIFI_DEBUG\n#define XEWE_WIFI_DEBUG 0\n#endif\n/* ---- end wifi ---- */\n"
     )
     assert "buttons" not in text  # a module without Config.h adds no block
     # a second generate is a no-op, byte for byte
@@ -197,9 +197,9 @@ def test_config_block_strips_the_header() -> None:
     text = "// SPDX-FileCopyrightText: x\n// SPDX-License-Identifier: y\n#ifndef A\n#define A 1\n#endif\n"
     module = modules.Module(Path("/x"), "led", {"slug": "led", "folder": "Led"})
     assert modules.config_block(module, text) == (
-        "\n// ---- led (xewe modules generate) ----\n"
+        "\n/* ---- led (xewe modules generate) ---- */\n"
         "// Values of the led module. Edit the numbers; keep this marker and the end marker.\n"
-        "#ifndef A\n#define A 1\n#endif\n// ---- end led ----\n"
+        "#ifndef A\n#define A 1\n#endif\n/* ---- end led ---- */\n"
     )
 
 
@@ -406,7 +406,7 @@ def test_cli_list_select_generate(project: Paths, capsys: pytest.CaptureFixture[
     _module_config(project.root.parent / "modules-src", "wifi")
     assert main(["modules", "generate"]) == 0
     assert "modules: wifi, time, scheduler  (build/modules, src/Modules.h, Config.h)" in capsys.readouterr().out
-    assert "// ---- wifi (xewe modules generate) ----" in (project.root / "Config.h").read_text()
+    assert "/* ---- wifi (xewe modules generate) ---- */" in (project.root / "Config.h").read_text()
     assert main(["modules", "generate"]) == 0
     assert "(build/modules, src/Modules.h)" in capsys.readouterr().out
     assert main(["modules", "select", "nope"]) == 2
@@ -461,72 +461,129 @@ SECTIONED_CONFIG_H = """\
 // SPDX-FileCopyrightText: 2026 Someone
 // SPDX-License-Identifier: GPL-3.0-only
 // xewe-os-modules/modules/wifi/src/Wifi/Config.h
-// Values of the wifi module.
+#pragma once
 
-// ---- runtime defaults ----
-// Scan timeout, ms (1000..30000).
+/* ---- default runtime values ---- */
+
+/* Scan timeout, ms (1000..30000) */
 #ifndef XEWE_WIFI_SCAN_MS
 #define XEWE_WIFI_SCAN_MS 5000
 #endif
 
-// ---- first-boot values ----
-// Network name, text.
+/* Network name, text; asked at first boot */
 #ifndef XEWE_WIFI_SSID
 #define XEWE_WIFI_SSID ""
 #define XEWE_WIFI_SSID_PROMPT 1
 #endif
-// Password, text.
-#ifndef XEWE_WIFI_PSW
-#define XEWE_WIFI_PSW ""
-#define XEWE_WIFI_PSW_PROMPT 1
-#endif
 
-// ---- compile-time constants ----
-// Debug output, 0 or 1.
+/* ---- compile time defined constants ---- */
+
+/* Debug output, 0 or 1 */
 #ifndef XEWE_WIFI_DEBUG
 #define XEWE_WIFI_DEBUG 0
 #endif
 """
 SECTIONED_BLOCK_BODY = """\
-// ---- runtime defaults ----
-// Scan timeout, ms (1000..30000).
+/* ---- default runtime values ---- */
+
+/* Scan timeout, ms (1000..30000) */
 // #define XEWE_WIFI_SCAN_MS 5000
 
-// ---- first-boot values ----
-// Network name, text.
+/* Network name, text; asked at first boot */
 // #define XEWE_WIFI_SSID ""
-// Password, text.
-// #define XEWE_WIFI_PSW ""
 
-// ---- compile-time constants ----
-// Debug output, 0 or 1.
+/* ---- compile time defined constants ---- */
+
+/* Debug output, 0 or 1 */
 // #define XEWE_WIFI_DEBUG 0
 """
+WIFI_BLOCK = (
+    "\n/* ---- wifi (xewe modules generate) ---- */\n"
+    "/* Values of the wifi module. Uncomment a line to override; keep both markers. */\n"
+    f"{SECTIONED_BLOCK_BODY}/* ---- end wifi ---- */\n"
+)
+WIFI = modules.Module(Path("/x"), "wifi", {"slug": "wifi", "folder": "Wifi"})
 
 
-def test_config_block_comments_out_first_boot_values() -> None:
-    module = modules.Module(Path("/x"), "wifi", {"slug": "wifi", "folder": "Wifi"})
-    assert modules.config_block(module, SECTIONED_CONFIG_H) == (
-        "\n// ---- wifi (xewe modules generate) ----\n"
-        "// Values of the wifi module. Uncomment a line to override; keep both markers.\n"
-        f"{SECTIONED_BLOCK_BODY}// ---- end wifi ----\n"
-    )
-    block = modules.config_block(module, SECTIONED_CONFIG_H)
+def test_config_block_copies_a_block_comment_source() -> None:
+    block = modules.config_block(WIFI, SECTIONED_CONFIG_H)
+    assert block == WIFI_BLOCK
     assert "_PROMPT" not in block and "SPDX" not in block
     assert "#ifndef" not in block and "#endif" not in block
-    assert all(ln.startswith("//") or not ln for ln in block.splitlines())  # nothing is active
+    assert all(ln.startswith(("/*", "//")) or not ln for ln in block.splitlines())  # nothing is active
+
+
+def test_config_block_converts_a_line_comment_source() -> None:
+    old = (
+        "// SPDX-License-Identifier: GPL-3.0-only\n#pragma once\n"
+        "// ---- runtime defaults ----\n// Scan timeout, ms (1000..30000).\n"
+        "#ifndef XEWE_WIFI_SCAN_MS\n#define XEWE_WIFI_SCAN_MS 5000\n#endif\n"
+        "// ---- first-boot values ----\n/* Network name */\n"
+        '#ifndef XEWE_WIFI_SSID\n#define XEWE_WIFI_SSID ""\n#define XEWE_WIFI_SSID_PROMPT 1\n#endif\n'
+        "// ---- compile-time constants ----\n"
+    )
+    assert modules.config_block(WIFI, old) == (
+        "\n/* ---- wifi (xewe modules generate) ---- */\n"
+        "/* Values of the wifi module. Uncomment a line to override; keep both markers. */\n"
+        "/* ---- runtime defaults ---- */\n/* Scan timeout, ms (1000..30000). */\n// #define XEWE_WIFI_SCAN_MS 5000\n"
+        '/* ---- first-boot values ---- */\n/* Network name */\n// #define XEWE_WIFI_SSID ""\n'
+        "/* ---- compile-time constants ---- */\n/* ---- end wifi ---- */\n"
+    )
+
+
+def test_config_block_splits_a_comment_longer_than_the_column_limit() -> None:
+    words = " ".join(f"word{i:02d}" for i in range(20))
+    for src in (f"// {words}", f"/* {words} */"):
+        text = f"/* ---- a ---- */\n{src}\n#ifndef X\n#define X 1\n#endif\n"
+        lines = modules.config_block(WIFI, text).splitlines()
+        comments = [ln for ln in lines if ln.startswith("/* word")]
+        assert len(comments) == 2 and all(len(ln) <= modules.COLUMN_LIMIT for ln in comments)
+        assert " ".join(ln[3:-3] for ln in comments) == words
+        assert "// #define X 1" in lines
+
+
+@pytest.mark.parametrize(
+    "mark",
+    [
+        "/* ---- led (xewe modules generate) ---- */",
+        "// ---- led (xewe modules generate) ----",
+    ],
+)
+def test_fill_config_h_detects_both_marker_forms(tmp_path: Path, checkout: Path, mark: str) -> None:
+    _module_config(checkout, "pins")
+    p = Paths(tmp_path / "proj")
+    p.root.mkdir()
+    existing = PROJECT_CONFIG_H + f"\n{mark}\n/* kept */\n"
+    (p.root / "Config.h").write_text(existing)
+    reg = Registry.load(checkout)
+    pins = reg.get("pins")
+    assert modules.CONFIG_MARK_RE.findall(existing) == ["led"]
+    assert modules.CONFIG_END_RE.findall("// ---- end led ----\n/* ---- end pins ---- */\n") == ["led", "pins"]
+    # a project that already holds the block of the module is left alone, in either form
+    pins_mark = mark.replace("led", "pins")
+    (p.root / "Config.h").write_text(existing + f"{pins_mark}\n")
+    assert modules.fill_config_h(p, [pins]) == []
+    assert (p.root / "Config.h").read_text() == existing + f"{pins_mark}\n"
 
 
 LED_CONFIG_H = """\
 #pragma once
-// ---- runtime defaults ----
-// ---- first-boot values ----
-// ---- compile-time constants ----
+/* ---- default runtime values ---- */
 
-// GPIO of the data line
+/* LED chipset id */
+#ifndef XEWE_LED_CHIP
+#define XEWE_LED_CHIP 0
+#define XEWE_LED_CHIP_PROMPT 1
+#endif
+
+/* ---- compile time defined constants ---- */
+
+/* GPIO of the data line */
 #ifndef XEWE_LED_PIN_DATA
 #if defined(XEWE_CHIP_C3)
 #define XEWE_LED_PIN_DATA 4
+#elif defined(XEWE_CHIP_C6)
+#define XEWE_LED_PIN_DATA 5
 #else
 #define XEWE_LED_PIN_DATA 48
 #endif
@@ -537,24 +594,26 @@ LED_CONFIG_H = """\
 def test_config_block_comments_out_a_chip_conditional_entry() -> None:
     module = modules.Module(Path("/x"), "led", {"slug": "led", "folder": "Led"})
     assert modules.config_block(module, LED_CONFIG_H) == (
-        "\n// ---- led (xewe modules generate) ----\n"
-        "// Values of the led module. Uncomment a line to override; keep both markers.\n"
-        "// ---- runtime defaults ----\n// ---- first-boot values ----\n// ---- compile-time constants ----\n\n"
-        "// GPIO of the data line\n"
-        "// #if defined(XEWE_CHIP_C3)\n// #define XEWE_LED_PIN_DATA 4\n// #else\n"
+        "\n/* ---- led (xewe modules generate) ---- */\n"
+        "/* Values of the led module. Uncomment a line to override; keep both markers. */\n"
+        "/* ---- default runtime values ---- */\n\n"
+        "/* LED chipset id */\n// #define XEWE_LED_CHIP 0\n\n"
+        "/* ---- compile time defined constants ---- */\n\n"
+        "/* GPIO of the data line */\n"
+        "// #if defined(XEWE_CHIP_C3)\n// #define XEWE_LED_PIN_DATA 4\n// #elif defined(XEWE_CHIP_C6)\n"
+        "// #define XEWE_LED_PIN_DATA 5\n// #else\n"
         "// #define XEWE_LED_PIN_DATA 48\n// #endif\n"
-        "// ---- end led ----\n"
+        "/* ---- end led ---- */\n"
     )
 
 
 def test_config_block_with_empty_sections_keeps_the_markers() -> None:
     module = modules.Module(Path("/x"), "empty", {"slug": "empty", "folder": "Empty"})
-    text = "#pragma once\n" + "\n".join(modules.SECTIONS) + "\n"
-    assert modules.config_block(module, text) == (
-        "\n// ---- empty (xewe modules generate) ----\n"
-        "// Values of the empty module. Uncomment a line to override; keep both markers.\n"
-        + "\n".join(modules.SECTIONS)
-        + "\n// ---- end empty ----\n"
+    marks = "/* ---- default runtime values ---- */\n\n/* ---- compile time defined constants ---- */"
+    assert modules.config_block(module, f"#pragma once\n{marks}\n") == (
+        "\n/* ---- empty (xewe modules generate) ---- */\n"
+        "/* Values of the empty module. Uncomment a line to override; keep both markers. */\n"
+        f"{marks}\n/* ---- end empty ---- */\n"
     )
 
 
@@ -570,10 +629,10 @@ def test_generate_appends_the_core_block_first(
     core.parent.mkdir(parents=True)
     core.write_text(
         "// SPDX-License-Identifier: GPL-3.0-only\n"
-        "// ---- runtime defaults ----\n// Baud.\n#ifndef XEWE_CORE_SERIAL_BAUD\n#define XEWE_CORE_SERIAL_BAUD 115200\n#endif\n"
-        "// ---- first-boot values ----\n// Device name.\n"
+        "/* ---- default runtime values ---- */\n/* Baud */\n#ifndef XEWE_CORE_SERIAL_BAUD\n#define XEWE_CORE_SERIAL_BAUD 115200\n#endif\n"
+        "/* Device name */\n"
         '#ifndef XEWE_CORE_DEVICE_NAME\n#define XEWE_CORE_DEVICE_NAME "xewe"\n#define XEWE_CORE_DEVICE_NAME_PROMPT 1\n#endif\n'
-        "// ---- compile-time constants ----\n"
+        "/* ---- compile time defined constants ---- */\n"
     )
     modules.generate(p, Registry.load(checkout), ["pins"], "s", "r", "c")
     text = config_h.read_text()
@@ -581,11 +640,11 @@ def test_generate_appends_the_core_block_first(
         text
         == PROJECT_CONFIG_H
         + (
-            "\n// ---- core (xewe modules generate) ----\n"
-            "// Values of the core. Uncomment a line to override; keep both markers.\n"
-            "// ---- runtime defaults ----\n// Baud.\n// #define XEWE_CORE_SERIAL_BAUD 115200\n"
-            '// ---- first-boot values ----\n// Device name.\n// #define XEWE_CORE_DEVICE_NAME "xewe"\n'
-            "// ---- compile-time constants ----\n// ---- end core ----\n"
+            "\n/* ---- core (xewe modules generate) ---- */\n"
+            "/* Values of the core. Uncomment a line to override; keep both markers. */\n"
+            "/* ---- default runtime values ---- */\n/* Baud */\n// #define XEWE_CORE_SERIAL_BAUD 115200\n"
+            '/* Device name */\n// #define XEWE_CORE_DEVICE_NAME "xewe"\n'
+            "/* ---- compile time defined constants ---- */\n/* ---- end core ---- */\n"
         )
         + PINS_BLOCK
     )

@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import textwrap
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -337,32 +338,66 @@ def render_modules_lock(order: list[Module], source: str, ref: str, commit: str)
     return "\n".join(lines) + "\n"
 
 
-CONFIG_MARK = "// ---- {slug} (xewe modules generate) ----"
-CONFIG_END = "// ---- end {slug} ----"
-CONFIG_MARK_RE = re.compile(r"^// ---- ([a-z0-9-]+) \(xewe modules generate\) ----$", re.M)
-SECTION_RUNTIME = "// ---- runtime defaults ----"
-SECTION_FIRST_BOOT = "// ---- first-boot values ----"
-SECTION_CONSTANTS = "// ---- compile-time constants ----"
-SECTIONS = (SECTION_RUNTIME, SECTION_FIRST_BOOT, SECTION_CONSTANTS)
-"""The section marker lines of a module (or core) ``Config.h``, in their order."""
+CONFIG_MARK = "/* ---- {slug} (xewe modules generate) ---- */"
+CONFIG_END = "/* ---- end {slug} ---- */"
+CONFIG_MARK_RE = re.compile(r"^(?://|/\*) ---- ([a-z0-9-]+) \(xewe modules generate\) ----(?: \*/)?[ \t]*$", re.M)
+"""A block's opening marker line, in the block-comment form and in the ``//`` form of earlier projects."""
+CONFIG_END_RE = re.compile(r"^(?://|/\*) ---- end ([a-z0-9-]+) ----(?: \*/)?[ \t]*$", re.M)
+"""A block's closing marker line, in both forms."""
+SECTION_MARK = "/* ---- {name} ---- */"
+_SECTION_RE = re.compile(r"^\s*(?:/\* ---- (.+?) ---- \*/|// ---- (.+?) ----)\s*$")
+"""A section marker line of a module (or core) ``Config.h``: ``/* ---- <text> ---- */``, or the ``//``
+form of a file not yet converted."""
 CORE_SLUG = "core"
 """Slug of the core's block in the project ``Config.h``."""
 _IFNDEF_RE = re.compile(r"^\s*#\s*ifndef\s+\w+\s*$")
 _COND_RE = re.compile(r"^\s*#\s*if(?:n?def)?\b")
 _ENDIF_RE = re.compile(r"^\s*#\s*endif\b")
 _PROMPT_RE = re.compile(r"^\s*#\s*define\s+\w+_PROMPT\s+1\s*$")
+_BLOCK_COMMENT_RE = re.compile(r"^\s*/\*.*\*/\s*$")
+
+
+def _section_name(line: str) -> str | None:
+    """The text of a section marker line, None for any other line."""
+    m = _SECTION_RE.match(line)
+    return (m.group(1) or m.group(2)) if m else None
+
+
+COLUMN_LIMIT = 100
+"""The column limit of the XeWe clang-format style; a longer comment line would be reflowed by ``xewe format``."""
+
+
+def _as_block_comment(line: str) -> list[str]:
+    """A ``// text`` line as ``/* text */``; a ``/* ... */`` line is kept. A line longer than
+    ``COLUMN_LIMIT`` is split at spaces into several one-line block comments."""
+    if _BLOCK_COMMENT_RE.match(line):
+        one = line.strip()
+        text = one[2:-2].strip()
+    else:
+        text = line.strip()[2:].strip().replace("*/", "* /")
+        one = f"/* {text} */" if text else "/* */"
+    if len(one) <= COLUMN_LIMIT:
+        return [one]
+    parts = textwrap.wrap(text, COLUMN_LIMIT - 6, break_long_words=False, break_on_hyphens=False)
+    return [f"/* {part} */" for part in parts]
 
 
 def _comment_out_entries(lines: list[str]) -> list[str]:
-    """``lines`` with every entry turned into its comment line plus its definition commented out:
-    the outer ``#ifndef N`` and its matching ``#endif`` and any ``#define N_PROMPT 1`` are dropped,
-    every other directive line of the group (``#define``, a chip ``#if`` / ``#elif`` / ``#else`` /
-    ``#endif``) gets a ``// `` prefix. Section markers, comment lines and blank lines stay."""
+    """``lines`` as a catalogue: section markers as ``/* ---- name ---- */``, each entry's comment line
+    as a ``/* ... */`` line, its definition commented out. The outer ``#ifndef N`` and its matching
+    ``#endif`` and any ``#define N_PROMPT 1`` are dropped, every other directive line of the group
+    (``#define``, a chip ``#if`` / ``#elif`` / ``#else`` / ``#endif``) gets a ``// `` prefix. Blank
+    lines stay."""
     out: list[str] = []
     depth = 0  # open conditionals inside the current entry, its outer #ifndef included
     for line in lines:
-        if not line.strip() or line.lstrip().startswith("//"):
+        name = _section_name(line)
+        if name is not None:
+            out.append(SECTION_MARK.format(name=name))
+        elif not line.strip():
             out.append(line)
+        elif line.lstrip().startswith(("//", "/*")):
+            out.extend(_as_block_comment(line))
         elif depth == 0 and _IFNDEF_RE.match(line):
             depth = 1
         elif depth and _ENDIF_RE.match(line):
@@ -384,16 +419,16 @@ def config_block(module: Module, text: str) -> str:
 
 
 def config_block_for(slug: str, what: str, text: str) -> str:
-    """The markers around a module's (or the core's) ``Config.h``. With section markers (the three
-    ``SECTIONS``) the block starts at the first marker, the runtime-default and compile-time groups
-    are copied as the comment line plus the definition commented out
-    (``_comment_out_entries``), so nothing in the block is active. Without them the file is copied without its header (everything up to
-    ``#pragma once``, else the SPDX lines)."""
+    """The markers around a module's (or the core's) ``Config.h``. With section markers
+    (``/* ---- <text> ---- */``, or the ``//`` form) the block starts at the first marker and every
+    section is copied as a catalogue (``_comment_out_entries``): comment lines as ``/* ... */``,
+    definitions commented out, so nothing in the block is active. Without them the file is copied
+    without its header (everything up to ``#pragma once``, else the SPDX lines)."""
     lines = text.splitlines()
-    marked = [i for i, ln in enumerate(lines) if ln.strip() in SECTIONS]
+    marked = [i for i, ln in enumerate(lines) if _section_name(ln) is not None]
     header = f"// Values of {what}. Edit the numbers; keep this marker and the end marker."
     if marked:
-        header = f"// Values of {what}. Uncomment a line to override; keep both markers."
+        header = f"/* Values of {what}. Uncomment a line to override; keep both markers. */"
         lines = _comment_out_entries(lines[marked[0] :])
     elif "#pragma once" in lines:
         lines = lines[lines.index("#pragma once") + 1 :]
