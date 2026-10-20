@@ -717,10 +717,10 @@ def test_resumed_board_quiet_before_first_prompt_gets_no_nudge_after_it(clock: F
 
 def test_resolve_precedence() -> None:
     env = {
-        "XEWE_DEVICE_NAME": "From Env",
+        "XEWE_CORE_DEVICE_NAME": "From Env",
         "XEWE_WIFI_SSID": "EnvNet",
-        "XEWE_WIFI_PASSWORD": "env pw",
-        "XEWE_TIMEZONE": "GMT-03:00",
+        "XEWE_WIFI_PSW": "env pw",
+        "XEWE_TIME_TZ_GMT_STR": "GMT-03:00",
         "XEWE_PROVISION_MODULES": "wifi,time",
     }
     s = resolve("default", env=env)
@@ -735,6 +735,21 @@ def test_resolve_precedence() -> None:
     assert (s.name, s.timezone, s.modules) == ("From Flag", "GMT+05:30", frozenset({"buttons", "web-interface"}))
     s = resolve("default", modules="none", env={})
     assert (s.name, s.modules, s.timezone) == ("default", frozenset(), None)
+
+
+def test_resolve_reads_the_define_names_only() -> None:
+    # the provisioning keys are the Config.h define names; the former names are not read
+    old = {
+        "XEWE_DEVICE_NAME": "Old",
+        "XEWE_WIFI_SSID": "Net",
+        "XEWE_WIFI_PASSWORD": "old pw",
+        "XEWE_TIMEZONE": "GMT+01:00",
+    }
+    with pytest.raises(provision.XeWeError) as exc:
+        resolve("default", env=old)
+    assert exc.value.code == 2 and "XEWE_WIFI_PSW is not set" in str(exc.value)
+    s = resolve("default", modules="none", env=old)
+    assert (s.name, s.timezone) == ("default", None)
 
 
 @pytest.mark.parametrize("tz", ["GMT+8", "UTC+01:00", "GMT+15:00", "GMT+14:30", "GMT-08:60"])
@@ -753,7 +768,7 @@ def test_cli_missing_password_exit_2_before_port(
     monkeypatch.setattr(boards, "select", no_select)
     monkeypatch.setenv("XEWE_WIFI_SSID", "HomeNet")
     assert main(["provision"]) == 2
-    assert "XEWE_WIFI_PASSWORD is not set" in caplog.text and "fill in the dotenv file" in caplog.text
+    assert "XEWE_WIFI_PSW is not set" in caplog.text and "fill in the dotenv file" in caplog.text
     assert main(["provision", "--modules", "pins", "--timezone", "GMT+8"]) == 2
 
 
@@ -781,8 +796,8 @@ def test_cli_settings_from_project_dotenv_without_flags(
 ) -> None:
     """Credentials only in <project>/.env: `xewe provision` with no flags (board auto-selected)."""
     (project.root / ".env").write_text(
-        f"XEWE_DEVICE_NAME='Kitchen Lights'\nXEWE_WIFI_SSID=\"XeWe Test Net\"\n"
-        f"export XEWE_WIFI_PASSWORD={PASSWORD}\nXEWE_PROVISION_MODULES=all\n"
+        f"XEWE_CORE_DEVICE_NAME='Kitchen Lights'\nXEWE_WIFI_SSID=\"XeWe Test Net\"\n"
+        f"export XEWE_WIFI_PSW={PASSWORD}\nXEWE_PROVISION_MODULES=all\n"
     )
     fake = FakeBoard(
         [
@@ -807,7 +822,7 @@ def test_cli_settings_from_project_dotenv_without_flags(
 
 
 def test_cli_port_flag_with_dotenv(project: Paths, monkeypatch: pytest.MonkeyPatch) -> None:
-    (project.root / ".env").write_text(f"XEWE_WIFI_SSID=HomeNet\nXEWE_WIFI_PASSWORD={PASSWORD}\n")
+    (project.root / ".env").write_text(f"XEWE_WIFI_SSID=HomeNet\nXEWE_WIFI_PSW={PASSWORD}\n")
     fake = FakeBoard(full(name="xewe-os"))
     ports = _fake_board_cli(monkeypatch, fake)
     assert main(["provision", "--port", "/dev/ttyACM9"]) == 0
@@ -818,9 +833,9 @@ def test_cli_port_flag_with_dotenv(project: Paths, monkeypatch: pytest.MonkeyPat
 def test_cli_env_flag_wins_over_project_dotenv(
     project: Paths, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, flag: str
 ) -> None:
-    (project.root / ".env").write_text("XEWE_WIFI_SSID=Wrong\nXEWE_WIFI_PASSWORD=wrong\n")
+    (project.root / ".env").write_text("XEWE_WIFI_SSID=Wrong\nXEWE_WIFI_PSW=wrong\n")
     f = tmp_path / "outside-repo.env"
-    f.write_text(f"XEWE_WIFI_SSID=HomeNet\nXEWE_WIFI_PASSWORD={PASSWORD}\nXEWE_DEVICE_NAME=File Name\n")
+    f.write_text(f"XEWE_WIFI_SSID=HomeNet\nXEWE_WIFI_PSW={PASSWORD}\nXEWE_CORE_DEVICE_NAME=File Name\n")
     fake = FakeBoard(full(name="Flag Name"))
     _fake_board_cli(monkeypatch, fake)
     assert main(["provision", flag, str(f), "--name", "Flag Name"]) == 0
@@ -828,7 +843,7 @@ def test_cli_env_flag_wins_over_project_dotenv(
 
 
 def test_cli_real_environment_wins_over_dotenv(project: Paths, monkeypatch: pytest.MonkeyPatch) -> None:
-    (project.root / ".env").write_text(f"XEWE_WIFI_SSID=Wrong\nXEWE_WIFI_PASSWORD={PASSWORD}\n")
+    (project.root / ".env").write_text(f"XEWE_WIFI_SSID=Wrong\nXEWE_WIFI_PSW={PASSWORD}\n")
     monkeypatch.setenv("XEWE_WIFI_SSID", "HomeNet")
     fake = FakeBoard(full(name="xewe-os"))
     _fake_board_cli(monkeypatch, fake)

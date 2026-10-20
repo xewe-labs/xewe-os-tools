@@ -170,19 +170,19 @@ def resolve(
         return None
 
     s = Settings(
-        name=(pick(name, "XEWE_DEVICE_NAME") or default_name).strip(),
+        name=(pick(name, "XEWE_CORE_DEVICE_NAME") or default_name).strip(),
         ssid=pick(None, "XEWE_WIFI_SSID"),
-        password=pick(None, "XEWE_WIFI_PASSWORD"),
+        password=pick(None, "XEWE_WIFI_PSW"),
     )
     mods = modules if modules is not None else env.get("XEWE_PROVISION_MODULES")
     s.modules = parse_modules(mods) if mods is not None else None
-    tz = pick(timezone, "XEWE_TIMEZONE")
+    tz = pick(timezone, "XEWE_TIME_TZ_GMT_STR")
     s.timezone = check_timezone(tz.strip().upper()) if tz else None
 
     if not s.name or len(s.name) > NAME_MAX or "\n" in s.name:
         raise XeWeError(f"device name must be 1..{NAME_MAX} characters on one line", EXIT_USAGE)
     if s.wifi:
-        missing = [k for k, v in (("XEWE_WIFI_SSID", s.ssid), ("XEWE_WIFI_PASSWORD", s.password)) if not v]
+        missing = [k for k, v in (("XEWE_WIFI_SSID", s.ssid), ("XEWE_WIFI_PSW", s.password)) if not v]
         if missing:
             raise XeWeError(
                 f"wifi is enabled but {' and '.join(missing)} {'is' if len(missing) == 1 else 'are'} not set "
@@ -347,7 +347,7 @@ class Driver:
             self._answer(kind, s.ssid or "")
         elif kind == "password":
             if not s.password:
-                raise ProvisionFailed("the board asks for the Wi-Fi password but XEWE_WIFI_PASSWORD is not set")
+                raise ProvisionFailed("the board asks for the Wi-Fi password but XEWE_WIFI_PSW is not set")
             self._answer(kind, s.password)
         elif kind == "join_failed":
             if m[0] == "Unable to join" and self.out.join_failures < JOIN_RETRIES:
@@ -358,7 +358,7 @@ class Driver:
                     JOIN_RETRIES,
                 )
                 return
-            raise ProvisionFailed(f"Wi-Fi setup failed ({m[0]}); check XEWE_WIFI_SSID and XEWE_WIFI_PASSWORD")
+            raise ProvisionFailed(f"Wi-Fi setup failed ({m[0]}); check XEWE_WIFI_SSID and XEWE_WIFI_PSW")
         elif kind == "time":
             if s.timezone:
                 self.out.timezone = f"n, set {s.timezone} (board detected {m[1]})"
@@ -370,7 +370,7 @@ class Driver:
             if not s.timezone:
                 raise ProvisionFailed(
                     "the board could not detect the timezone and asks for it; "
-                    "set XEWE_TIMEZONE or --timezone GMT+HH:MM and run again"
+                    "set XEWE_TIME_TZ_GMT_STR or --timezone GMT+HH:MM and run again"
                 )
             if self.seen["tz"] > 1:
                 raise ProvisionFailed(f"the board rejected the timezone {s.timezone}")

@@ -6,7 +6,8 @@ contract is [doc/spec.md](../../../doc/spec.md) §10 (modules), with the manifes
 
 - `registry.py`: `xewe modules`, the registry of a modules checkout, dependency resolution,
   generation of `build/modules/` (the `XeWeModules` library, the selected modules' tests,
-  `modules.lock`) and `src/Modules.h`, and validation.
+  `modules.lock`) and `src/Modules.h`, the core and module blocks of the project's `Config.h`
+  (first-boot values copied as commented-out `// #define` lines), and validation.
 - `lockfile.py`: reads, validates and writes `xewe.toml`.
 - `manifest.py`: `xewe manifest show` and `xewe manifest update`, the refs of `xewe.toml`.
 - `tomlw.py`: a minimal TOML writer for the files xewe generates (`tomllib` only reads).

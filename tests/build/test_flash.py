@@ -171,7 +171,7 @@ def test_board_chip_selects_build(project: Paths, one_board: str, fake_esptool, 
 def test_run_no_board(project: Paths, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["run", "--define", "LED_PIN=8"]) == 0
     assert "compiled, not run: no board attached (c3," in capsys.readouterr().out
-    assert "LED_PIN 8" in (project.gen_dir("c3") / "XeWeBuildInfo/src/XeWeBuildInfo.h").read_text()
+    assert "LED_PIN 8" in (project.gen_dir("c3") / "XeWeBuildInfo/src/XeWeOverrides.h").read_text()
 
 
 def test_define_change_makes_build_stale(project: Paths, capsys: pytest.CaptureFixture[str], fake_cli) -> None:
@@ -182,7 +182,7 @@ def test_define_change_makes_build_stale(project: Paths, capsys: pytest.CaptureF
     out = capsys.readouterr().out
     assert "up to date" not in out
     assert len([c for c in fake_cli() if c["argv"][0] == "compile"]) == compiles + 1
-    assert "PROJECT_URL" not in (project.gen_dir("c3") / "XeWeBuildInfo/src/XeWeBuildInfo.h").read_text()
+    assert "PROJECT_URL" not in (project.gen_dir("c3") / "XeWeBuildInfo/src/XeWeOverrides.h").read_text()
     assert main(["flash"]) == 0
     assert "up to date" in capsys.readouterr().out
     assert main(["run", "--define", "PROJECT_URL=https://example.test"]) == 0
@@ -260,7 +260,7 @@ def test_flash_follows_a_renamed_port_and_passes_settle(
     assert f"{one_board} came back as /dev/cu.usbmodem1101" in err
 
 
-DEFINE = "XEWE_MODULE_LED_PIN_DATA"
+DEFINE = "XEWE_LED_PIN_DATA"
 
 
 def _compiles(fake_cli) -> int:
@@ -282,11 +282,11 @@ def test_flash_define_flashes_the_define_image(
     assert f"build  c3  up to date ({BIN})" in capsys.readouterr().out
     assert fake_esptool()[-1][-1] == str(project.root / BIN)
     assert (project.root / BIN).read_bytes() == image
-    header = (project.gen_dir("c3") / "XeWeBuildInfo/src/XeWeBuildInfo.h").read_text()
+    header = (project.gen_dir("c3") / "XeWeBuildInfo/src/XeWeOverrides.h").read_text()
     assert f"#define {DEFINE} 48" in header and "#define LED_COUNT 8" in header
     assert main(["flash", "--define", f"{DEFINE}=13"]) == 0  # other defines: rebuilt, then flashed
     assert _compiles(fake_cli) == compiles + 1
-    assert f"#define {DEFINE} 13" in (project.gen_dir("c3") / "XeWeBuildInfo/src/XeWeBuildInfo.h").read_text()
+    assert f"#define {DEFINE} 13" in (project.gen_dir("c3") / "XeWeBuildInfo/src/XeWeOverrides.h").read_text()
     writes = len(fake_esptool())
     assert main(["flash", "--define", "1BAD=x"]) == 2  # checked before any build or flash
     assert len(fake_esptool()) == writes and _compiles(fake_cli) == compiles + 1
@@ -305,7 +305,7 @@ def test_flash_defines_default_to_xewe_test_defines(
     monkeypatch.setenv("XEWE_TEST_DEFINES", f"{DEFINE}=13")
     assert main(["flash"]) == 0  # the environment wins over the dotenv file
     assert _compiles(fake_cli) == compiles + 1
-    assert f"#define {DEFINE} 13" in (project.gen_dir("c3") / "XeWeBuildInfo/src/XeWeBuildInfo.h").read_text()
+    assert f"#define {DEFINE} 13" in (project.gen_dir("c3") / "XeWeBuildInfo/src/XeWeOverrides.h").read_text()
     assert main(["flash", "--define", f"{DEFINE}=48"]) == 0  # the flag replaces the variable
     assert _compiles(fake_cli) == compiles + 2
     monkeypatch.setenv("XEWE_TEST_DEFINES", "LED_COUNT")

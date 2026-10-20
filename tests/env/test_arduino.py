@@ -38,7 +38,12 @@ def test_compile_argv_per_chip(chip: str, tmp_path: Path) -> None:
         "--library",
         f"build/builds/{chip}/gen/XeWeBuildInfo",
         "--build-property",
-        f'compiler.cpp.extra_flags=-I "{p.root}/build/builds/{chip}/gen/XeWeBuildInfo/src" -include "{p.root}/Config.h"',
+        (
+            f'compiler.cpp.extra_flags=-I "{p.root}/build/builds/{chip}/gen/XeWeBuildInfo/src" '
+            f'-include "{p.root}/build/builds/{chip}/gen/XeWeBuildInfo/src/XeWeBuildInfo.h" '
+            f'-include "{p.root}/build/builds/{chip}/cache/sketch/Config.h" '
+            f'-include "{p.root}/build/builds/{chip}/gen/XeWeBuildInfo/src/XeWeOverrides.h"'
+        ),
         "--warnings",
         "default",
         "--jobs",
@@ -65,7 +70,10 @@ def test_dry_run_prints_exact_command(
         f"compile --fqbn {GOLDEN_FQBN[chip]} --build-path build/builds/{chip}/cache --libraries build/libraries "
         f"--library build/modules --library build/builds/{chip}/gen/XeWeBuildInfo --build-property "
         f'\'compiler.cpp.extra_flags=-I "{root}/build/builds/{chip}/gen/XeWeBuildInfo/src" '
-        f'-include "{root}/Config.h"\' --warnings default --jobs 0 .'
+        f'-include "{root}/build/builds/{chip}/gen/XeWeBuildInfo/src/XeWeBuildInfo.h" '
+        f'-include "{root}/build/builds/{chip}/cache/sketch/Config.h" '
+        f'-include "{root}/build/builds/{chip}/gen/XeWeBuildInfo/src/XeWeOverrides.h"\' '
+        "--warnings default --jobs 0 ."
     )
     assert fake_cli() == []  # nothing ran
     assert not project.out_dir(chip).exists()

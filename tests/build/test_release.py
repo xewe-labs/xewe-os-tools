@@ -269,8 +269,8 @@ def test_matrix_43_rows_and_asset_names(led_os: Paths, notes: Path) -> None:
     header, rows = release.read_map(base / "firmware_map.csv")
     assert header == [
         "CHIP",
-        "XEWE_MODULE_LED_PIN_DATA",
-        "XEWE_MODULE_LED_PIN_CLOCK",
+        "XEWE_LED_PIN_DATA",
+        "XEWE_LED_PIN_CLOCK",
         *release.MAP_COLUMNS,
     ]
     assert len(rows) == 43
@@ -280,8 +280,8 @@ def test_matrix_43_rows_and_asset_names(led_os: Paths, notes: Path) -> None:
     v2 = rows[4]
     assert v2 == {
         "CHIP": "c6",
-        "XEWE_MODULE_LED_PIN_DATA": "20",
-        "XEWE_MODULE_LED_PIN_CLOCK": "19",
+        "XEWE_LED_PIN_DATA": "20",
+        "XEWE_LED_PIN_CLOCK": "19",
         "_PATH": "c6/20/19",
         "_ASSET": "c6_20_19_3.1.0-c6-xewe-led-os.bin",
         "_SIZE": str((base / "c6/20/19/3.1.0-c6-xewe-led-os.bin").stat().st_size),
@@ -354,7 +354,7 @@ def test_assemble_refuses_a_part_from_another_matrix(
 ) -> None:
     for chip in ("c3", "c6", "s3"):
         assert _release(led_os, notes, chip=chip) == 0
-    (led_os.root / "release_matrix.csv").write_text("CHIP,XEWE_MODULE_LED_PIN_DATA\nc3,0\n")
+    (led_os.root / "release_matrix.csv").write_text("CHIP,XEWE_LED_PIN_DATA\nc3,0\n")
     assert _release(led_os, notes, assemble=True) == 1
     assert "another release matrix" in caplog.text
 
@@ -859,3 +859,22 @@ def test_chip_and_assemble_are_covered(project: Paths, tmp_path: Path, monkeypat
     assert main(["release", "--version", "2.1.0", "--assemble"]) == 0  # the chip runs' notes are kept
     assert (version_dir / "firmware_map.csv").is_file()
     assert (version_dir / "release_notes.txt").read_text() == "Per chip.\n"
+
+
+@pytest.mark.parametrize("extra", [[], ["--chip", "c3"], ["--assemble"]])
+def test_release_refuses_an_active_sentinel(
+    project: Paths, notes: Path, extra: list[str], fake_cli, caplog: pytest.LogCaptureFixture
+) -> None:
+    (project.root / "Config.h").write_text(
+        "#pragma once\n// #define XEWE_WIFI_SSID INJECTED_FROM_DOTENV\n#define XEWE_LED_VOLTAGE INJECTED_FROM_DOTENV\n"
+    )
+    assert main(["release", "--version", "2.0.16", "--notes", str(notes), *extra]) == 2
+    assert "Config.h:3: XEWE_LED_VOLTAGE is INJECTED_FROM_DOTENV" in caplog.text
+    assert "XEWE_WIFI_SSID" not in caplog.text  # a commented line is not active
+    assert fake_cli() == [] and not (project.root / REL / "2.0.16").exists()
+    assert lockfile.load(project.lock).version == "2.0.15"
+
+
+def test_release_with_commented_sentinel_builds(project: Paths, notes: Path) -> None:
+    (project.root / "Config.h").write_text("#pragma once\n// #define XEWE_WIFI_SSID INJECTED_FROM_DOTENV\n")
+    assert main(["release", "--version", "2.0.16", "--notes", str(notes)]) == 0

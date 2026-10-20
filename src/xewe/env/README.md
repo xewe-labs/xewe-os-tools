@@ -8,9 +8,12 @@ file lists every dotenv key. The contract is [doc/spec.md](../../../doc/spec.md)
 - `setup.py`: `xewe setup`, the shared toolchain and everything a project needs in `build/`.
 - `doctor.py`: `xewe doctor`, reports the state of the environment without changing it.
 - `clean.py`: `xewe clean`, removes generated build output (never the shared toolchain).
-- `dotenv.py`: finds, parses and applies the dotenv file; `KEYS` and `OTHER_KEYS` name its keys.
+- `dotenv.py`: finds, parses and applies the dotenv file, and reads the values of the `Config.h`
+  `INJECTED_FROM_DOTENV` lines; `KEYS` and `OTHER_KEYS` name its keys.
 - `pins.py`: versions and URLs shipped with this release of the tools (below).
-- `arduino.py`: arduino-cli install, its isolated environment, the esp32 core, the compile command.
+- `arduino.py`: arduino-cli install, its isolated environment, the esp32 core, the compile command
+  (every C++ translation unit starts with `XeWeBuildInfo.h`, the project's `Config.h`, then
+  `XeWeOverrides.h`).
 - `esptool.py`: the esptool bundled with the pinned esp32 core (`XEWE_ESPTOOL` overrides it).
 - `fetch.py`: downloads (resumable, sha256-checked) and git wrappers.
 - `config.py`: `build/config/build_config.toml`, what setup installed and where.
@@ -58,12 +61,12 @@ Credentials and per-bench settings live in a dotenv file named `.env` that is ne
 line naming where to put it and the provisioning keys when it finds none. Put it in the tools
 checkout to share it between projects, or in the project to override that one: a project file
 wins as a whole, so an empty or partial one hides the tools checkout's keys. The first provision
-needs `XEWE_WIFI_SSID` and `XEWE_WIFI_PASSWORD` when the wifi module is enabled.
+needs `XEWE_WIFI_SSID` and `XEWE_WIFI_PSW` when the wifi module is enabled.
 
 Which file is used, first found wins:
 
 1. `--env FILE` (`xewe provision --from FILE` is an alias), else the `XEWE_ENV` variable (must
-   exist; exit 2 otherwise);
+   exist; exit 2 otherwise); `--env` sets `XEWE_ENV` for the rest of the command;
 2. `.env` in the project directory (where `xewe.toml` is);
 3. `.env` in the xewe-os-tools source checkout: the `local:<path>` source that `./setup.sh`
    recorded for tools in `build/config/build_config.toml` (`XEWE_TOOLS_SOURCE`), else the
@@ -74,16 +77,25 @@ optional single or double quotes, no interpolation; a line without `=` is exit 2
 and line only. An empty value counts as unset. Variables already in the environment win over the
 file, flags win over both.
 
+Values for `Config.h`: a line `#define NAME INJECTED_FROM_DOTENV` in the project's `Config.h`
+makes `xewe build` (and the builds of `flash`, `run` and `test`) take NAME from the environment,
+else from key NAME of this file, and write it into the generated `XeWeOverrides.h`, read after `Config.h` (a number bare,
+anything else as a C string). The key is the define name, whatever its prefix. A missing or empty
+value is exit 2: `Config.h:<line>: NAME is INJECTED_FROM_DOTENV but the dotenv file has no value
+(looked in <file>)`. The log names the injected keys only. `xewe release` refuses such a line
+([doc/spec.md](../../../doc/spec.md) §7, §11).
+
 ### Keys
 
-The keys the file usually holds (`dotenv.KEYS`):
+The keys the file usually holds (`dotenv.KEYS`; the provisioning keys are the `Config.h` define
+names of the values the first boot asks for):
 
 | Key | What it is for |
 |---|---|
-| `XEWE_DEVICE_NAME` | device name the first boot asks for (default: `[project] name` in `xewe.toml`, else the folder name) |
+| `XEWE_CORE_DEVICE_NAME` | device name the first boot asks for (default: `[project] name` in `xewe.toml`, else the folder name) |
 | `XEWE_WIFI_SSID` | Wi-Fi network name; needed by the first provision when the wifi module is enabled |
-| `XEWE_WIFI_PASSWORD` | Wi-Fi password, masked in all output; needed by the first provision when the wifi module is enabled |
-| `XEWE_TIMEZONE` | `GMT+HH:MM`, set instead of the detected timezone (empty accepts the detected one) |
+| `XEWE_WIFI_PSW` | Wi-Fi password, masked in all output; needed by the first provision when the wifi module is enabled |
+| `XEWE_TIME_TZ_GMT_STR` | `GMT+HH:MM`, set instead of the detected timezone (empty accepts the detected one) |
 | `XEWE_PROVISION_MODULES` | modules to enable at their prompt: `all`, `none` or a comma list (default `all`) |
 | `XEWE_TEST_BUTTONS_PIN` | free GPIO for the buttons module's board test (skipped when empty) |
 | `XEWE_TEST_PINS_ADC_PIN` | ADC GPIO the pins module's board test reads (default 1) |
@@ -104,7 +116,8 @@ Other variables the tools read, allowed in the file too (`dotenv.OTHER_KEYS`):
 | `XEWE_MODULES_SOURCE` | local modules checkout, used as is (as `xewe setup --modules-source`) |
 | `XEWE_TOOLS_SOURCE` | local xewe-os-tools checkout that `./setup.sh` installs from |
 
-Any other `XEWE_*` key in the file is a warning naming the key. The tools also read these from the
+Any other `XEWE_*` key in the file is a warning naming the key, unless an
+`INJECTED_FROM_DOTENV` line of the project's `Config.h` names it. The tools also read these from the
 environment: `XEWE_ENV` (the dotenv file, above), `XEWE_HOME` (instead of `~/.xewe-os`),
 `XEWE_NO_BOARD` (`1`: never touch a board, as `--no-board`), `XEWE_SETTLE` (as `--settle`),
 `XEWE_CLANG_FORMAT` (the clang-format `xewe format` runs) and `XEWE_NONINTERACTIVE` (`1`: `xewe

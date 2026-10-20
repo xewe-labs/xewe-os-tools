@@ -536,7 +536,7 @@ def test_banner_match_reads_meta(tmp_path: Path) -> None:
 # `xewe test --define` and XEWE_TEST_DEFINES: the session builds, reuses and flashes the image for
 # those defines (`compiled` checks build.stamp like `xewe flash`).
 
-BUILD_INFO = "XeWeBuildInfo/src/XeWeBuildInfo.h"
+BUILD_INFO = "XeWeBuildInfo/src/XeWeOverrides.h"  # the --define values
 STAMPED_TEST = """
 def test_stamped(compiled):
     assert compiled.is_file()
@@ -570,11 +570,11 @@ def _header(p: Paths) -> str:
 
 
 def test_define_reaches_build_chip(stamped: Paths, build_calls: list[dict[str, str]]) -> None:
-    assert main(["test", "--define", "XEWE_MODULE_LED_PIN_DATA=48", "--define", "LED_COUNT=8"]) == 0
-    assert build_calls == [{"XEWE_MODULE_LED_PIN_DATA": "48", "LED_COUNT": "8"}]
-    assert "#define XEWE_MODULE_LED_PIN_DATA 48" in _header(stamped)
+    assert main(["test", "--define", "XEWE_LED_PIN_DATA=48", "--define", "LED_COUNT=8"]) == 0
+    assert build_calls == [{"XEWE_LED_PIN_DATA": "48", "LED_COUNT": "8"}]
+    assert "#define XEWE_LED_PIN_DATA 48" in _header(stamped)
     stamp = (stamped.root / BIN).parent / build.STAMP_NAME
-    key = build.build_key("c3", "2.0.15", {"XEWE_MODULE_LED_PIN_DATA": "48", "LED_COUNT": "8"})
+    key = build.build_key("c3", "2.0.15", {"XEWE_LED_PIN_DATA": "48", "LED_COUNT": "8"})
     assert stamp.read_text().strip() == key
 
 
@@ -585,37 +585,37 @@ def test_bad_define_is_usage_error(stamped: Paths, build_calls: list[dict[str, s
 
 
 def test_same_stamp_is_not_rebuilt(stamped: Paths, build_calls: list[dict[str, str]]) -> None:
-    assert main(["build", "--chip", "c3", "--define", "XEWE_MODULE_LED_PIN_DATA=48"]) == 0
+    assert main(["build", "--chip", "c3", "--define", "XEWE_LED_PIN_DATA=48"]) == 0
     built = build_calls.pop()
     image = (stamped.root / BIN).read_bytes()
-    assert main(["test", "--define", "XEWE_MODULE_LED_PIN_DATA=48"]) == 0
+    assert main(["test", "--define", "XEWE_LED_PIN_DATA=48"]) == 0
     assert build_calls == []  # the stamp matches: the image from `xewe build` is reused
     assert (stamped.root / BIN).read_bytes() == image
     assert main(["test"]) == 0  # other defines (none): stale, rebuilt
     assert build_calls == [{}]
-    assert "XEWE_MODULE_LED_PIN_DATA" not in _header(stamped)
-    assert built == {"XEWE_MODULE_LED_PIN_DATA": "48"}
+    assert "XEWE_LED_PIN_DATA" not in _header(stamped)
+    assert built == {"XEWE_LED_PIN_DATA": "48"}
 
 
 def test_env_default_and_flag_override(
     stamped: Paths, build_calls: list[dict[str, str]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv(plugin.DEFINES_VAR, "XEWE_MODULE_LED_PIN_DATA=48  LED_COUNT=8")
+    monkeypatch.setenv(plugin.DEFINES_VAR, "XEWE_LED_PIN_DATA=48  LED_COUNT=8")
     assert main(["test"]) == 0
-    assert build_calls == [{"XEWE_MODULE_LED_PIN_DATA": "48", "LED_COUNT": "8"}]
+    assert build_calls == [{"XEWE_LED_PIN_DATA": "48", "LED_COUNT": "8"}]
     assert main(["test"]) == 0
     assert len(build_calls) == 1  # same defines from the environment: up to date
-    assert main(["test", "--define", "XEWE_MODULE_LED_PIN_DATA=13"]) == 0
-    assert build_calls[-1] == {"XEWE_MODULE_LED_PIN_DATA": "13"}  # the flag replaces the variable
+    assert main(["test", "--define", "XEWE_LED_PIN_DATA=13"]) == 0
+    assert build_calls[-1] == {"XEWE_LED_PIN_DATA": "13"}  # the flag replaces the variable
     monkeypatch.setenv(plugin.DEFINES_VAR, "LED_COUNT")
     assert main(["test"]) == 2  # a bad item in the variable is a usage error too
     assert len(build_calls) == 2
 
 
 def test_dotenv_default(stamped: Paths, build_calls: list[dict[str, str]]) -> None:
-    (stamped.root / ("." + "env")).write_text(f"{plugin.DEFINES_VAR}=XEWE_MODULE_LED_PIN_DATA=48\n")
+    (stamped.root / ("." + "env")).write_text(f"{plugin.DEFINES_VAR}=XEWE_LED_PIN_DATA=48\n")
     assert main(["test"]) == 0
-    assert build_calls == [{"XEWE_MODULE_LED_PIN_DATA": "48"}]
+    assert build_calls == [{"XEWE_LED_PIN_DATA": "48"}]
 
 
 def test_session_defines() -> None:
@@ -632,7 +632,7 @@ def test_session_flashes_the_define_image(
     stamped: Paths, build_calls: list[dict[str, str]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """With a board: the image built with the defines is flashed, not a default one."""
-    assert main(["build", "--chip", "c3", "--define", "XEWE_MODULE_LED_PIN_DATA=48"]) == 0
+    assert main(["build", "--chip", "c3", "--define", "XEWE_LED_PIN_DATA=48"]) == 0
     build_calls.clear()
     flashed: list[Path] = []
 
@@ -646,10 +646,10 @@ def test_session_flashes_the_define_image(
     board_tests = stamped.root / "tests" / "board"
     (board_tests / "test_stamped.py").unlink()
     (board_tests / "test_flashed.py").write_text("def test_flashed(firmware):\n    assert firmware.chip == 'c3'\n")
-    assert main(["test", "--define", "XEWE_MODULE_LED_PIN_DATA=48"]) == 0
+    assert main(["test", "--define", "XEWE_LED_PIN_DATA=48"]) == 0
     assert build_calls == []
     assert flashed == [stamped.root / BIN]
-    assert "#define XEWE_MODULE_LED_PIN_DATA 48" in _header(stamped)
+    assert "#define XEWE_LED_PIN_DATA 48" in _header(stamped)
 
 
 @pytest.mark.parametrize("prebuilt", [True, False], ids=["reused", "built"])
@@ -660,7 +660,7 @@ def test_defines_session_fw_sha_is_the_flashed_image(
     the sha256 of the image the session flashed, whether ``compiled`` reused it (``build.stamp``
     matches) or built it, so render's fw sha check against the flash step does not fire."""
     if prebuilt:
-        assert main(["build", "--chip", "c3", "--define", "XEWE_MODULE_LED_PIN_DATA=48"]) == 0
+        assert main(["build", "--chip", "c3", "--define", "XEWE_LED_PIN_DATA=48"]) == 0
     build_calls.clear()
     flashed: list[bytes] = []
 
@@ -675,9 +675,9 @@ def test_defines_session_fw_sha_is_the_flashed_image(
     (board_tests / "test_stamped.py").unlink()
     (board_tests / "test_flashed.py").write_text("def test_flashed(firmware):\n    assert firmware.chip == 'c3'\n")
     junit = stamped.root / "build" / "junit.xml"
-    args = ["test", "--define", "XEWE_MODULE_LED_PIN_DATA=48", "--"]
+    args = ["test", "--define", "XEWE_LED_PIN_DATA=48", "--"]
     assert main([*args, f"--junitxml={junit}", "-o", "junit_family=xunit1"]) == 0
-    assert build_calls == ([] if prebuilt else [{"XEWE_MODULE_LED_PIN_DATA": "48"}])
+    assert build_calls == ([] if prebuilt else [{"XEWE_LED_PIN_DATA": "48"}])
     (image,) = flashed
     assert image == (stamped.root / BIN).read_bytes()
     props = {p.get("name"): p.get("value") for p in ET.parse(junit).iter("property")}
@@ -700,13 +700,13 @@ def test_recorded_flash_and_test_session_agree_on_the_image(
     logs.mkdir(parents=True)
     (logs / releasecard.RUN_FILE).write_text(json.dumps({"run_id": "r", "started": "", "steps": []}))
     monkeypatch.setenv("XEWE_NO_BOARD", "1")
-    flash_cmd = [sys.executable, "-m", "xewe", "flash", "--chip", "c3", "--define", "XEWE_MODULE_LED_PIN_DATA=48"]
+    flash_cmd = [sys.executable, "-m", "xewe", "flash", "--chip", "c3", "--define", "XEWE_LED_PIN_DATA=48"]
     record = ["release-card", "record", "--dir", str(logs), "--root", str(stamped.root), "--kind", "flash"]
     assert main([*record, "--chip", "c3", "--", *flash_cmd]) == 1  # xewe flash: built, board access off (4)
     (step,) = json.loads((logs / releasecard.RUN_FILE).read_text())["steps"]
     assert step["exit"] == 4 and step["firmware"] == BIN
     assert step["fw_sha256"] == hashlib.sha256((stamped.root / BIN).read_bytes()).hexdigest()
-    assert json.loads((logs / step["meta"]).read_text())["config"] == {"XEWE_MODULE_LED_PIN_DATA": 48}
+    assert json.loads((logs / step["meta"]).read_text())["config"] == {"XEWE_LED_PIN_DATA": 48}
     monkeypatch.delenv("XEWE_NO_BOARD")
 
     flashed: list[bytes] = []
@@ -722,7 +722,7 @@ def test_recorded_flash_and_test_session_agree_on_the_image(
     (board_tests / "test_stamped.py").unlink()
     (board_tests / "test_flashed.py").write_text("def test_flashed(firmware):\n    assert firmware.chip == 'c3'\n")
     junit = stamped.root / "build" / "junit.xml"
-    args = ["test", "--chip", "c3", "--define", "XEWE_MODULE_LED_PIN_DATA=48", "--"]
+    args = ["test", "--chip", "c3", "--define", "XEWE_LED_PIN_DATA=48", "--"]
     assert main([*args, f"--junitxml={junit}", "-o", "junit_family=xunit1"]) == 0
     assert build_calls == []  # the image the flash step built
     props = {p.get("name"): p.get("value") for p in ET.parse(junit).iter("property")}

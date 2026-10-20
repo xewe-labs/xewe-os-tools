@@ -85,10 +85,14 @@ def esptool_cmd(p: Paths) -> list[str]:
 
 def built_image(p: Paths, lock: Lock, chip: str, defines: dict[str, str] | None = None) -> tuple[Path, bool]:
     """(path of the chip's merged image, True when it exists and is up to date): not older than a
-    source and built from the same inputs (``--define`` values, version, chip, FQBN options and
-    partition scheme; see ``build_key`` and ``build.stamp``). Prints the "up to date" line."""
+    source and built from the same inputs (``--define`` values, dotenv-injected values, version, chip,
+    FQBN options and partition scheme; see ``build_key`` and ``build.stamp``). Prints the "up to date" line."""
     binary = p.out_dir(chip) / build.binary_name(lock.version, chip, build.project_name(p, lock))
-    if build.is_up_to_date(p, binary, build.build_key(chip, lock.version, defines or {}, lock.scheme)):
+    try:
+        injected = build.injected_values(p, defines or {})
+    except XeWeError:
+        return binary, False  # a missing dotenv value: stale; the build names the key
+    if build.is_up_to_date(p, binary, build.build_key(chip, lock.version, defines or {}, lock.scheme, injected)):
         result(f"build  {chip}  up to date ({p.rel(binary)})")
         return binary, True
     return binary, False

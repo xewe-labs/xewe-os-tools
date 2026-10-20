@@ -61,8 +61,8 @@ build/tools/.venv/bin/python -m xewe provision                # settings from th
 build/tools/.venv/bin/python -m xewe provision --port /dev/ttyACM0
 ```
 
-Values come from flags, then the environment (`XEWE_DEVICE_NAME`, `XEWE_WIFI_SSID`,
-`XEWE_WIFI_PASSWORD`, `XEWE_TIMEZONE`, `XEWE_PROVISION_MODULES`), then the dotenv file
+Values come from flags, then the environment (`XEWE_CORE_DEVICE_NAME`, `XEWE_WIFI_SSID`,
+`XEWE_WIFI_PSW`, `XEWE_TIME_TZ_GMT_STR`, `XEWE_PROVISION_MODULES`), then the dotenv file
 ([env/](../env/README.md)), then defaults (name from `xewe.toml`, all modules, accept the
 detected timezone). The password has no flag and is printed as `********`. A prompt the tool has
 no value for gets the prompt's default instead of failing, and each such auto-answer is logged:

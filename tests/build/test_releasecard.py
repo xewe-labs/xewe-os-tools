@@ -109,7 +109,7 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeGit:
     monkeypatch.setattr(
         rc.Redactor,
         "from_environment",
-        classmethod(lambda cls, root: cls({"XEWE_WIFI_PASSWORD": SECRET}, "/home/bench")),
+        classmethod(lambda cls, root: cls({"XEWE_WIFI_PSW": SECRET}, "/home/bench")),
     )
     monkeypatch.chdir(root)
     return git
@@ -271,7 +271,7 @@ def full_run(
     write_image(root, "s3", 1234567)
     b.output("build-s3", "ok     s3  60 s  Sketch uses 1234567 bytes (39%)  0 warnings\n")
     assert b.record("build", "build-s3", "--chip", "s3") == 0
-    sha = write_image(root, "s3", 1234600, {"XEWE_MODULE_LED_PIN_DATA": 48})
+    sha = write_image(root, "s3", 1234600, {"XEWE_LED_PIN_DATA": 48})
     b.output("flash-s3", "A fatal error occurred: port vanished\n", exit_once=2)
     assert b.record("flash", "flash-s3", "--chip", "s3") == 1  # the command's exit 2 is in run.json
     b.output("flash-s3", "flashed s3 /dev/ttyACM0 (nvs kept)\n")
@@ -299,7 +299,7 @@ def test_golden_card(repo: FakeGit, capsys: pytest.CaptureFixture[str]) -> None:
         GOLDEN.write_text(text)
     assert text == GOLDEN.read_text()
     assert not b.draft.exists()
-    assert SECRET not in text and "«redacted:XEWE_WIFI_PASSWORD»" in text
+    assert SECRET not in text and "«redacted:XEWE_WIFI_PSW»" in text
 
 
 def test_card_template_sections() -> None:
@@ -442,12 +442,12 @@ def test_parse_sizes() -> None:
 def test_redactor_secret_keys_and_home() -> None:
     r = rc.Redactor(
         {
-            "XEWE_WIFI_PASSWORD": "pa55word!",
+            "XEWE_WIFI_PSW": "pa55word!",
             "XEWE_WIFI_SSID": "HomeNet",
             "GH_TOKEN": "ghp_abcdef",
             "API_KEY": "k3y-value",
             "XEWE_MQTT_PSW": "mqttpsw1",
-            "XEWE_DEVICE_NAME": "Kitchen Lights",  # not a secret key
+            "XEWE_CORE_DEVICE_NAME": "Kitchen Lights",  # not a secret key
             "SHORT_PASS": "abc",  # too short to redact safely
             "FLAG_KEY": "true",  # a common word, left alone
         },
@@ -455,7 +455,7 @@ def test_redactor_secret_keys_and_home() -> None:
     )
     line = "join HomeNet with pa55word! ghp_abcdef k3y-value mqttpsw1 from /home/me/x for Kitchen Lights abc true"
     assert r(line) == (
-        "join «redacted:XEWE_WIFI_SSID» with «redacted:XEWE_WIFI_PASSWORD» «redacted:GH_TOKEN» «redacted:API_KEY» "
+        "join «redacted:XEWE_WIFI_SSID» with «redacted:XEWE_WIFI_PSW» «redacted:GH_TOKEN» «redacted:API_KEY» "
         "«redacted:XEWE_MQTT_PSW» from ~/x for Kitchen Lights abc true"
     )
 
@@ -467,12 +467,12 @@ def test_redactor_longest_value_first() -> None:
 
 def test_redactor_reads_the_dotenv_file_and_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "xewe.toml").write_text("")
-    (tmp_path / dotenv.FILENAME).write_text("XEWE_WIFI_PASSWORD=from-the-file\nXEWE_DEVICE_NAME=bench\n")
+    (tmp_path / dotenv.FILENAME).write_text("XEWE_WIFI_PSW=from-the-file\nXEWE_CORE_DEVICE_NAME=bench\n")
     monkeypatch.setenv("MY_SECRET", "from-the-env")
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     r = rc.Redactor.from_environment(tmp_path)
     assert r(f"from-the-file from-the-env bench {tmp_path}/home/a") == (
-        "«redacted:XEWE_WIFI_PASSWORD» «redacted:MY_SECRET» bench ~/a"
+        "«redacted:XEWE_WIFI_PSW» «redacted:MY_SECRET» bench ~/a"
     )
 
 
@@ -481,7 +481,7 @@ def test_record_stores_no_raw_secret(tmp_path: Path, monkeypatch: pytest.MonkeyP
     root.mkdir()
     monkeypatch.setattr(rc, "_git", FakeGit(root))
     monkeypatch.chdir(root)
-    (root / dotenv.FILENAME).write_text("XEWE_WIFI_PASSWORD=sup3r-secret\n")
+    (root / dotenv.FILENAME).write_text("XEWE_WIFI_PSW=sup3r-secret\n")
     monkeypatch.setenv("SERVICE_TOKEN", "tok-123456")
     logs = root / "releases" / "3.1.0" / "logs"
     assert main(["release-card", "init", "--dir", str(logs), "--repo", "x/demo", "--version", "3.1.0"]) == 0
@@ -491,7 +491,7 @@ def test_record_stores_no_raw_secret(tmp_path: Path, monkeypatch: pytest.MonkeyP
     )
     assert json.loads((logs / rc.RUN_FILE).read_text())["steps"][0]["exit"] == 3
     text = (logs / "1-check.log").read_text()
-    assert text == "«redacted:XEWE_WIFI_PASSWORD» «redacted:SERVICE_TOKEN»\n"
+    assert text == "«redacted:XEWE_WIFI_PSW» «redacted:SERVICE_TOKEN»\n"
     assert "sup3r-secret" not in (logs / rc.RUN_FILE).read_text()  # the argv is redacted too
     assert "tok-123456" not in (logs / rc.RUN_FILE).read_text()
 
@@ -1201,9 +1201,9 @@ PASSWORD = 'p&ss"w<rd 42'
 
 
 def test_redactor_escaped_and_encoded_forms() -> None:
-    r = rc.Redactor({"XEWE_WIFI_PASSWORD": PASSWORD, "XEWE_WIFI_SSID": "test"}, "/home/user")
+    r = rc.Redactor({"XEWE_WIFI_PSW": PASSWORD, "XEWE_WIFI_SSID": "test"}, "/home/user")
     for form in ("p&amp;ss&quot;w&lt;rd 42", 'p&ss\\"w<rd 42', "p%26ss%22w%3Crd%2042", "p%26ss%22w%3Crd+42"):
-        assert r(f"[{form}]") == "[«redacted:XEWE_WIFI_PASSWORD»]", form
+        assert r(f"[{form}]") == "[«redacted:XEWE_WIFI_PSW»]", form
     assert r("/home/user/x /home/username2 /home/user") == "~/x /home/username2 ~"  # whole path parts only
     assert r.value("tests/unit/test_x.py test") == "tests/unit/test_x.py «redacted:XEWE_WIFI_SSID»"
 
@@ -1214,7 +1214,7 @@ def test_junit_and_meta_copies_are_redacted_value_by_value(repo: FakeGit, monkey
     monkeypatch.setattr(
         rc.Redactor,
         "from_environment",
-        classmethod(lambda cls, root: cls({"XEWE_WIFI_PASSWORD": PASSWORD, "XEWE_WIFI_SSID": "test"}, "/home/bench")),
+        classmethod(lambda cls, root: cls({"XEWE_WIFI_PSW": PASSWORD, "XEWE_WIFI_SSID": "test"}, "/home/bench")),
     )
     b = Bench(repo.root)
     assert b.init() == 0
@@ -1231,7 +1231,7 @@ def test_junit_and_meta_copies_are_redacted_value_by_value(repo: FakeGit, monkey
     write_image(repo.root, "s3", 1000)
     meta_path = repo.root / "build" / "builds" / "s3" / "out" / "meta.json"
     meta = json.loads(meta_path.read_text())
-    meta["config"] = {"XEWE_WIFI_PASSWORD": PASSWORD, "NOTE": "test value"}
+    meta["config"] = {"XEWE_WIFI_PSW": PASSWORD, "NOTE": "test value"}
     meta_path.write_text(json.dumps(meta))
     b.output("build-s3", "ok\n")
     assert b.record("build", "build-s3", "--chip", "s3") == 0
@@ -1241,10 +1241,10 @@ def test_junit_and_meta_copies_are_redacted_value_by_value(repo: FakeGit, monkey
             assert form not in text, (form, text)
     (row,) = rc.parse_junit(b.logs / "1-unit.xml")
     assert row.id == "tests/unit/test_x.py::test_join"  # ids and markup untouched by the SSID "test"
-    assert row.detail == "cannot join «redacted:XEWE_WIFI_SSID» with «redacted:XEWE_WIFI_PASSWORD»"
+    assert row.detail == "cannot join «redacted:XEWE_WIFI_SSID» with «redacted:XEWE_WIFI_PSW»"
     copied = json.loads(texts[1])
     assert copied["config"] == {
-        "XEWE_WIFI_PASSWORD": "«redacted:XEWE_WIFI_PASSWORD»",
+        "XEWE_WIFI_PSW": "«redacted:XEWE_WIFI_PSW»",
         "NOTE": "«redacted:XEWE_WIFI_SSID» value",  # a whole word: redacted; keys are never touched
     }
     assert copied["sketch_size"] == 1000 and copied["type"] == "s3"

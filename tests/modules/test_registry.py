@@ -62,16 +62,16 @@ PINS_CONFIG_H = """\
 #pragma once
 
 // Claim slots.
-#ifndef XEWE_MODULE_PINS_CLAIMS_MAX
-#define XEWE_MODULE_PINS_CLAIMS_MAX 8
+#ifndef XEWE_PINS_CLAIMS_MAX
+#define XEWE_PINS_CLAIMS_MAX 8
 #endif
 """
 PINS_BLOCK = """
 // ---- pins (xewe modules generate) ----
 // Values of the pins module. Edit the numbers; keep this marker and the end marker.
 // Claim slots.
-#ifndef XEWE_MODULE_PINS_CLAIMS_MAX
-#define XEWE_MODULE_PINS_CLAIMS_MAX 8
+#ifndef XEWE_PINS_CLAIMS_MAX
+#define XEWE_PINS_CLAIMS_MAX 8
 #endif
 // ---- end pins ----
 """
@@ -154,9 +154,7 @@ def test_generate_writes_modules(tmp_path: Path, checkout: Path) -> None:
 
 def test_generate_appends_config_blocks(tmp_path: Path, checkout: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _module_config(checkout, "pins")
-    _module_config(
-        checkout, "wifi", "#pragma once\n#ifndef XEWE_MODULE_WIFI_DEBUG\n#define XEWE_MODULE_WIFI_DEBUG 0\n#endif\n"
-    )
+    _module_config(checkout, "wifi", "#pragma once\n#ifndef XEWE_WIFI_DEBUG\n#define XEWE_WIFI_DEBUG 0\n#endif\n")
     p = Paths(tmp_path / "proj")
     p.root.mkdir()
     config_h = p.root / "Config.h"
@@ -168,7 +166,7 @@ def test_generate_appends_config_blocks(tmp_path: Path, checkout: Path, capsys: 
     assert text == PROJECT_CONFIG_H + PINS_BLOCK + (
         "\n// ---- wifi (xewe modules generate) ----\n"
         "// Values of the wifi module. Edit the numbers; keep this marker and the end marker.\n"
-        "#ifndef XEWE_MODULE_WIFI_DEBUG\n#define XEWE_MODULE_WIFI_DEBUG 0\n#endif\n// ---- end wifi ----\n"
+        "#ifndef XEWE_WIFI_DEBUG\n#define XEWE_WIFI_DEBUG 0\n#endif\n// ---- end wifi ----\n"
     )
     assert "buttons" not in text  # a module without Config.h adds no block
     # a second generate is a no-op, byte for byte
@@ -457,3 +455,111 @@ def test_cli_validate_checks_tests_layout(project: Paths, tmp_path: Path, capsys
     checkout = make_modules_checkout(tmp_path / "c", "modules")
     assert main(["modules", "validate", str(checkout)]) == 1
     assert "error: wifi: tests/board/test_wifi.py missing" in capsys.readouterr().out
+
+
+SECTIONED_CONFIG_H = """\
+// SPDX-FileCopyrightText: 2026 Someone
+// SPDX-License-Identifier: GPL-3.0-only
+// xewe-os-modules/modules/wifi/src/Wifi/Config.h
+// Values of the wifi module.
+
+// ---- runtime defaults ----
+// Scan timeout, ms (1000..30000).
+#ifndef XEWE_WIFI_SCAN_MS
+#define XEWE_WIFI_SCAN_MS 5000
+#endif
+
+// ---- first-boot values ----
+// Network name, text.
+#ifndef XEWE_WIFI_SSID
+#define XEWE_WIFI_SSID ""
+#define XEWE_WIFI_SSID_PROMPT 1
+#endif
+// Password, text.
+#ifndef XEWE_WIFI_PSW
+#define XEWE_WIFI_PSW ""
+#define XEWE_WIFI_PSW_PROMPT 1
+#endif
+
+// ---- compile-time constants ----
+// Debug output, 0 or 1.
+#ifndef XEWE_WIFI_DEBUG
+#define XEWE_WIFI_DEBUG 0
+#endif
+"""
+SECTIONED_BLOCK_BODY = """\
+// ---- runtime defaults ----
+// Scan timeout, ms (1000..30000).
+#ifndef XEWE_WIFI_SCAN_MS
+#define XEWE_WIFI_SCAN_MS 5000
+#endif
+
+// ---- first-boot values ----
+// Network name, text.
+// #define XEWE_WIFI_SSID ""
+// Password, text.
+// #define XEWE_WIFI_PSW ""
+
+// ---- compile-time constants ----
+// Debug output, 0 or 1.
+#ifndef XEWE_WIFI_DEBUG
+#define XEWE_WIFI_DEBUG 0
+#endif
+"""
+
+
+def test_config_block_comments_out_first_boot_values() -> None:
+    module = modules.Module(Path("/x"), "wifi", {"slug": "wifi", "folder": "Wifi"})
+    assert modules.config_block(module, SECTIONED_CONFIG_H) == (
+        "\n// ---- wifi (xewe modules generate) ----\n"
+        "// Values of the wifi module. Edit the numbers; keep this marker and the end marker.\n"
+        f"{SECTIONED_BLOCK_BODY}// ---- end wifi ----\n"
+    )
+    block = modules.config_block(module, SECTIONED_CONFIG_H)
+    assert "_PROMPT" not in block and "SPDX" not in block
+
+
+def test_generate_appends_the_core_block_first(
+    tmp_path: Path, checkout: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _module_config(checkout, "pins")
+    p = Paths(tmp_path / "proj")
+    p.root.mkdir()
+    config_h = p.root / "Config.h"
+    config_h.write_text(PROJECT_CONFIG_H)
+    core = p.libraries / "XeWeCore" / "src" / "XeWeCore" / "Config.h"
+    core.parent.mkdir(parents=True)
+    core.write_text(
+        "// SPDX-License-Identifier: GPL-3.0-only\n"
+        "// ---- runtime defaults ----\n// Baud.\n#ifndef XEWE_CORE_SERIAL_BAUD\n#define XEWE_CORE_SERIAL_BAUD 115200\n#endif\n"
+        "// ---- first-boot values ----\n// Device name.\n"
+        '#ifndef XEWE_CORE_DEVICE_NAME\n#define XEWE_CORE_DEVICE_NAME "xewe"\n#define XEWE_CORE_DEVICE_NAME_PROMPT 1\n#endif\n'
+        "// ---- compile-time constants ----\n"
+    )
+    modules.generate(p, Registry.load(checkout), ["pins"], "s", "r", "c")
+    text = config_h.read_text()
+    assert (
+        text
+        == PROJECT_CONFIG_H
+        + (
+            "\n// ---- core (xewe modules generate) ----\n"
+            "// Values of the core. Edit the numbers; keep this marker and the end marker.\n"
+            "// ---- runtime defaults ----\n// Baud.\n#ifndef XEWE_CORE_SERIAL_BAUD\n#define XEWE_CORE_SERIAL_BAUD 115200\n#endif\n"
+            '// ---- first-boot values ----\n// Device name.\n// #define XEWE_CORE_DEVICE_NAME "xewe"\n'
+            "// ---- compile-time constants ----\n// ---- end core ----\n"
+        )
+        + PINS_BLOCK
+    )
+    capsys.readouterr()
+    modules.generate(p, Registry.load(checkout), ["pins"], "s", "r", "c")
+    assert config_h.read_text() == text  # never appended twice
+    assert "note:" not in capsys.readouterr().out  # the core block is not a deselected module
+
+
+def test_generate_without_core_config_h_adds_no_core_block(tmp_path: Path, checkout: Path) -> None:
+    p = Paths(tmp_path / "proj")
+    p.root.mkdir()
+    (p.root / "Config.h").write_text(PROJECT_CONFIG_H)
+    (p.libraries / "XeWeCore" / "src" / "XeWeCore").mkdir(parents=True)
+    modules.generate(p, Registry.load(checkout), ["wifi"], "s", "r", "c")
+    assert (p.root / "Config.h").read_text() == PROJECT_CONFIG_H

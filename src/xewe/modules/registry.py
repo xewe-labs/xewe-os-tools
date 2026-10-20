@@ -340,13 +340,67 @@ def render_modules_lock(order: list[Module], source: str, ref: str, commit: str)
 CONFIG_MARK = "// ---- {slug} (xewe modules generate) ----"
 CONFIG_END = "// ---- end {slug} ----"
 CONFIG_MARK_RE = re.compile(r"^// ---- ([a-z0-9-]+) \(xewe modules generate\) ----$", re.M)
+SECTION_RUNTIME = "// ---- runtime defaults ----"
+SECTION_FIRST_BOOT = "// ---- first-boot values ----"
+SECTION_CONSTANTS = "// ---- compile-time constants ----"
+SECTIONS = (SECTION_RUNTIME, SECTION_FIRST_BOOT, SECTION_CONSTANTS)
+"""The section marker lines of a module (or core) ``Config.h``, in their order."""
+CORE_SLUG = "core"
+"""Slug of the core's block in the project ``Config.h``."""
+_IFNDEF_RE = re.compile(r"^\s*#\s*ifndef\s+(\w+)\s*$")
+_DEFINE_RE = re.compile(r"^\s*#\s*define\s+(\w+)(?:\s+(.*?))?\s*$")
+_ENDIF_RE = re.compile(r"^\s*#\s*endif\b")
+
+
+def _comment_first_boot(lines: list[str]) -> list[str]:
+    """``lines`` with each ``#ifndef N`` / ``#define N v`` / ``#define N_PROMPT 1`` / ``#endif`` group
+    of the first-boot section turned into ``// #define N v`` (the fallback guard and ``N_PROMPT``
+    dropped); the comment lines and the other sections are kept as they are."""
+    out: list[str] = []
+    section = ""
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.strip() in SECTIONS:
+            section = line.strip()
+        guard = _IFNDEF_RE.match(line) if section == SECTION_FIRST_BOOT else None
+        if guard is None:
+            out.append(line)
+            i += 1
+            continue
+        name = guard[1]
+        j = i + 1
+        value: str | None = None
+        while j < len(lines) and not _ENDIF_RE.match(lines[j]):
+            define = _DEFINE_RE.match(lines[j])
+            if define and define[1] == name:
+                value = define[2] or ""
+            j += 1
+        if j == len(lines):  # no #endif: not a group, keep the rest as it is
+            out += lines[i:]
+            break
+        if value is not None:
+            out.append(f"// #define {name} {value}".rstrip())
+        i = j + 1
+    return out
 
 
 def config_block(module: Module, text: str) -> str:
-    """The block ``fill_config_h`` appends for ``module``: the markers around its ``Config.h``
-    without the file header (everything up to ``#pragma once``, else the SPDX lines)."""
+    """The block ``fill_config_h`` appends for ``module`` (:func:`config_block_for`)."""
+    return config_block_for(module.slug, f"the {module.slug} module", text)
+
+
+def config_block_for(slug: str, what: str, text: str) -> str:
+    """The markers around a module's (or the core's) ``Config.h``. With section markers (the three
+    ``SECTIONS``) the block starts at the first marker, the runtime-default and compile-time groups
+    are copied as they are and each first-boot group becomes ``// #define N v``
+    (``_comment_first_boot``). Without them the file is copied without its header (everything up to
+    ``#pragma once``, else the SPDX lines)."""
     lines = text.splitlines()
-    if "#pragma once" in lines:
+    marked = [i for i, ln in enumerate(lines) if ln.strip() in SECTIONS]
+    if marked:
+        lines = _comment_first_boot(lines[marked[0] :])
+    elif "#pragma once" in lines:
         lines = lines[lines.index("#pragma once") + 1 :]
     else:
         lines = [ln for ln in lines if not ln.startswith("// SPDX-")]
@@ -356,33 +410,45 @@ def config_block(module: Module, text: str) -> str:
         lines.pop()
     body = "\n".join(lines)
     return (
-        f"\n{CONFIG_MARK.format(slug=module.slug)}\n"
-        f"// Values of the {module.slug} module. Edit the numbers; keep this marker and the end marker.\n"
-        f"{body}\n{CONFIG_END.format(slug=module.slug)}\n"
+        f"\n{CONFIG_MARK.format(slug=slug)}\n"
+        f"// Values of {what}. Edit the numbers; keep this marker and the end marker.\n"
+        f"{body}\n{CONFIG_END.format(slug=slug)}\n"
     )
 
 
+def core_config_h(p: Paths) -> Path | None:
+    """The installed core's ``Config.h`` (``build/libraries/XeWeCore/src/XeWeCore/Config.h``), if any."""
+    path = p.libraries / "XeWeCore" / "src" / "XeWeCore" / "Config.h"
+    return path if path.is_file() else None
+
+
 def fill_config_h(p: Paths, order: list[Module]) -> list[str]:
-    """Append one marked block per module of ``order`` that has a ``Config.h`` and no block yet in
-    the project's ``Config.h``; return the slugs added. The file is the user's: an existing block
-    is never touched, a block of a module that is no longer selected stays (one ``note:`` line),
-    and a missing ``Config.h`` is left to setup to report."""
+    """Append the core block (when the installed core has a ``Config.h``), then one marked block per
+    module of ``order`` that has a ``Config.h``, each only when the project's ``Config.h`` has no
+    block of that slug yet; return the slugs added. The file is the user's: an existing block is
+    never touched, a block of a module that is no longer selected stays (one ``note:`` line), and a
+    missing ``Config.h`` is left to setup to report."""
     config_h = p.root / "Config.h"
     if not config_h.is_file():
         return []
     text = config_h.read_text(encoding="utf-8")
     present = set(CONFIG_MARK_RE.findall(text))
     selected = {m.slug for m in order}
-    for slug in sorted(present - selected):
+    for slug in sorted(present - selected - {CORE_SLUG}):
         result(f"note: Config.h keeps the {slug} block; the module is not selected")
-    added: list[str] = []
+    blocks: list[tuple[str, str]] = []
+    core = core_config_h(p)
+    if core is not None and CORE_SLUG not in present:
+        blocks.append((CORE_SLUG, config_block_for(CORE_SLUG, "the core", core.read_text(encoding="utf-8"))))
     for module in order:
         if module.slug in present or module.config_h is None:
             continue
+        blocks.append((module.slug, config_block(module, module.config_h.read_text(encoding="utf-8"))))
+    for _, block in blocks:
         if text and not text.endswith("\n"):
             text += "\n"
-        text += config_block(module, module.config_h.read_text(encoding="utf-8"))
-        added.append(module.slug)
+        text += block
+    added = [slug for slug, _ in blocks]
     if added:
         config_h.write_text(text, encoding="utf-8")
         log.info("Config.h: added the %s block(s)", ", ".join(added))

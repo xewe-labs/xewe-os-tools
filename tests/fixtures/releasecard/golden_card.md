@@ -45,7 +45,7 @@ What changed: everything.
 
 | Chip | Board id | Port | Defines | Firmware sha256 | Meta timestamp | Banner match | Flash step | Flash time |
 |---|---|---|---|---|---|---|---|---|
-| s3 | A0:F2:62:F1:5E:DC | /dev/ttyACM0 | XEWE_MODULE_LED_PIN_DATA=48 | `4f40ffef0eef23b0bedf683f83fa2b054d1b422d9197d7fe6a48352c2368eb01` | 2026-10-13T11:58:00Z | yes | 7-flash-s3 | 1.5 s |
+| s3 | A0:F2:62:F1:5E:DC | /dev/ttyACM0 | XEWE_LED_PIN_DATA=48 | `e22d7c01fbc80c06c8097f05153473d1eef81e1e9674d2a0daf424f156a4d251` | 2026-10-13T11:58:00Z | yes | 7-flash-s3 | 1.5 s |
 
 ## 4. Validator and checks
 
@@ -60,7 +60,7 @@ What changed: everything.
 
 ```text
 installing into build/
-Wi-Fi password «redacted:XEWE_WIFI_PASSWORD» stays in the dotenv file
+Wi-Fi password «redacted:XEWE_WIFI_PSW» stays in the dotenv file
 setup complete
 ```
 
@@ -97,12 +97,12 @@ brand-lint: clean
 | Test | Kind | Chip | Result | Detail |
 |---|---|---|---|---|
 | `modules/led/tests/board/test_led.py::test_render_priority` | board | c3 | SKIP (compiled, not run) | no board attached (board access disabled (--no-board / XEWE_NO_BOARD)) |
-| `modules/led/tests/board/test_led.py::test_render_priority` | board | s3 | PASS (hardware) | board s3 sn=A0:F2:62:F1:5E:DC fw 4f40ffef0eef XEWE_MODULE_LED_PIN_DATA=48 |
+| `modules/led/tests/board/test_led.py::test_render_priority` | board | s3 | PASS (hardware) | board s3 sn=A0:F2:62:F1:5E:DC fw e22d7c01fbc8 XEWE_LED_PIN_DATA=48 |
 | `modules/wifi/tests/unit/test_wifi.py::test_module_id` | unit | - | PASS | 0.00 s |
 | `tests/board/test_fw.py::test_compiles` | board | c3 | PASS (compile only) | built for c3, no board needed |
 | `tests/board/test_fw.py::test_compiles` | board | s3 | PASS (compile only) | built for s3, no board needed |
 | `tests/board/test_fw.py::test_status` | board | c3 | SKIP (compiled, not run) | no board attached (board access disabled (--no-board / XEWE_NO_BOARD)) |
-| `tests/board/test_fw.py::test_status` | board | s3 | PASS (hardware) | board s3 sn=A0:F2:62:F1:5E:DC fw 4f40ffef0eef XEWE_MODULE_LED_PIN_DATA=48 |
+| `tests/board/test_fw.py::test_status` | board | s3 | PASS (hardware) | board s3 sn=A0:F2:62:F1:5E:DC fw e22d7c01fbc8 XEWE_LED_PIN_DATA=48 |
 | `tests/board/test_ha.py::test_mqtt_round_trip` | board | c3 | SKIP (compiled, not run) | no board attached (board access disabled (--no-board / XEWE_NO_BOARD)) |
 | `tests/board/test_ha.py::test_mqtt_round_trip` | board | s3 | SKIP | needs an MQTT broker (XEWE_TEST_HA_MQTT_HOST) |
 | `tests/unit/test_logic.py::test_golden_tree` | unit | - | SKIP | XEWE_LED_OS_REPO not set |
@@ -116,7 +116,7 @@ The record of this run in `releases/3.1.0/logs` (not committed, not published).
 | File | Bytes | sha256 |
 |---|---|---|
 | 1-setup.build_config.toml | 622 | `6ccc85f02e2acbd1b2dda0b1e9d4846b38c187a6d61f1b0c88f6aaf3a852ac9f` |
-| 1-setup.log | 110 | `3170c5127264df2e8da4beaa29759d77d2d7f88e06c91edd9488d428480232d1` |
+| 1-setup.log | 105 | `a8dab2540f1293ddcaad46e96d680c01ab3e9ee821d9e82dc22d5e38cb86176b` |
 | 10-check-format.log | 52 | `09f3e4155658c963e349d88483950ef589a43b4bb2ee36175c8194ac09dc5845` |
 | 11-check-brand-lint.log | 18 | `bda010d633eeae56194d6295464ea2c0e0977f69156569e7282df247d0373ae7` |
 | 2-validate.log | 32 | `390f25d997a1ca5b0e0fd5ae8cd9f460880e61a8481eb0c1dc46d13c9d5df7c8` |
@@ -129,14 +129,14 @@ The record of this run in `releases/3.1.0/logs` (not committed, not published).
 | 5-build-s3.log | 61 | `fbfbc8e4b45aedb9cbda512e19bc2f8f400665a9ccc30dcc9c6c63011e014224` |
 | 5-build-s3.meta.json | 291 | `12e4a0ef9ad24e4938e159733b11bd322779c7fbb7efdc1817c80610cadc15e3` |
 | 6-flash-s3.log | 38 | `f953dbe9b2b69832e19a89c147f2406721d347ba07020f8306dce4cf62cbc777` |
-| 6-flash-s3.meta.json | 329 | `a13ba8ca11a6eea93140080416ec536bf1e6ab0e7b3d17710f94aa4aa7d4d815` |
+| 6-flash-s3.meta.json | 322 | `05b38d3c522308a41da81b879f11fa9066acfa23e25871699ce366c968cb8ba4` |
 | 7-flash-s3.log | 35 | `4b5583488b54f9adcf20f52c3e119bd4ea4428bd2bf24e97c3e2abd984ffb77b` |
-| 7-flash-s3.meta.json | 329 | `a13ba8ca11a6eea93140080416ec536bf1e6ab0e7b3d17710f94aa4aa7d4d815` |
+| 7-flash-s3.meta.json | 322 | `05b38d3c522308a41da81b879f11fa9066acfa23e25871699ce366c968cb8ba4` |
 | 8-board-s3.log | 20 | `97659866cf3da7125c6e6065e76d6ed0eac51b5555c7a21f8e867c291c62674f` |
-| 8-board-s3.xml | 2,619 | `c0d8e7412b95a46e92c1dff334e90a1ef009ee9dc430fcd31dc1cafc4eaeab87` |
+| 8-board-s3.xml | 2,619 | `317776a2306f9082324abc372352d45b92e5fb79eda10eac3468dedeb47d4944` |
 | 9-board-c3.log | 20 | `96363075e5abcb5427f7c70f96fe8190303431ebce91ea5d2e7729e89bb8f28f` |
 | 9-board-c3.xml | 2,577 | `c0af96f0159b0792e9ae4a9196922b9b99d3a6464dcc3a248cfedd7c555fd645` |
-| run.json | 9,559 | `394b84ef6937c81ec51c0f8575bee68198763f0d9530e31f6b23a4111a7c685f` |
+| run.json | 9,559 | `8caf59ac2eb446df1610998da603b2285c862668f6ba8d1d6077ab597f56fbd5` |
 
 ## 7. Not covered
 
@@ -153,4 +153,4 @@ The record of this run in `releases/3.1.0/logs` (not committed, not published).
 |---|---|---|---|---|
 | 6-flash-s3 | 1 | 2 | 1.5 s | 6-flash-s3.log |
 
-<!-- xewe-card-data {"schema":1,"tree":"sha256:229ee7bf123baa64bbba1a5e2b26d0b78cfd261c678a67e7b71a9780282b40a7","run":"20261013T120000Z-abcd","tests":[["modules/led/tests/board/test_led.py::test_render_priority","board","c3","SKIP (compiled, not run)"],["modules/led/tests/board/test_led.py::test_render_priority","board","s3","PASS (hardware)"],["modules/wifi/tests/unit/test_wifi.py::test_module_id","unit","-","PASS"],["tests/board/test_fw.py::test_compiles","board","c3","PASS (compile only)"],["tests/board/test_fw.py::test_compiles","board","s3","PASS (compile only)"],["tests/board/test_fw.py::test_status","board","c3","SKIP (compiled, not run)"],["tests/board/test_fw.py::test_status","board","s3","PASS (hardware)"],["tests/board/test_ha.py::test_mqtt_round_trip","board","c3","SKIP (compiled, not run)"],["tests/board/test_ha.py::test_mqtt_round_trip","board","s3","SKIP"],["tests/unit/test_logic.py::test_golden_tree","unit","-","SKIP"],["tests/unit/test_logic.py::test_known_gap","unit","-","XFAIL"],["tests/unit/test_logic.py::test_logic","unit","-","PASS"]],"images":{"c3":{"sketch_size":1123456,"static_ram":45678,"config":{}},"s3":{"sketch_size":1234567,"static_ram":45678,"config":{}}},"exclude":["releases/","releases/3.1.0/logs/"],"logs":{"1-setup.build_config.toml":"6ccc85f02e2acbd1b2dda0b1e9d4846b38c187a6d61f1b0c88f6aaf3a852ac9f","1-setup.log":"3170c5127264df2e8da4beaa29759d77d2d7f88e06c91edd9488d428480232d1","10-check-format.log":"09f3e4155658c963e349d88483950ef589a43b4bb2ee36175c8194ac09dc5845","11-check-brand-lint.log":"bda010d633eeae56194d6295464ea2c0e0977f69156569e7282df247d0373ae7","2-validate.log":"390f25d997a1ca5b0e0fd5ae8cd9f460880e61a8481eb0c1dc46d13c9d5df7c8","3-unit.log":"518b6d28ff982ea8d41d40c2c75a35dc1359b47c27c5969dc01e8ec9419402fd","3-unit.xml":"2adb48ebe7b653cfc3bb2371c6fd8fb147878b8405cf0983ef361d52e29c682e","4-build-c3.compile.log":"6c93c55061a8d5a9ff49aa6aa3e44a63fc414845d7ac1e6d4323de4b5ecbbc11","4-build-c3.log":"6a8a7ae6e56f9293b453dc64ff2c0d33c44f78f49360793201540d94d4d9ef77","4-build-c3.meta.json":"b731cf023859983a1687dbf08f0e3c214817ec20d875f10620ee0212cc2b23bc","5-build-s3.compile.log":"a9625b31680e956ec664d170b03ec497b9d1a7fc1f13ef0e7764172b0530e0e8","5-build-s3.log":"fbfbc8e4b45aedb9cbda512e19bc2f8f400665a9ccc30dcc9c6c63011e014224","5-build-s3.meta.json":"12e4a0ef9ad24e4938e159733b11bd322779c7fbb7efdc1817c80610cadc15e3","6-flash-s3.log":"f953dbe9b2b69832e19a89c147f2406721d347ba07020f8306dce4cf62cbc777","6-flash-s3.meta.json":"a13ba8ca11a6eea93140080416ec536bf1e6ab0e7b3d17710f94aa4aa7d4d815","7-flash-s3.log":"4b5583488b54f9adcf20f52c3e119bd4ea4428bd2bf24e97c3e2abd984ffb77b","7-flash-s3.meta.json":"a13ba8ca11a6eea93140080416ec536bf1e6ab0e7b3d17710f94aa4aa7d4d815","8-board-s3.log":"97659866cf3da7125c6e6065e76d6ed0eac51b5555c7a21f8e867c291c62674f","8-board-s3.xml":"c0d8e7412b95a46e92c1dff334e90a1ef009ee9dc430fcd31dc1cafc4eaeab87","9-board-c3.log":"96363075e5abcb5427f7c70f96fe8190303431ebce91ea5d2e7729e89bb8f28f","9-board-c3.xml":"c0af96f0159b0792e9ae4a9196922b9b99d3a6464dcc3a248cfedd7c555fd645","run.json":"394b84ef6937c81ec51c0f8575bee68198763f0d9530e31f6b23a4111a7c685f"},"repo":"xewe-labs/demo","version":"3.1.0","commit":"1234567890abcdef1234567890abcdef12345678","chips":["c3","s3"],"hardware":["s3"],"require":["setup","validate","unit","build","board"],"card_sha256":"ce5d141140ce631c00a9ebc9e465508a769e5aa5288cf578454106b65d201080"} -->
+<!-- xewe-card-data {"schema":1,"tree":"sha256:229ee7bf123baa64bbba1a5e2b26d0b78cfd261c678a67e7b71a9780282b40a7","run":"20261013T120000Z-abcd","tests":[["modules/led/tests/board/test_led.py::test_render_priority","board","c3","SKIP (compiled, not run)"],["modules/led/tests/board/test_led.py::test_render_priority","board","s3","PASS (hardware)"],["modules/wifi/tests/unit/test_wifi.py::test_module_id","unit","-","PASS"],["tests/board/test_fw.py::test_compiles","board","c3","PASS (compile only)"],["tests/board/test_fw.py::test_compiles","board","s3","PASS (compile only)"],["tests/board/test_fw.py::test_status","board","c3","SKIP (compiled, not run)"],["tests/board/test_fw.py::test_status","board","s3","PASS (hardware)"],["tests/board/test_ha.py::test_mqtt_round_trip","board","c3","SKIP (compiled, not run)"],["tests/board/test_ha.py::test_mqtt_round_trip","board","s3","SKIP"],["tests/unit/test_logic.py::test_golden_tree","unit","-","SKIP"],["tests/unit/test_logic.py::test_known_gap","unit","-","XFAIL"],["tests/unit/test_logic.py::test_logic","unit","-","PASS"]],"images":{"c3":{"sketch_size":1123456,"static_ram":45678,"config":{}},"s3":{"sketch_size":1234567,"static_ram":45678,"config":{}}},"exclude":["releases/","releases/3.1.0/logs/"],"logs":{"1-setup.build_config.toml":"6ccc85f02e2acbd1b2dda0b1e9d4846b38c187a6d61f1b0c88f6aaf3a852ac9f","1-setup.log":"a8dab2540f1293ddcaad46e96d680c01ab3e9ee821d9e82dc22d5e38cb86176b","10-check-format.log":"09f3e4155658c963e349d88483950ef589a43b4bb2ee36175c8194ac09dc5845","11-check-brand-lint.log":"bda010d633eeae56194d6295464ea2c0e0977f69156569e7282df247d0373ae7","2-validate.log":"390f25d997a1ca5b0e0fd5ae8cd9f460880e61a8481eb0c1dc46d13c9d5df7c8","3-unit.log":"518b6d28ff982ea8d41d40c2c75a35dc1359b47c27c5969dc01e8ec9419402fd","3-unit.xml":"2adb48ebe7b653cfc3bb2371c6fd8fb147878b8405cf0983ef361d52e29c682e","4-build-c3.compile.log":"6c93c55061a8d5a9ff49aa6aa3e44a63fc414845d7ac1e6d4323de4b5ecbbc11","4-build-c3.log":"6a8a7ae6e56f9293b453dc64ff2c0d33c44f78f49360793201540d94d4d9ef77","4-build-c3.meta.json":"b731cf023859983a1687dbf08f0e3c214817ec20d875f10620ee0212cc2b23bc","5-build-s3.compile.log":"a9625b31680e956ec664d170b03ec497b9d1a7fc1f13ef0e7764172b0530e0e8","5-build-s3.log":"fbfbc8e4b45aedb9cbda512e19bc2f8f400665a9ccc30dcc9c6c63011e014224","5-build-s3.meta.json":"12e4a0ef9ad24e4938e159733b11bd322779c7fbb7efdc1817c80610cadc15e3","6-flash-s3.log":"f953dbe9b2b69832e19a89c147f2406721d347ba07020f8306dce4cf62cbc777","6-flash-s3.meta.json":"05b38d3c522308a41da81b879f11fa9066acfa23e25871699ce366c968cb8ba4","7-flash-s3.log":"4b5583488b54f9adcf20f52c3e119bd4ea4428bd2bf24e97c3e2abd984ffb77b","7-flash-s3.meta.json":"05b38d3c522308a41da81b879f11fa9066acfa23e25871699ce366c968cb8ba4","8-board-s3.log":"97659866cf3da7125c6e6065e76d6ed0eac51b5555c7a21f8e867c291c62674f","8-board-s3.xml":"317776a2306f9082324abc372352d45b92e5fb79eda10eac3468dedeb47d4944","9-board-c3.log":"96363075e5abcb5427f7c70f96fe8190303431ebce91ea5d2e7729e89bb8f28f","9-board-c3.xml":"c0af96f0159b0792e9ae4a9196922b9b99d3a6464dcc3a248cfedd7c555fd645","run.json":"8caf59ac2eb446df1610998da603b2285c862668f6ba8d1d6077ab597f56fbd5"},"repo":"xewe-labs/demo","version":"3.1.0","commit":"1234567890abcdef1234567890abcdef12345678","chips":["c3","s3"],"hardware":["s3"],"require":["setup","validate","unit","build","board"],"card_sha256":"b66dd3a8a8a6c7595aec47aa9067159479600cea2dfcd4b7415e40efb0fa6144"} -->

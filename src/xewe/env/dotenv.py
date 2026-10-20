@@ -11,10 +11,14 @@ Which file, first found wins:
 
 No file is not an error. Lines are ``KEY=VALUE``; ``#`` comments, blank lines, an ``export ``
 prefix and single or double quotes around the value are allowed; nothing is interpolated. Only
-``XEWE_*`` keys with a non-empty value are applied (an empty value counts as unset), and only
-when the variable is not already set: the real environment
+``XEWE_*`` keys with a non-empty value are applied to the environment (an empty value counts as
+unset), and only when the variable is not already set: the real environment
 wins over the file, flags win over both. Values are never logged; errors name the file, line and
 key only.
+
+Injection (``injected()``): a project ``Config.h`` line ``#define NAME INJECTED_FROM_DOTENV`` takes
+the value of NAME from the real environment, else from the file (any key name, read from the parsed
+file, not from what was applied), and ``xewe build`` writes it into ``XeWeBuildInfo.h``.
 
 Nothing writes the file: ``xewe setup`` prints where to put it when none is found (``hint()``).
 """
@@ -22,6 +26,7 @@ Nothing writes the file: ``xewe setup`` prints where to put it when none is foun
 from __future__ import annotations
 
 import os
+import re
 import tomllib
 from collections.abc import Iterable, Mapping, MutableMapping
 from pathlib import Path
@@ -33,12 +38,11 @@ FILENAME = ".env"
 ENV_VAR = "XEWE_ENV"
 PREFIX = "XEWE_"
 KEYS: dict[str, str] = {
-    "XEWE_DEVICE_NAME": "device name the first boot asks for; first provision: optional "
+    "XEWE_CORE_DEVICE_NAME": "device name the first boot asks for; first provision: optional "
     "(default: [project] name in xewe.toml, else the folder name)",
     "XEWE_WIFI_SSID": "Wi-Fi network name; first provision: needed when the wifi module is enabled",
-    "XEWE_WIFI_PASSWORD": "Wi-Fi password, masked in all output; first provision: needed when the wifi "
-    "module is enabled",
-    "XEWE_TIMEZONE": "GMT+HH:MM, set instead of the detected timezone; first provision: optional "
+    "XEWE_WIFI_PSW": "Wi-Fi password, masked in all output; first provision: needed when the wifi module is enabled",
+    "XEWE_TIME_TZ_GMT_STR": "GMT+HH:MM, set instead of the detected timezone; first provision: optional "
     "(empty accepts the detected one)",
     "XEWE_PROVISION_MODULES": "modules to enable at their prompt: all, none or a comma list; first "
     "provision: optional (default all)",
@@ -62,6 +66,11 @@ OTHER_KEYS = (
     "XEWE_TOOLS_SOURCE",
 )
 """Other variables the tools read; allowed in the file too."""
+SENTINEL = "INJECTED_FROM_DOTENV"
+"""The value a ``Config.h`` define carries to take its value from the dotenv file."""
+SENTINEL_RE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)[ \t]+" + SENTINEL + r"[ \t]*(?://.*|/\*.*)?$")
+NUMBER_RE = re.compile(r"[-+]?(?:0[xX][0-9A-Fa-f]+|(?:(?:0|[1-9]\d*)(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)")
+"""A value written bare: hexadecimal, decimal without a leading zero (``010`` would be octal in C), floating."""
 
 
 def parse(text: str, source: str = "<text>") -> dict[str, str]:
@@ -148,17 +157,29 @@ def find(
     return next((c for c in candidates if c.is_file()), None)
 
 
+def select(explicit: str | Path | None, environ: MutableMapping[str, str] | None = None) -> None:
+    """``--env FILE``: check the file exists (exit 2 otherwise) and set ``XEWE_ENV`` to it, so every
+    later reader in this process (dotenv injection of the build, the pytest plugin) uses that file."""
+    if not explicit:
+        return
+    env = os.environ if environ is None else environ
+    env[ENV_VAR] = str(find(None, explicit, env))
+
+
 def load_settings(
     project_root: Path | None, explicit: str | Path | None = None, environ: MutableMapping[str, str] | None = None
 ) -> Path | None:
     """Find the file, apply its ``XEWE_*`` keys; log the path and key count only. Returns the path."""
     env = os.environ if environ is None else environ
-    path = find(project_root, explicit, env)
+    select(explicit, env)
+    path = find(project_root, None, env)
     if path is None:
         log.debug("no %s file (project, tools checkout) and no --env/%s", FILENAME, ENV_VAR)
         return None
     values = load([path])
     known = set(KEYS) | set(OTHER_KEYS)
+    if project_root is not None:
+        known |= {name for _, name in sentinels(project_root / "Config.h")}
     for key in sorted(values):
         if key.startswith(PREFIX) and key not in known:
             log.warning("%s: unknown key %s (known: %s)", path, key, ", ".join(KEYS))
@@ -168,11 +189,71 @@ def load_settings(
     return path
 
 
+def sentinels(config_h: Path) -> list[tuple[int, str]]:
+    """``(line number, NAME)`` of each active ``#define NAME INJECTED_FROM_DOTENV`` line of
+    ``config_h`` (a commented-out line does not count; the first line of a NAME wins); ``[]`` when
+    the file is missing."""
+    try:
+        text = config_h.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return []
+    out: list[tuple[int, str]] = []
+    seen: set[str] = set()
+    for n, line in enumerate(text.splitlines(), 1):
+        m = SENTINEL_RE.match(line)
+        if m and m[1] not in seen:
+            seen.add(m[1])
+            out.append((n, m[1]))
+    return out
+
+
+def c_literal(value: str) -> str:
+    """The C token for an injected value: an integer or floating literal bare, anything else a
+    string literal (backslash, double quote and control characters escaped)."""
+    if NUMBER_RE.fullmatch(value):
+        return value
+    escapes = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t"}
+    body = "".join(escapes.get(ch) or (f"\\{ord(ch):03o}" if ord(ch) < 0x20 or ord(ch) == 0x7F else ch) for ch in value)
+    return f'"{body}"'
+
+
+def injected(
+    config_h: Path,
+    project_root: Path | None,
+    skip: Iterable[str] = (),
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """``{NAME: C literal}`` for each sentinel line of ``config_h`` whose NAME is not in ``skip``
+    (the ``--define`` keys, which win). The value is the real environment variable NAME, else the
+    dotenv file's NAME (``find``). A missing or empty value is exit 2 naming the ``Config.h`` line
+    and the file looked in; the value itself is never part of a message."""
+    env = os.environ if environ is None else environ
+    wanted = [(n, name) for n, name in sentinels(config_h) if name not in set(skip)]
+    if not wanted:
+        return {}
+    path = find(project_root, None, env)
+    values = load([path]) if path is not None else {}
+    where = str(path) if path is not None else "no dotenv file found"
+    out: dict[str, str] = {}
+    missing: list[str] = []
+    for n, name in wanted:
+        value = env.get(name) or values.get(name) or ""
+        if value:
+            out[name] = c_literal(value)
+        else:
+            missing.append(
+                f"{config_h.name}:{n}: {name} is {SENTINEL} but the dotenv file has no value (looked in {where})"
+            )
+    if missing:
+        raise XeWeError("\n".join(missing), EXIT_USAGE)
+    return out
+
+
 def hint(project_root: Path) -> str:
     """One line for setup when no file is found: where to put it and which keys."""
     tools = tools_checkout(project_root)
     where = f"{project_root / FILENAME}" + (f" or {tools / FILENAME}" if tools is not None else "")
     return (
-        f"no {FILENAME} file: for provisioning put XEWE_WIFI_SSID and XEWE_WIFI_PASSWORD "
-        f"(optional: XEWE_DEVICE_NAME, XEWE_TIMEZONE, XEWE_PORT, XEWE_CHIP) in {where}"
+        f"no {FILENAME} file: for provisioning put XEWE_WIFI_SSID and XEWE_WIFI_PSW "
+        f"(optional: XEWE_CORE_DEVICE_NAME, XEWE_TIME_TZ_GMT_STR, XEWE_PORT, XEWE_CHIP) in {where}"
     )

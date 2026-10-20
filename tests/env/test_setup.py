@@ -705,10 +705,10 @@ def test_setup_writes_no_dotenv_and_tools_checkout_file_is_used(
     assert main(["setup", "--modules", "none"]) == 0
     assert not (fresh.root / dotenv.FILENAME).exists()
     assert dotenv.hint(fresh.root) in caplog.text and "XEWE_WIFI_SSID" in caplog.text
-    (tools / dotenv.FILENAME).write_text("XEWE_WIFI_SSID=Net\nXEWE_WIFI_PASSWORD=pw\n")
+    (tools / dotenv.FILENAME).write_text("XEWE_WIFI_SSID=Net\nXEWE_WIFI_PSW=pw\n")
     caplog.clear()
     assert main(["setup"]) == 0
     assert not (fresh.root / dotenv.FILENAME).exists() and "no .env file" not in caplog.text
     env: dict[str, str] = {}
     assert dotenv.load_settings(fresh.root, None, env) == tools / dotenv.FILENAME
-    assert env == {"XEWE_WIFI_SSID": "Net", "XEWE_WIFI_PASSWORD": "pw"}
+    assert env == {"XEWE_WIFI_SSID": "Net", "XEWE_WIFI_PSW": "pw"}

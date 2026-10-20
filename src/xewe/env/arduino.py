@@ -196,14 +196,36 @@ def install_core(
         raise XeWeError(f"{CORE_ID} reports {got!r} after install, expected {version}", EXIT_NOT_SETUP)
 
 
-def config_flags(chip: Chip, p: Paths, sketch_dir: Path) -> str:
+BUILD_INFO_HEADER = "XeWeBuildInfo.h"
+"""Generated header with version, timestamp and chip; read before the project's ``Config.h``."""
+OVERRIDES_HEADER = "XeWeOverrides.h"
+"""Generated header with the ``--define`` and dotenv-injected values; read after the project's ``Config.h``."""
+
+
+def sketch_config_h(chip: Chip, p: Paths) -> Path:
+    """The project's ``Config.h`` as arduino-cli compiles it: the copy it makes of the sketch in
+    ``<build path>/sketch/`` before anything is compiled, the file the sketch's own
+    ``#include "Config.h"`` opens."""
+    return p.cache_dir(chip.name) / "sketch" / "Config.h"
+
+
+def config_flags(chip: Chip, p: Paths) -> str:
     """``compiler.cpp.extra_flags`` of the compile: every C++ translation unit (the sketch, the
-    modules, every library and the esp32 core) starts with the project's ``Config.h``, so a value
-    set there reaches the module sources too. The ``-I`` lets its ``#include <XeWeBuildInfo.h>``
-    resolve in the core as well, which arduino-cli compiles with the core and variant include
-    paths only. Paths are absolute and quoted; arduino-cli splits the recipe on unquoted spaces."""
+    modules, every library and the esp32 core) starts with three headers. ``XeWeBuildInfo.h`` comes
+    first, so ``Config.h`` can test ``XEWE_CHIP_<chip>``; then the project's ``Config.h``, so a value
+    set there reaches the module sources too; then ``XeWeOverrides.h``, which ``#undef``s and
+    redefines every ``--define`` and dotenv-injected name, so those win over any line of
+    ``Config.h``, guarded or not. ``Config.h`` is named by its build-path copy
+    (``sketch_config_h``): the sketch includes that file, and ``#pragma once`` only skips the same
+    file, so naming another copy would read ``Config.h`` again after the overrides. The ``-I`` lets
+    an ``#include <XeWeBuildInfo.h>`` resolve in the core as well, which arduino-cli compiles with
+    the core and variant include paths only. Paths are absolute and quoted; arduino-cli splits the
+    recipe on unquoted spaces."""
     gen = p.gen_dir(chip.name) / "XeWeBuildInfo" / "src"
-    return f'-I "{gen}" -include "{sketch_dir / "Config.h"}"'
+    return (
+        f'-I "{gen}" -include "{gen / BUILD_INFO_HEADER}" -include "{sketch_config_h(chip, p)}" '
+        f'-include "{gen / OVERRIDES_HEADER}"'
+    )
 
 
 def compile_argv(cli: str, chip: Chip, p: Paths, sketch_dir: Path, scheme: str = DEFAULT_PARTITION_SCHEME) -> list[str]:
@@ -223,7 +245,7 @@ def compile_argv(cli: str, chip: Chip, p: Paths, sketch_dir: Path, scheme: str =
         "--library",
         p.rel(p.gen_dir(chip.name) / "XeWeBuildInfo"),
         "--build-property",
-        f"compiler.cpp.extra_flags={config_flags(chip, p, sketch_dir)}",
+        f"compiler.cpp.extra_flags={config_flags(chip, p)}",
         "--warnings",
         "default",
         "--jobs",

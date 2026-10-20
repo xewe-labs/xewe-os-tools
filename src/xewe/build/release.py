@@ -26,7 +26,7 @@ from typing import Any
 
 from xewe.build import chips
 from xewe.build import compile as build
-from xewe.env import config, fetch
+from xewe.env import config, dotenv, fetch
 from xewe.env.project import Paths
 from xewe.modules import lockfile
 from xewe.modules.lockfile import Lock
@@ -268,6 +268,18 @@ def _check_tree(p: Paths) -> None:
         log.warning("uncommitted changes in the working tree:\n%s", "\n".join(dirty))
 
 
+def check_no_sentinel(p: Paths) -> None:
+    """Refuse (exit 2) a ``Config.h`` with an active ``INJECTED_FROM_DOTENV`` line: a release image
+    is built from the committed ``Config.h`` and the matrix only, never from a dotenv file."""
+    found = dotenv.sentinels(p.root / "Config.h")
+    if found:
+        lines = "\n".join(f"Config.h:{n}: {name} is {dotenv.SENTINEL}" for n, name in found)
+        raise XeWeError(
+            f"{lines}\na release takes no value from the dotenv file: set the value in Config.h or comment the line out",
+            EXIT_USAGE,
+        )
+
+
 def interactive() -> bool:
     """True when ``$EDITOR`` may be opened for the notes: stdin is a terminal and
     ``XEWE_NONINTERACTIVE`` is not ``1``."""
@@ -399,6 +411,7 @@ def release(
         raise XeWeError(f"{version} is less than the current version {lock.version}", EXIT_USAGE)
     if chip is not None and assemble:
         raise XeWeError("--chip and --assemble do not go together", EXIT_USAGE)
+    check_no_sentinel(p)
     _check_tree(p)
     matrix = load_matrix(p, matrix_file)
 

@@ -134,6 +134,14 @@ def parser() -> argparse.ArgumentParser:
     )
     sp.add_argument("--clean", action="store_true", help="drop the compile cache first")
     sp.add_argument("--dry-run", action="store_true", help="print the arduino-cli command; do not run it")
+    sp.add_argument(
+        "--env",
+        dest="env_file",
+        type=Path,
+        metavar="FILE",
+        help="dotenv file the Config.h INJECTED_FROM_DOTENV values come from; default: XEWE_ENV, else .env in "
+        "the project, else .env in the xewe-os-tools source checkout (the real environment wins over the file)",
+    )
 
     sp = sub.add_parser("flash", help="build if needed, then write the image to the board")
     _chip_args(sp, all_chips=False)
@@ -204,7 +212,7 @@ def parser() -> argparse.ArgumentParser:
         "provision",
         help="answer the first-boot prompts (name, modules, Wi-Fi, timezone) of a flashed board",
         description="Answer the first-boot prompts of a freshly flashed board. Values: flags, then the environment "
-        "(XEWE_DEVICE_NAME, XEWE_WIFI_SSID, XEWE_WIFI_PASSWORD, XEWE_TIMEZONE, XEWE_PROVISION_MODULES), "
+        "(XEWE_CORE_DEVICE_NAME, XEWE_WIFI_SSID, XEWE_WIFI_PSW, XEWE_TIME_TZ_GMT_STR, XEWE_PROVISION_MODULES), "
         "then the dotenv file, then defaults. Dotenv file, first found wins: --env/--from FILE, else "
         "XEWE_ENV, else .env in the project directory, else .env in the xewe-os-tools source checkout "
         "(you create it; the keys are in the tools README). With the file in place no flags are needed. The Wi-Fi password has no "
@@ -502,6 +510,8 @@ def dispatch(args: argparse.Namespace, extra: list[str]) -> int:
     p = Paths(find_root(args.project, library=cmd in LIBRARY_COMMANDS))
     if cmd in ENV_COMMANDS:
         dotenv.load_settings(p.root, getattr(args, "env_file", None))
+    elif cmd == "build":
+        dotenv.select(args.env_file)  # read only for the Config.h injection; nothing is applied
     if cmd == "setup":
         opts = setup.SetupOptions(
             latest=args.latest,

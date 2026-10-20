@@ -18,23 +18,23 @@ def test_parse_comments_quotes_export() -> None:
         "# comment\n"
         "\n"
         "XEWE_WIFI_SSID=My Net\n"
-        "  export XEWE_DEVICE_NAME = 'Kitchen Lights'  \n"
-        'XEWE_WIFI_PASSWORD="pa ss#word=x"\n'
-        "XEWE_TIMEZONE=\n"
+        "  export XEWE_CORE_DEVICE_NAME = 'Kitchen Lights'  \n"
+        'XEWE_WIFI_PSW="pa ss#word=x"\n'
+        "XEWE_TIME_TZ_GMT_STR=\n"
         "XEWE_CHIP='s3\n"  # unbalanced quote: kept as is
         "XEWE_PORT=$HOME/dev\n"  # no interpolation
     )
     assert parse(text) == {
         "XEWE_WIFI_SSID": "My Net",
-        "XEWE_DEVICE_NAME": "Kitchen Lights",
-        "XEWE_WIFI_PASSWORD": "pa ss#word=x",
-        "XEWE_TIMEZONE": "",
+        "XEWE_CORE_DEVICE_NAME": "Kitchen Lights",
+        "XEWE_WIFI_PSW": "pa ss#word=x",
+        "XEWE_TIME_TZ_GMT_STR": "",
         "XEWE_CHIP": "'s3",
         "XEWE_PORT": "$HOME/dev",
     }
 
 
-@pytest.mark.parametrize("text", [f"XEWE_WIFI_PASSWORD {SECRET}\n", f"=={SECRET}\n", f"BAD KEY={SECRET}\n"])
+@pytest.mark.parametrize("text", [f"XEWE_WIFI_PSW {SECRET}\n", f"=={SECRET}\n", f"BAD KEY={SECRET}\n"])
 def test_parse_error_names_line_not_value(text: str) -> None:
     with pytest.raises(XeWeError) as exc:
         parse("# ok\n" + text, "/x/.env")
@@ -73,8 +73,8 @@ def layout(tmp_path: Path) -> tuple[Path, Path, Path]:
     )
     other = tmp_path / "elsewhere.env"
     for d, tag in ((project, "project"), (tools, "tools")):
-        (d / ".env").write_text(f"XEWE_DEVICE_NAME={tag}\n")
-    other.write_text("XEWE_DEVICE_NAME=other\n")
+        (d / ".env").write_text(f"XEWE_CORE_DEVICE_NAME={tag}\n")
+    other.write_text("XEWE_CORE_DEVICE_NAME=other\n")
     return project, tools, other
 
 
@@ -115,13 +115,13 @@ def test_load_settings_logs_count_never_values(
 ) -> None:
     project, _, _ = layout
     (project / ".env").write_text(
-        f"XEWE_WIFI_PASSWORD={SECRET}\nXEWE_WIFI_SSID=Net\nXEWE_ENV=/ignored\nOTHER_SECRET={SECRET}\n"
+        f"XEWE_WIFI_PSW={SECRET}\nXEWE_WIFI_SSID=Net\nXEWE_ENV=/ignored\nOTHER_SECRET={SECRET}\n"
         "XEWE_WIFI_PASWORD=typo\n"
     )
     env = {"XEWE_WIFI_SSID": "Real"}
     caplog.set_level("DEBUG", logger="xewe")
     assert load_settings(project, None, env) == project / ".env"
-    assert env == {"XEWE_WIFI_SSID": "Real", "XEWE_WIFI_PASSWORD": SECRET, "XEWE_WIFI_PASWORD": "typo"}
+    assert env == {"XEWE_WIFI_SSID": "Real", "XEWE_WIFI_PSW": SECRET, "XEWE_WIFI_PASWORD": "typo"}
     assert f"loaded 3 keys from {project / '.env'}" in caplog.text
     assert "unknown key XEWE_WIFI_PASWORD" in caplog.text
     assert SECRET not in caplog.text and "typo" not in caplog.text
@@ -132,5 +132,78 @@ def test_hint_names_both_paths_and_provisioning_keys(tmp_path: Path, monkeypatch
     line = dotenv.hint(tmp_path / "proj")
     assert "\n" not in line
     assert str(tmp_path / "proj" / dotenv.FILENAME) in line and str(tmp_path / "tools" / dotenv.FILENAME) in line
-    assert "XEWE_WIFI_SSID" in line and "XEWE_WIFI_PASSWORD" in line
+    assert "XEWE_WIFI_SSID" in line and "XEWE_WIFI_PSW" in line
     assert not hasattr(dotenv, "write_skeleton")
+
+
+def test_sentinels_active_lines_only(tmp_path: Path) -> None:
+    config_h = tmp_path / "Config.h"
+    assert dotenv.sentinels(config_h) == []  # no file
+    config_h.write_text(
+        "#pragma once\n"
+        "// #define XEWE_A INJECTED_FROM_DOTENV\n"
+        "#define XEWE_B INJECTED_FROM_DOTENV\n"
+        "  #  define XEWE_C INJECTED_FROM_DOTENV  // comment\n"
+        "#define XEWE_D INJECTED_FROM_DOTENV_X\n"
+        '#define XEWE_E "INJECTED_FROM_DOTENV"\n'
+        "#define XEWE_B INJECTED_FROM_DOTENV\n"
+        "#define XEWE_F 1 /* INJECTED_FROM_DOTENV */\n"
+    )
+    assert dotenv.sentinels(config_h) == [(3, "XEWE_B"), (4, "XEWE_C")]
+
+
+@pytest.mark.parametrize(
+    ("value", "literal"),
+    [
+        ("12", "12"),
+        ("-3", "-3"),
+        ("0", "0"),
+        ("0x1F", "0x1F"),
+        ("1.5", "1.5"),
+        ("2e3", "2e3"),
+        ("010", '"010"'),  # a leading zero would be octal in C: kept as text
+        ("GMT+01:00", '"GMT+01:00"'),
+        ('a "b" \\ c', '"a \\"b\\" \\\\ c"'),
+        ("tab\there\x01", '"tab\\there\\001"'),
+        ("Küche", '"Küche"'),
+    ],
+)
+def test_c_literal(value: str, literal: str) -> None:
+    assert dotenv.c_literal(value) == literal
+
+
+def test_injected_precedence_and_skip(tmp_path: Path) -> None:
+    config_h = tmp_path / "Config.h"
+    config_h.write_text(
+        "#define XEWE_A INJECTED_FROM_DOTENV\n#define XEWE_B INJECTED_FROM_DOTENV\n#define C_KEY INJECTED_FROM_DOTENV\n"
+    )
+    env_file = tmp_path / "bench-env.txt"
+    env_file.write_text("XEWE_A=file\nXEWE_B=file\nC_KEY=7\n")  # any key name, not only XEWE_*
+    environ = {dotenv.ENV_VAR: str(env_file), "XEWE_A": "real", "XEWE_B": ""}
+    assert dotenv.injected(config_h, tmp_path, environ=environ) == {
+        "XEWE_A": '"real"',
+        "XEWE_B": '"file"',
+        "C_KEY": "7",
+    }
+    assert dotenv.injected(config_h, tmp_path, skip={"XEWE_A", "XEWE_B", "C_KEY"}, environ=environ) == {}
+
+
+def test_load_settings_knows_the_config_h_sentinel_keys(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    project = write_project(tmp_path / "proj").root
+    (project / "Config.h").write_text("#define XEWE_LED_VOLTAGE INJECTED_FROM_DOTENV\n")
+    env_file = tmp_path / "bench-env.txt"
+    env_file.write_text("XEWE_LED_VOLTAGE=12\nXEWE_LED_TYPO=1\n")
+    env: dict[str, str] = {}
+    caplog.set_level("DEBUG", logger="xewe")
+    assert load_settings(project, env_file, env) == env_file
+    assert "unknown key XEWE_LED_TYPO" in caplog.text and "unknown key XEWE_LED_VOLTAGE" not in caplog.text
+    assert env[dotenv.ENV_VAR] == str(env_file)  # --env names the file for every later reader
+
+
+def test_select_checks_the_file(tmp_path: Path) -> None:
+    env: dict[str, str] = {}
+    dotenv.select(None, env)
+    assert env == {}
+    with pytest.raises(XeWeError) as exc:
+        dotenv.select(tmp_path / "missing-env.txt", env)
+    assert exc.value.code == 2 and env == {}
