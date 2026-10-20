@@ -39,7 +39,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/card/junit" "$RUNNER_TEMP/card/meta"
+          mkdir -p "$RUNNER_TEMP/card/junit"
           ARDUINOJSON_SRC="$RUNNER_TEMP/ArduinoJson/src" tests/unit/run.sh 2>&1 | tee "$RUNNER_TEMP/card/junit/tests-unit.log"
       - name: Upload the card inputs
         uses: actions/upload-artifact@v7
@@ -97,7 +97,9 @@ jobs:
         with:
           name: card-inputs
           path: ${{ runner.temp }}/card
-      # CI runs the unit tests only, so the card's board rows are not compared (--unit-only, §14)
+      # CI runs the unit tests only, so the card's board rows are not compared (--unit-only, §14).
+      # No --meta-dir: this workflow builds no firmware image, so the card's image rows are not
+      # compared either (an artifact keeps no empty directory, so an empty meta dir would not arrive).
       - name: xewe release-card verify --ci
         if: steps.find.outputs.cards != ''
         env:
@@ -108,7 +110,7 @@ jobs:
           read -ra cards <<< "$CARDS"
           for card in "${cards[@]}"; do
             "$RUNNER_TEMP/venv/bin/python" -m xewe release-card verify --ci --unit-only --card "$card" \
-              --junit-dir "$RUNNER_TEMP/card/junit" --meta-dir "$RUNNER_TEMP/card/meta"
+              --junit-dir "$RUNNER_TEMP/card/junit"
           done
 
   # Run from the checkout root (no path): arduino-lint reads a relative "." as the folder name and
