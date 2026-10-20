@@ -55,6 +55,29 @@ def checkout(request: pytest.FixtureRequest, tmp_path: Path) -> Path:
     return make_modules_checkout(tmp_path / "checkout", request.param)
 
 
+def bars(name: str) -> str:
+    """The bar, the ``start`` line and the bar of a block."""
+    line = f"/* ---- start {name} ---- */"
+    bar = "/" + "*" * (len(line) - 2) + "/"
+    return f"{bar}\n{line}\n{bar}\n"
+
+
+def end_bars(name: str) -> str:
+    """The bar, the ``end`` line and the bar of a block."""
+    line = f"/* ---- end {name} ---- */"
+    bar = "/" + "*" * (len(line) - 2) + "/"
+    return f"{bar}\n{line}\n{bar}\n"
+
+
+def sections(runtime: str = "", constants: str = "") -> str:
+    """The two sections of a block around ``runtime`` and ``constants`` (entry lines, or empty)."""
+    out = []
+    for name, body in (("default runtime values", runtime), ("compile time defined constants", constants)):
+        inner = f"{body}\n" if body else ""
+        out.append(f"/* ---- start {name} ---- */\n\n{inner}{'' if not body else chr(10)}/* ---- end {name} ---- */\n")
+    return "\n".join(out)
+
+
 PINS_CONFIG_H = """\
 // SPDX-FileCopyrightText: 2026 Someone
 // SPDX-License-Identifier: GPL-3.0-only
@@ -66,15 +89,11 @@ PINS_CONFIG_H = """\
 #define XEWE_PINS_CLAIMS_MAX 8
 #endif
 """
-PINS_BLOCK = """
-/* ---- pins (xewe modules generate) ---- */
-// Values of the pins module. Edit the numbers; keep this marker and the end marker.
-// Claim slots.
-#ifndef XEWE_PINS_CLAIMS_MAX
-#define XEWE_PINS_CLAIMS_MAX 8
-#endif
-/* ---- end pins ---- */
-"""
+PINS_BLOCK = (
+    bars("pins")
+    + "// Claim slots.\n#ifndef XEWE_PINS_CLAIMS_MAX\n#define XEWE_PINS_CLAIMS_MAX 8\n#endif\n\n"
+    + end_bars("pins")
+)
 PROJECT_CONFIG_H = "#pragma once\n#include <XeWeBuildInfo.h>\n"
 
 
@@ -163,10 +182,8 @@ def test_generate_appends_config_blocks(tmp_path: Path, checkout: Path, capsys: 
     assert Registry.load(checkout).get("buttons").config_h is None
     modules.generate(p, Registry.load(checkout), ["pins", "buttons", "wifi"], "s", "r", "c")
     text = config_h.read_text()
-    assert text == PROJECT_CONFIG_H + PINS_BLOCK + (
-        "\n/* ---- wifi (xewe modules generate) ---- */\n"
-        "// Values of the wifi module. Edit the numbers; keep this marker and the end marker.\n"
-        "#ifndef XEWE_WIFI_DEBUG\n#define XEWE_WIFI_DEBUG 0\n#endif\n/* ---- end wifi ---- */\n"
+    assert text == PROJECT_CONFIG_H + "\n" + PINS_BLOCK + "\n" + (
+        bars("wifi") + "#ifndef XEWE_WIFI_DEBUG\n#define XEWE_WIFI_DEBUG 0\n#endif\n\n" + end_bars("wifi")
     )
     assert "buttons" not in text  # a module without Config.h adds no block
     # a second generate is a no-op, byte for byte
@@ -196,11 +213,7 @@ def test_config_block_strips_the_header() -> None:
     # no #pragma once: only the SPDX lines go
     text = "// SPDX-FileCopyrightText: x\n// SPDX-License-Identifier: y\n#ifndef A\n#define A 1\n#endif\n"
     module = modules.Module(Path("/x"), "led", {"slug": "led", "folder": "Led"})
-    assert modules.config_block(module, text) == (
-        "\n/* ---- led (xewe modules generate) ---- */\n"
-        "// Values of the led module. Edit the numbers; keep this marker and the end marker.\n"
-        "#ifndef A\n#define A 1\n#endif\n/* ---- end led ---- */\n"
-    )
+    assert modules.config_block(module, text) == (bars("led") + "#ifndef A\n#define A 1\n#endif\n\n" + end_bars("led"))
 
 
 def test_library_version_falls_back_to_commit(tmp_path: Path, checkout: Path) -> None:
@@ -406,7 +419,7 @@ def test_cli_list_select_generate(project: Paths, capsys: pytest.CaptureFixture[
     _module_config(project.root.parent / "modules-src", "wifi")
     assert main(["modules", "generate"]) == 0
     assert "modules: wifi, time, scheduler  (build/modules, src/Modules.h, Config.h)" in capsys.readouterr().out
-    assert "/* ---- wifi (xewe modules generate) ---- */" in (project.root / "Config.h").read_text()
+    assert "/* ---- start wifi ---- */" in (project.root / "Config.h").read_text()
     assert main(["modules", "generate"]) == 0
     assert "(build/modules, src/Modules.h)" in capsys.readouterr().out
     assert main(["modules", "select", "nope"]) == 2
@@ -483,24 +496,15 @@ SECTIONED_CONFIG_H = """\
 #define XEWE_WIFI_DEBUG 0
 #endif
 """
-SECTIONED_BLOCK_BODY = """\
-/* ---- default runtime values ---- */
-
-/* Scan timeout, ms (1000..30000) */
-// #define XEWE_WIFI_SCAN_MS 5000
-
-/* Network name, text; asked at first boot */
-// #define XEWE_WIFI_SSID ""
-
-/* ---- compile time defined constants ---- */
-
-/* Debug output, 0 or 1 */
-// #define XEWE_WIFI_DEBUG 0
-"""
 WIFI_BLOCK = (
-    "\n/* ---- wifi (xewe modules generate) ---- */\n"
-    "/* Values of the wifi module. Uncomment a line to override; keep both markers. */\n"
-    f"{SECTIONED_BLOCK_BODY}/* ---- end wifi ---- */\n"
+    bars("wifi")
+    + sections(
+        "/* Scan timeout, ms (1000..30000) */\n// #define XEWE_WIFI_SCAN_MS 5000\n\n"
+        '/* Network name, text; asked at first boot */\n// #define XEWE_WIFI_SSID ""',
+        "/* Debug output, 0 or 1 */\n// #define XEWE_WIFI_DEBUG 0",
+    )
+    + "\n"
+    + end_bars("wifi")
 )
 WIFI = modules.Module(Path("/x"), "wifi", {"slug": "wifi", "folder": "Wifi"})
 
@@ -523,12 +527,40 @@ def test_config_block_converts_a_line_comment_source() -> None:
         "// ---- compile-time constants ----\n"
     )
     assert modules.config_block(WIFI, old) == (
-        "\n/* ---- wifi (xewe modules generate) ---- */\n"
-        "/* Values of the wifi module. Uncomment a line to override; keep both markers. */\n"
-        "/* ---- runtime defaults ---- */\n/* Scan timeout, ms (1000..30000). */\n// #define XEWE_WIFI_SCAN_MS 5000\n"
-        '/* ---- first-boot values ---- */\n/* Network name */\n// #define XEWE_WIFI_SSID ""\n'
-        "/* ---- compile-time constants ---- */\n/* ---- end wifi ---- */\n"
+        bars("wifi")
+        + sections(
+            "/* Scan timeout, ms (1000..30000). */\n// #define XEWE_WIFI_SCAN_MS 5000\n\n"
+            '/* Network name */\n// #define XEWE_WIFI_SSID ""'
+        )
+        + "\n"
+        + end_bars("wifi")
     )
+
+
+def test_config_block_reads_the_single_marker_and_the_start_end_forms() -> None:
+    single = SECTIONED_CONFIG_H
+    both = single.replace(
+        "/* ---- default runtime values ---- */",
+        "/* ---- start default runtime values ---- */",
+    ).replace(
+        "\n/* ---- compile time defined constants ---- */",
+        "\n/* ---- end default runtime values ---- */\n\n/* ---- start compile time defined constants ---- */",
+    )
+    both += "\n/* ---- end compile time defined constants ---- */\n"
+    assert modules.config_block(WIFI, both) == WIFI_BLOCK
+    assert modules.config_block(WIFI, single) == WIFI_BLOCK
+
+
+def test_config_block_bars_are_as_long_as_their_line() -> None:
+    for slug in ("core", "pins", "a-longer-slug"):
+        lines = modules.config_block_for(slug, SECTIONED_CONFIG_H).splitlines()
+        for i, ln in enumerate(lines):
+            if ln.startswith("/***"):
+                assert set(ln[1:-1]) == {"*"} and ln.startswith("/") and ln.endswith("/")
+        top = lines.index(f"/* ---- start {slug} ---- */")
+        assert len(lines[top - 1]) == len(lines[top]) == len(lines[top + 1])
+        bottom = lines.index(f"/* ---- end {slug} ---- */")
+        assert len(lines[bottom - 1]) == len(lines[bottom]) == len(lines[bottom + 1])
 
 
 def test_config_block_splits_a_comment_longer_than_the_column_limit() -> None:
@@ -545,11 +577,12 @@ def test_config_block_splits_a_comment_longer_than_the_column_limit() -> None:
 @pytest.mark.parametrize(
     "mark",
     [
+        "/* ---- start led ---- */",
         "/* ---- led (xewe modules generate) ---- */",
         "// ---- led (xewe modules generate) ----",
     ],
 )
-def test_fill_config_h_detects_both_marker_forms(tmp_path: Path, checkout: Path, mark: str) -> None:
+def test_fill_config_h_detects_all_marker_forms(tmp_path: Path, checkout: Path, mark: str) -> None:
     _module_config(checkout, "pins")
     p = Paths(tmp_path / "proj")
     p.root.mkdir()
@@ -557,7 +590,7 @@ def test_fill_config_h_detects_both_marker_forms(tmp_path: Path, checkout: Path,
     (p.root / "Config.h").write_text(existing)
     reg = Registry.load(checkout)
     pins = reg.get("pins")
-    assert modules.CONFIG_MARK_RE.findall(existing) == ["led"]
+    assert modules.config_slugs(existing) == {"led"}
     assert modules.CONFIG_END_RE.findall("// ---- end led ----\n/* ---- end pins ---- */\n") == ["led", "pins"]
     # a project that already holds the block of the module is left alone, in either form
     pins_mark = mark.replace("led", "pins")
@@ -594,27 +627,24 @@ LED_CONFIG_H = """\
 def test_config_block_comments_out_a_chip_conditional_entry() -> None:
     module = modules.Module(Path("/x"), "led", {"slug": "led", "folder": "Led"})
     assert modules.config_block(module, LED_CONFIG_H) == (
-        "\n/* ---- led (xewe modules generate) ---- */\n"
-        "/* Values of the led module. Uncomment a line to override; keep both markers. */\n"
-        "/* ---- default runtime values ---- */\n\n"
-        "/* LED chipset id */\n// #define XEWE_LED_CHIP 0\n\n"
-        "/* ---- compile time defined constants ---- */\n\n"
-        "/* GPIO of the data line */\n"
-        "// #if defined(XEWE_CHIP_C3)\n// #define XEWE_LED_PIN_DATA 4\n// #elif defined(XEWE_CHIP_C6)\n"
-        "// #define XEWE_LED_PIN_DATA 5\n// #else\n"
-        "// #define XEWE_LED_PIN_DATA 48\n// #endif\n"
-        "/* ---- end led ---- */\n"
+        bars("led")
+        + sections(
+            "/* LED chipset id */\n// #define XEWE_LED_CHIP 0",
+            "/* GPIO of the data line */\n"
+            "// #if defined(XEWE_CHIP_C3)\n// #define XEWE_LED_PIN_DATA 4\n// #elif defined(XEWE_CHIP_C6)\n"
+            "// #define XEWE_LED_PIN_DATA 5\n// #else\n"
+            "// #define XEWE_LED_PIN_DATA 48\n// #endif",
+        )
+        + "\n"
+        + end_bars("led")
     )
 
 
 def test_config_block_with_empty_sections_keeps_the_markers() -> None:
     module = modules.Module(Path("/x"), "empty", {"slug": "empty", "folder": "Empty"})
     marks = "/* ---- default runtime values ---- */\n\n/* ---- compile time defined constants ---- */"
-    assert modules.config_block(module, f"#pragma once\n{marks}\n") == (
-        "\n/* ---- empty (xewe modules generate) ---- */\n"
-        "/* Values of the empty module. Uncomment a line to override; keep both markers. */\n"
-        f"{marks}\n/* ---- end empty ---- */\n"
-    )
+    expected = bars("empty") + sections() + "\n" + end_bars("empty")
+    assert modules.config_block(module, f"#pragma once\n{marks}\n") == expected
 
 
 def test_generate_appends_the_core_block_first(
@@ -639,13 +669,17 @@ def test_generate_appends_the_core_block_first(
     assert (
         text
         == PROJECT_CONFIG_H
+        + "\n"
         + (
-            "\n/* ---- core (xewe modules generate) ---- */\n"
-            "/* Values of the core. Uncomment a line to override; keep both markers. */\n"
-            "/* ---- default runtime values ---- */\n/* Baud */\n// #define XEWE_CORE_SERIAL_BAUD 115200\n"
-            '/* Device name */\n// #define XEWE_CORE_DEVICE_NAME "xewe"\n'
-            "/* ---- compile time defined constants ---- */\n/* ---- end core ---- */\n"
+            bars("core")
+            + sections(
+                "/* Baud */\n// #define XEWE_CORE_SERIAL_BAUD 115200\n\n"
+                '/* Device name */\n// #define XEWE_CORE_DEVICE_NAME "xewe"'
+            )
+            + "\n"
+            + end_bars("core")
         )
+        + "\n"
         + PINS_BLOCK
     )
     capsys.readouterr()
@@ -661,3 +695,12 @@ def test_generate_without_core_config_h_adds_no_core_block(tmp_path: Path, check
     (p.libraries / "XeWeCore" / "src" / "XeWeCore").mkdir(parents=True)
     modules.generate(p, Registry.load(checkout), ["wifi"], "s", "r", "c")
     assert (p.root / "Config.h").read_text() == PROJECT_CONFIG_H
+
+
+def test_fill_config_h_puts_one_blank_line_before_a_block(tmp_path: Path, checkout: Path) -> None:
+    _module_config(checkout, "pins")
+    p = Paths(tmp_path / "proj")
+    p.root.mkdir()
+    (p.root / "Config.h").write_text("#pragma once\n\n")
+    modules.fill_config_h(p, [Registry.load(checkout).get("pins")])
+    assert (p.root / "Config.h").read_text() == "#pragma once\n\n" + PINS_BLOCK

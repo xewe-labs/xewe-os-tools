@@ -338,12 +338,25 @@ def render_modules_lock(order: list[Module], source: str, ref: str, commit: str)
     return "\n".join(lines) + "\n"
 
 
-CONFIG_MARK = "/* ---- {slug} (xewe modules generate) ---- */"
+CONFIG_START = "/* ---- start {slug} ---- */"
 CONFIG_END = "/* ---- end {slug} ---- */"
-CONFIG_MARK_RE = re.compile(r"^(?://|/\*) ---- ([a-z0-9-]+) \(xewe modules generate\) ----(?: \*/)?[ \t]*$", re.M)
-"""A block's opening marker line, in the block-comment form and in the ``//`` form of earlier projects."""
+CONFIG_MARK_RE = re.compile(
+    r"^(?:/\* ---- start ([a-z0-9-]+) ---- \*/"
+    r"|/\* ---- ([a-z0-9-]+) \(xewe modules generate\) ---- \*/"
+    r"|// ---- ([a-z0-9-]+) \(xewe modules generate\) ----)[ \t]*$",
+    re.M,
+)
+"""A block's opening marker line: ``/* ---- start <slug> ---- */``, or the two earlier forms
+``/* ---- <slug> (xewe modules generate) ---- */`` and ``// ---- <slug> (xewe modules generate) ----``."""
 CONFIG_END_RE = re.compile(r"^(?://|/\*) ---- end ([a-z0-9-]+) ----(?: \*/)?[ \t]*$", re.M)
 """A block's closing marker line, in both forms."""
+
+
+def config_slugs(text: str) -> set[str]:
+    """The slugs of the blocks a project ``Config.h`` already holds, in any of the three marker forms."""
+    return {slug for groups in CONFIG_MARK_RE.findall(text) for slug in groups if slug}
+
+
 SECTION_MARK = "/* ---- {name} ---- */"
 _SECTION_RE = re.compile(r"^\s*(?:/\* ---- (.+?) ---- \*/|// ---- (.+?) ----)\s*$")
 """A section marker line of a module (or core) ``Config.h``: ``/* ---- <text> ---- */``, or the ``//``
@@ -397,6 +410,8 @@ def _comment_out_entries(lines: list[str]) -> list[str]:
         elif not line.strip():
             out.append(line)
         elif line.lstrip().startswith(("//", "/*")):
+            if out and out[-1].strip() and not out[-1].startswith("/*"):
+                out.append("")  # entries are always separated by a blank line
             out.extend(_as_block_comment(line))
         elif depth == 0 and _IFNDEF_RE.match(line):
             depth = 1
@@ -413,33 +428,84 @@ def _comment_out_entries(lines: list[str]) -> list[str]:
     return out
 
 
+SECTION_RUNTIME = "default runtime values"
+SECTION_CONSTANTS = "compile time defined constants"
+_SECTION_NAMES = {
+    "runtime defaults": SECTION_RUNTIME,
+    "first-boot values": SECTION_RUNTIME,
+    "compile-time constants": SECTION_CONSTANTS,
+}
+"""Section names of the released modules 3.1.0, mapped onto the two current sections."""
+
+
+def _bar(text: str) -> str:
+    """A ``/****/`` line as long as ``text``."""
+    return "/" + "*" * (len(text) - 2) + "/"
+
+
+def _split_sections(lines: list[str]) -> dict[str, list[str]]:
+    """The entries of each section, by section name. A marker (``/* ---- start <name> ---- */``, the
+    single ``/* ---- <name> ---- */`` or the ``//`` form) opens a section; a ``end <name>`` marker or
+    the next marker closes it; lines outside a section are dropped."""
+    sections: dict[str, list[str]] = {SECTION_RUNTIME: [], SECTION_CONSTANTS: []}
+    current: list[str] | None = None
+    for line in lines:
+        name = _section_name(line)
+        if name is None:
+            if current is not None:
+                current.append(line)
+        elif name.startswith("end "):
+            current = None
+        else:
+            name = name.removeprefix("start ")
+            name = _SECTION_NAMES.get(name, name)
+            current = sections.setdefault(name, [])
+            if current and current[-1].strip():
+                current.append("")
+    return sections
+
+
 def config_block(module: Module, text: str) -> str:
     """The block ``fill_config_h`` appends for ``module`` (:func:`config_block_for`)."""
-    return config_block_for(module.slug, f"the {module.slug} module", text)
+    return config_block_for(module.slug, text)
 
 
-def config_block_for(slug: str, what: str, text: str) -> str:
-    """The markers around a module's (or the core's) ``Config.h``. With section markers
-    (``/* ---- <text> ---- */``, or the ``//`` form) the block starts at the first marker and every
-    section is copied as a catalogue (``_comment_out_entries``): comment lines as ``/* ... */``,
-    definitions commented out, so nothing in the block is active. Without them the file is copied
-    without its header (everything up to ``#pragma once``, else the SPDX lines)."""
+def config_block_for(slug: str, text: str) -> str:
+    """The block of a module's (or the core's) ``Config.h`` in the project ``Config.h``: a bar, the
+    ``start <slug>`` line, a bar; the sections ``default runtime values`` and ``compile time defined
+    constants``, each as a start line, a blank line, its entries (a catalogue, see
+    ``_comment_out_entries``: comment lines as ``/* ... */``, definitions commented out, so nothing
+    is active), a blank line and an end line; a blank line, a bar, the ``end <slug>`` line, a bar.
+    The sources are read in the current form (``start`` / ``end`` markers), the single-marker form
+    and the ``//`` form of the released modules. A file without section markers is copied without its
+    header (everything up to ``#pragma once``, else the SPDX lines) between the slug lines."""
     lines = text.splitlines()
-    marked = [i for i, ln in enumerate(lines) if _section_name(ln) is not None]
-    header = f"// Values of {what}. Edit the numbers; keep this marker and the end marker."
-    if marked:
-        header = f"/* Values of {what}. Uncomment a line to override; keep both markers. */"
-        lines = _comment_out_entries(lines[marked[0] :])
-    elif "#pragma once" in lines:
-        lines = lines[lines.index("#pragma once") + 1 :]
+    start, end = CONFIG_START.format(slug=slug), CONFIG_END.format(slug=slug)
+    out = [_bar(start), start, _bar(start)]
+    if any(_section_name(ln) is not None for ln in lines):
+        for i, (name, body) in enumerate(_split_sections(lines).items()):
+            entries = _comment_out_entries(body)
+            while entries and not entries[0].strip():
+                entries.pop(0)
+            while entries and not entries[-1].strip():
+                entries.pop()
+            if i:
+                out.append("")
+            out += [SECTION_MARK.format(name=f"start {name}"), ""]
+            out += [*entries, ""] if entries else []
+            out.append(SECTION_MARK.format(name=f"end {name}"))
     else:
-        lines = [ln for ln in lines if not ln.startswith("// SPDX-")]
-    while lines and not lines[0].strip():
-        lines.pop(0)
-    while lines and not lines[-1].strip():
-        lines.pop()
-    body = "\n".join(lines)
-    return f"\n{CONFIG_MARK.format(slug=slug)}\n{header}\n{body}\n{CONFIG_END.format(slug=slug)}\n"
+        if "#pragma once" in lines:
+            lines = lines[lines.index("#pragma once") + 1 :]
+        else:
+            lines = [ln for ln in lines if not ln.startswith("// SPDX-")]
+        while lines and not lines[0].strip():
+            lines.pop(0)
+        while lines and not lines[-1].strip():
+            lines.pop()
+        out += lines
+    out += ["", _bar(end), end, _bar(end)]
+    return "\n".join(out) + "\n"
 
 
 def core_config_h(p: Paths) -> Path | None:
@@ -458,14 +524,14 @@ def fill_config_h(p: Paths, order: list[Module]) -> list[str]:
     if not config_h.is_file():
         return []
     text = config_h.read_text(encoding="utf-8")
-    present = set(CONFIG_MARK_RE.findall(text))
+    present = config_slugs(text)
     selected = {m.slug for m in order}
     for slug in sorted(present - selected - {CORE_SLUG}):
         result(f"note: Config.h keeps the {slug} block; the module is not selected")
     blocks: list[tuple[str, str]] = []
     core = core_config_h(p)
     if core is not None and CORE_SLUG not in present:
-        blocks.append((CORE_SLUG, config_block_for(CORE_SLUG, "the core", core.read_text(encoding="utf-8"))))
+        blocks.append((CORE_SLUG, config_block_for(CORE_SLUG, core.read_text(encoding="utf-8"))))
     for module in order:
         if module.slug in present or module.config_h is None:
             continue
@@ -473,6 +539,8 @@ def fill_config_h(p: Paths, order: list[Module]) -> list[str]:
     for _, block in blocks:
         if text and not text.endswith("\n"):
             text += "\n"
+        if text and not text.endswith("\n\n"):
+            text += "\n"  # one blank line before every block
         text += block
     added = [slug for slug, _ in blocks]
     if added:

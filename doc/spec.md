@@ -1108,37 +1108,56 @@ everything after the first `=`.
    named `XEWE_<SLUG>_<VAR>` (slug upper case, `-` as `_`; the core is `CORE`). A module's
    `src/<Folder>/Config.h` (`Module.config_h`) is pure preprocessor. Every text line is a
    single-line block comment `/* ... */`; `//` appears only in the three SPDX header lines. It has
-   two section markers, in this order:
+   four section markers, in this order, each section holding its entries between its start and end line:
    ```c
-   /* ---- default runtime values ---- */
-   /* ---- compile time defined constants ---- */
+   /* ---- start default runtime values ---- */
+   /* ---- end default runtime values ---- */
+   /* ---- start compile time defined constants ---- */
+   /* ---- end compile time defined constants ---- */
    ```
    and each entry is one `/* ... */` comment line above an `#ifndef NAME` group holding
    `#define NAME value` (a chip-conditional group nests `#if` / `#elif` / `#else` / `#endif`; a
    value the first boot asks for also holds `#define NAME_PROMPT 1`).
 
    First the core: when `build/libraries/XeWeCore/src/XeWeCore/Config.h` exists and the project's
-   `Config.h` has no `/* ---- core (xewe modules generate) ---- */` line, its block is appended.
-   Then, for every module of the resolved order that has a `Config.h`, look for the marker line
-   `/* ---- <slug> (xewe modules generate) ---- */`. A project written by an earlier version
-   holds the `//` form of the markers (`// ---- <slug> (xewe modules generate) ----`, `// ---- end
-   <slug> ----`); both forms count as present. Present: leave the file alone. Absent: append
+   `Config.h` has no block of the slug `core`, its block is appended. Then, for every module of the
+   resolved order that has a `Config.h`, look for a block of its slug: the line
+   `/* ---- start <slug> ---- */`, or one of the two earlier forms
+   `/* ---- <slug> (xewe modules generate) ---- */` and
+   `// ---- <slug> (xewe modules generate) ----`; any of them counts as present. Present: leave the
+   file alone, never add a duplicate. Absent: append, after exactly one blank line
    ```c
+   /************************/
+   /* ---- start core ---- */
+   /************************/
+   /* ---- start default runtime values ---- */
 
-   /* ---- wifi (xewe modules generate) ---- */
-   /* Values of the wifi module. Uncomment a line to override; keep both markers. */
-   <the module's Config.h from its first section marker on, as below>
-   /* ---- end wifi ---- */
+   <the entries>
+
+   /* ---- end default runtime values ---- */
+
+   /* ---- start compile time defined constants ---- */
+
+   <the entries>
+
+   /* ---- end compile time defined constants ---- */
+
+   /**********************/
+   /* ---- end core ---- */
+   /**********************/
    ```
-   (the core block reads `/* Values of the core. Uncomment ... */`). The copy is a catalogue of
-   commented-out overrides:
-   - A section marker is recognised by the pattern `/* ---- <text> ---- */` (a file not yet
-     converted: `// ---- <text> ----`) and copied as `/* ---- <text> ---- */`; any number of
-     sections, in the order found, an empty section included. Everything before the first marker is
-     dropped.
+   with the slug of the module in place of `core`. A bar is a line `/****...*/` as long as the line
+   after it (before it, for the end bars). The copy is a catalogue of commented-out overrides:
+   - Both sections are always written, in this order; an empty section is its start line, a blank
+     line and its end line. Everything outside a section is dropped.
+   - A source in the single-marker form (`/* ---- default runtime values ---- */`, the section runs
+     to the next marker) or in the `//` form of the released modules 3.1.0 (`runtime defaults` and
+     `first-boot values` both become default runtime values, `compile-time constants` becomes
+     compile time defined constants) gives the same output.
    - The comment line above an entry is copied as it is when it is a `/* ... */` line, and
      converted to `/* ... */` when it is a `// ...` line; a comment line longer than 100 columns (the
-     column limit of `xewe format`) is split at spaces into several `/* ... */` lines; blank lines stay.
+     column limit of `xewe format`) is split at spaces into several `/* ... */` lines; entries are
+     separated by one blank line.
    - The outer `#ifndef NAME` and its `#endif` and any `#define NAME_PROMPT 1` line are dropped;
      every other directive line gets a `// ` prefix (`// #define NAME value`; a chip-conditional
      entry keeps its `#if` / `#elif` / `#else` / `#endif` lines, each prefixed), so nothing in the
@@ -1147,9 +1166,7 @@ everything after the first `=`.
    Uncommenting a first-boot line pre-answers its prompt, and `#define NAME INJECTED_FROM_DOTENV`
    takes the value from the dotenv file at build time (§7). A `Config.h` without any section marker
    is copied as it is, without its header (everything up to `#pragma once`, else the SPDX lines),
-   between `/* ---- <slug> (xewe modules generate) ---- */` and `/* ---- end <slug> ---- */`, under
-   the header line `// Values of the <slug> module. Edit the numbers; keep this marker and the end
-   marker.`
+   between the `start <slug>` and `end <slug>` bar lines.
    A block is never removed or rewritten: the user's edits in it survive every generate, and a
    block whose module is no longer selected stays with one `note:` line (the core block never
    gets one). `Config.h` is never
