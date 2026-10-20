@@ -16,7 +16,7 @@ same flow. Runners are `ubuntu-latest`; nothing needs a secret beyond the automa
 | `ci.yml` | this repo | pytest (3.11–3.13; the 3.12 run uploads its JUnit file as `card-inputs`), pyflakes, mypy (settings in `pyproject.toml`), actionlint on these workflows, `xewe format --check` and `xewe brand-lint` from this checkout, and the `card` job on a prepare commit (below, with the tools of this checkout); every job blocks |
 
 Callers pin a tools tag, the same one their `xewe.toml [tools] ref` names, for example
-`uses: xewe-labs/xewe-os-tools/.github/workflows/xewe-build.yml@3.1.1`. Tags are `X.Y.Z` with no
+`uses: xewe-labs/xewe-os-tools/.github/workflows/xewe-build.yml@3.1.2`. Tags are `X.Y.Z` with no
 `v` across the ecosystem from 3.0.0 on. `@main` follows the newest tools (development only).
 
 Action versions: every action is on its newest major that runs on Node 24 (checkout v7,
