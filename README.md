@@ -11,11 +11,11 @@ A project pins the tools in its `xewe.toml`; its `./setup.sh` installs them into
 ```toml
 [tools]
 repo = "https://github.com/xewe-labs/xewe-os-tools"
-ref = "3.1.2"   # the tools tag
+ref = "3.1.3"   # the tools tag
 ```
 
 Workflow callers pin the same tag:
-`uses: xewe-labs/xewe-os-tools/.github/workflows/xewe-build.yml@3.1.2`.
+`uses: xewe-labs/xewe-os-tools/.github/workflows/xewe-build.yml@3.1.3`.
 
 ## Documentation
 
