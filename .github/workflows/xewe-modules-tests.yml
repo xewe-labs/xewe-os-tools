@@ -150,7 +150,7 @@ jobs:
             tag="$GITHUB_REF_NAME" msg="$RUNNER_TEMP/tag-message.txt" card="$RUNNER_TEMP/tag-card/release_card.md"
             git fetch -q --force --depth 1 origin "+refs/tags/$tag:refs/tags/$tag"
             [[ "$(git cat-file -t "refs/tags/$tag")" == tag ]] || { echo "::error::$tag is a lightweight tag: it holds no release card"; exit 1; }
-            git for-each-ref --format='%(contents)' "refs/tags/$tag" | sed '/-----BEGIN PGP SIGNATURE-----/,$d' > "$msg"
+            git for-each-ref --format='%(contents)' "refs/tags/$tag" | sed '/^-----BEGIN PGP SIGNATURE-----$/,$d' > "$msg"
             mkdir -p "${card%/*}"
             sed -n '/^# /,$p' "$msg" > "$card"
             [[ -s "$card" ]] || { echo "::error::the message of tag $tag holds no release card (no line starting with '# ')"; exit 1; }
