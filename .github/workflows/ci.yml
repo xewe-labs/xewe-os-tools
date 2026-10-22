@@ -6,6 +6,7 @@ name: ci
 on:
   push:
     branches: [main]
+    tags: ["*"]
   pull_request:
   workflow_dispatch:
 
@@ -117,6 +118,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # A tag run: the card is the tag message's (notes lines, a blank line, then release_card.md
+          # from its first `# ` line on; tag made with `git tag -a --cleanup=verbatim`), never the tree's.
+          if [[ "${GITHUB_REF_TYPE:-}" == tag ]]; then
+            tag="$GITHUB_REF_NAME" msg="$RUNNER_TEMP/tag-message.txt" card="$RUNNER_TEMP/tag-card/release_card.md"
+            git fetch -q --force --depth 1 origin "+refs/tags/$tag:refs/tags/$tag"
+            [[ "$(git cat-file -t "refs/tags/$tag")" == tag ]] || { echo "::error::$tag is a lightweight tag: it holds no release card"; exit 1; }
+            git for-each-ref --format='%(contents)' "refs/tags/$tag" | sed '/-----BEGIN PGP SIGNATURE-----/,$d' > "$msg"
+            mkdir -p "${card%/*}"
+            sed -n '/^# /,$p' "$msg" > "$card"
+            [[ -s "$card" ]] || { echo "::error::the message of tag $tag holds no release card (no line starting with '# ')"; exit 1; }
+            echo "release card from tag $tag: $(head -n 1 "$card")"
+            echo "cards=$card" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           found=()
           # exit 0: the card's tested tree is this tree; exit 1 with "is not the card's": another
           # tree, the only result that skips a card. Anything else (a card whose data block is
@@ -132,7 +147,7 @@ jobs:
             esac
           done < <(git ls-files -z -- 'releases/*/release_card.md')
           echo "cards=${found[*]}" >> "$GITHUB_OUTPUT"
-          [[ ${#found[@]} -gt 0 ]] || echo "no release card for this tree; the check is skipped"
+          [[ ${#found[@]} -gt 0 ]] || echo "::notice::no release card for this tree; the check is skipped"
       - uses: actions/download-artifact@v8
         if: steps.find.outputs.cards != ''
         with:

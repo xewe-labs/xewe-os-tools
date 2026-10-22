@@ -383,6 +383,20 @@ def parser() -> argparse.ArgumentParser:
     split.add_argument(
         "--assemble", action="store_true", help="merge the per-chip maps; write the tarball and the assets"
     )
+    sp.add_argument(
+        "--rows",
+        type=_row_list,
+        metavar="LIST",
+        help="with --chip: only these 0-based indices into that chip's rows, e.g. 0,1,2 (one CI chunk)",
+    )
+
+    sp = sub.add_parser(
+        "release-notes",
+        help="check the notes of a release tag message (1 to 3 lines, no leading #, at most 120 characters)",
+    )
+    nsub = sp.add_subparsers(dest="notes_command", required=True, metavar="ACTION")
+    m = nsub.add_parser("check", help="exit 0 when FILE holds valid release notes, else 1")
+    m.add_argument("notes_file", type=Path, metavar="FILE")
 
     _release_card_parser(sub)
 
@@ -391,6 +405,14 @@ def parser() -> argparse.ArgumentParser:
             _no_board_arg(choice)
     _verbose_everywhere(ap)
     return ap
+
+
+def _row_list(text: str) -> list[int]:
+    """``--rows 0,1,2``: a comma list of row indices."""
+    try:
+        return [int(x) for x in text.split(",")]
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"'{text}' is not a comma list of row indices") from None
 
 
 def _release_card_parser(sub: Any) -> None:
@@ -507,6 +529,8 @@ def dispatch(args: argparse.Namespace, extra: list[str]) -> int:
         return webui.webui_main(args.webui_command, getattr(args, "flask_project", None), getattr(args, "out", None))
     if cmd == "release-card":
         return releasecard.main(args, extra)
+    if cmd == "release-notes":
+        return release.notes_check(args.notes_file)
     p = Paths(find_root(args.project, library=cmd in LIBRARY_COMMANDS))
     if cmd in ENV_COMMANDS:
         dotenv.load_settings(p.root, getattr(args, "env_file", None))
@@ -613,7 +637,14 @@ def dispatch(args: argparse.Namespace, extra: list[str]) -> int:
         return doctor.doctor(p, lock)
     if cmd == "release":
         return release.release(
-            p, lock, args.release_version, args.matrix, args.notes, chip=args.chip, assemble=args.assemble
+            p,
+            lock,
+            args.release_version,
+            args.matrix,
+            args.notes,
+            chip=args.chip,
+            assemble=args.assemble,
+            rows=args.rows,
         )
     raise XeWeError(f"unknown command {cmd}", EXIT_USAGE)
 

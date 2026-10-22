@@ -1,20 +1,23 @@
 # xewe-release.yml: reusable release for a XeWe OS firmware project, run on a version tag.
 # Jobs:
-#   plan      version from the tag, the chips that have rows in release_matrix.csv, release notes
-#   build     one job per chip (fail-fast off): ./setup.sh, `xewe release --chip C` (that chip's
-#             matrix rows), the default `xewe build --chip C` and `xewe test --no-board --chip C`
-#             with JUnit output for the release-card check
-#   assemble  `xewe release-card verify --ci` against the committed releases/<v>/release_card.md
-#             (on the pristine checkout), `xewe release --assemble` (firmware_map.csv in matrix
-#             order, the tarball and the flat assets in build/release/<v>/assets/), then the
-#             GitHub Release: every bin, each row's
-#             <prefix>_meta.json and <prefix>_manifest.json, firmware_map.csv, firmware-<v>.tar.gz
-#             and release_card.md. No logs are published.
+#   plan      version from the tag, the release_matrix.csv rows cut into at most `parallelise`
+#             chunks, the release notes and the release card from the tag message
+#   build     one job per chunk (fail-fast off): ./setup.sh, `xewe release --chip C --rows LIST`
+#             (that chunk's matrix rows); chunk 0 of each chip also runs the default
+#             `xewe build --chip C` and `xewe test --no-board --chip C` with JUnit output for the
+#             release-card check
+#   assemble  `xewe release-card verify --ci` against the tag's card (on the pristine checkout),
+#             `xewe release --assemble` (firmware_map.csv in matrix order, the tarball and the
+#             flat assets in build/release/<v>/assets/), then the GitHub Release: every bin, each
+#             row's <prefix>_meta.json and <prefix>_manifest.json, firmware_map.csv,
+#             firmware-<v>.tar.gz and release_card.md. No logs are published.
 # The GitHub Release is the only place binaries live. `publish_branch: true` (deprecated, opt-in)
 # also commits the release folder to `releases_branch`, as before; firmware is never committed to
 # the project's own tree (xewe-build.yml lint).
 # Tags: X.Y.Z (release) or X.Y.Z-<suffix> (pre-release, e.g. 3.1.0-rc1); a leading `v` is
-# accepted. X.Y.Z must equal [project] version in xewe.toml at the tagged commit. See doc/ci.md.
+# accepted. X.Y.Z must equal [project] version in xewe.toml at the tagged commit. The annotated tag's
+# message is 1 to 3 notes lines, a blank line, then the whole release_card.md (from its `# ` title
+# line on). See doc/ci.md.
 name: xewe-release
 
 on:
@@ -36,11 +39,15 @@ on:
         type: string
         default: "3.12"
       timeout_minutes:
-        description: "timeout of each job (a chip job builds all of that chip's matrix rows)"
+        description: "timeout of each job (a build job builds the matrix rows of its chunk)"
         type: number
         default: 90
+      parallelise:
+        description: "build jobs at most (1..15; at least one per chip), the matrix rows shared out among them"
+        type: number
+        default: 15
       require_card:
-        description: "fail when releases/<X.Y.Z>/release_card.md is not in the tagged tree"
+        description: "fail when the tag message holds no release card"
         type: boolean
         default: true
 
@@ -60,7 +67,7 @@ jobs:
       version: ${{ steps.ver.outputs.version }}
       base: ${{ steps.ver.outputs.base }}
       prerelease: ${{ steps.ver.outputs.prerelease }}
-      chips: ${{ steps.chips.outputs.chips }}
+      chunks: ${{ steps.chunks.outputs.chunks }}
     steps:
       - uses: actions/checkout@v7
 
@@ -79,58 +86,109 @@ jobs:
           pre=false; [[ "$full" != "$base" ]] && pre=true
           { echo "tag=$tag"; echo "version=$full"; echo "base=$base"; echo "prerelease=$pre"; } >> "$GITHUB_OUTPUT"
 
-      # the build jobs' matrix: chips in the order of their first release_matrix.csv row (CHIP
-      # column, any case, read as CSV; rows with an empty first cell skipped, as xewe release reads
-      # it; the chip lower-cased, as --chip takes it)
-      - name: Chips in the release matrix
-        id: chips
+      # the build jobs' matrix: {chip, chunk, rows}. Chips in the order of their first
+      # release_matrix.csv row (CHIP column, any case, read as CSV; rows with an empty first cell
+      # skipped, as xewe release reads it; the chip lower-cased, as --chip takes it). A chip gets
+      # round(parallelise * its rows / all rows) jobs (half up), at least 1 and at most its rows;
+      # while the total is over parallelise, the chip with the most jobs (the first such) gives one
+      # up, down to 1. Its rows are cut into that many contiguous chunks, the first ones a row
+      # longer when they do not divide evenly; `rows` are 0-based indices into that chip's rows
+      # (xewe release --rows).
+      - name: Chunks of the release matrix
+        id: chunks
         shell: bash
+        env:
+          PARALLELISE: ${{ inputs.parallelise }}
         run: |
           set -euo pipefail
           python3 - >> "$GITHUB_OUTPUT" <<'PY'
-          import csv, json, pathlib
+          import csv, json, os, pathlib, sys
+          raw = os.environ["PARALLELISE"]
+          par = int(float(raw)) if raw.replace(".", "", 1).isdigit() and float(raw).is_integer() else 0
+          if not 1 <= par <= 15:
+              sys.exit(f"::error::parallelise must be an integer from 1 to 15 (got {raw})")
           path = pathlib.Path("release_matrix.csv")
-          chips = ["c3", "c6", "s3"]
+          counts = {"c3": 1, "c6": 1, "s3": 1}
           if path.is_file():
               with path.open(encoding="utf-8", newline="") as f:
                   head, *rows = list(csv.reader(f))
               col = next(i for i, h in enumerate(head) if h.strip().lower() == "chip")
-              chips = list(dict.fromkeys(r[col].strip().lower() for r in rows if r and r[0] and col < len(r)))
-          print(f"chips={json.dumps(chips)}")
+              counts = {}
+              for r in rows:
+                  if r and r[0] and col < len(r):
+                      chip = r[col].strip().lower()
+                      counts[chip] = counts.get(chip, 0) + 1
+          total = sum(counts.values())
+          if not total:
+              sys.exit("::error::release_matrix.csv has no rows")
+          jobs = {c: max(1, min(n, int(par * n / total + 0.5))) for c, n in counts.items()}
+          while sum(jobs.values()) > par and max(jobs.values()) > 1:
+              most = max(jobs.values())
+              jobs[next(c for c in jobs if jobs[c] == most)] -= 1
+          chunks = []
+          for chip, n in counts.items():
+              size, extra = divmod(n, jobs[chip])
+              start = 0
+              for k in range(jobs[chip]):
+                  end = start + size + (1 if k < extra else 0)
+                  chunks.append({"chip": chip, "chunk": k, "rows": ",".join(map(str, range(start, end)))})
+                  start = end
+          print(f"chunks={json.dumps(chunks)}")
           PY
           tail -n 1 "$GITHUB_OUTPUT"
 
-      - name: Release notes from the tag message
+      # actions/checkout fetches the tagged commit only (on a tag it may leave a lightweight ref),
+      # so the tag object itself is fetched here. The message splits at its first line that starts
+      # with `# `: before it the notes (trailing blank lines stripped; "Release <tag>" when empty),
+      # from it on release_card.md (no such line: no card). A lightweight tag has no message.
+      - name: Release notes and card from the tag message
         shell: bash
         env:
           TAG: ${{ steps.ver.outputs.tag }}
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/notes"
+          out="$RUNNER_TEMP/notes" msg="$RUNNER_TEMP/tag.txt"
+          mkdir -p "$out"
           git fetch -q --force --depth 1 origin "+refs/tags/$TAG:refs/tags/$TAG"
-          git for-each-ref --format='%(contents)' "refs/tags/$TAG" | sed '/-----BEGIN PGP SIGNATURE-----/,$d' > "$RUNNER_TEMP/notes/notes.txt"
-          [[ -n "$(tr -d '[:space:]' < "$RUNNER_TEMP/notes/notes.txt")" ]] || echo "Release $TAG" > "$RUNNER_TEMP/notes/notes.txt"
-          cat "$RUNNER_TEMP/notes/notes.txt"
+          if [[ "$(git cat-file -t "refs/tags/$TAG")" == tag ]]; then
+            git for-each-ref --format='%(contents)' "refs/tags/$TAG" | sed '/-----BEGIN PGP SIGNATURE-----/,$d' > "$msg"
+          else
+            echo "::warning::$TAG is a lightweight tag: no notes and no release card"
+            : > "$msg"
+          fi
+          python3 - "$msg" "$out" "$TAG" <<'PY'
+          import pathlib, sys
+          msg, out, tag = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
+          lines = msg.read_text(encoding="utf-8").splitlines(keepends=True)
+          at = next((i for i, ln in enumerate(lines) if ln.startswith("# ")), len(lines))
+          notes = "".join(lines[:at]).rstrip()
+          (out / "notes.txt").write_text((notes or f"Release {tag}") + "\n", encoding="utf-8")
+          if at < len(lines):
+              (out / "release_card.md").write_text("".join(lines[at:]).rstrip("\n") + "\n", encoding="utf-8")
+          PY
+          cat "$out/notes.txt"
+          if [[ -f "$out/release_card.md" ]]; then echo "release card: $(head -n 1 "$out/release_card.md")"; else echo "no release card in the tag message"; fi
 
       - uses: actions/upload-artifact@v7
         with:
           name: notes
-          path: ${{ runner.temp }}/notes/notes.txt
+          path: ${{ runner.temp }}/notes/
           if-no-files-found: error
           retention-days: 30
 
   build:
-    name: build (${{ matrix.chip }})
+    name: build (${{ matrix.chip }} ${{ matrix.chunk }})
     needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout_minutes }}
     strategy:
       fail-fast: false
       matrix:
-        chip: ${{ fromJSON(needs.plan.outputs.chips) }}
+        include: ${{ fromJSON(needs.plan.outputs.chunks) }}
     env:
       BASE: ${{ needs.plan.outputs.base }}
       CHIP: ${{ matrix.chip }}
+      ROWS: ${{ matrix.rows }}
     steps:
       - uses: actions/checkout@v7
 
@@ -180,13 +238,15 @@ jobs:
           name: notes
           path: ${{ runner.temp }}/notes
 
-      # this chip's release_matrix.csv rows (default: one row per chip) with version X.Y.Z, and
-      # firmware_map.<chip>.csv for the assemble job
-      - name: xewe release --chip
-        run: build/tools/.venv/bin/python -m xewe release --version "$BASE" --chip "$CHIP" --notes "$RUNNER_TEMP/notes/notes.txt"
+      # this chunk's release_matrix.csv rows of the chip (default: one row per chip) with version
+      # X.Y.Z, and firmware_map.<chip>.<first row>.csv for the assemble job
+      - name: xewe release --chip --rows
+        run: build/tools/.venv/bin/python -m xewe release --version "$BASE" --chip "$CHIP" --rows "$ROWS" --notes "$RUNNER_TEMP/notes/notes.txt"
 
-      # the default image (no matrix defines), as the card's images table records it
+      # once per chip (chunk 0): the default image (no matrix defines), as the card's images
+      # table records it
       - name: xewe build (default image)
+        if: matrix.chunk == 0
         shell: bash
         run: |
           set -euo pipefail
@@ -194,21 +254,24 @@ jobs:
           mkdir -p "$RUNNER_TEMP/card/meta" "$RUNNER_TEMP/card/junit"
           cp "build/builds/$CHIP/out/meta.json" "$RUNNER_TEMP/card/meta/build-$CHIP.meta.json"
 
-      # unit tests run; board tests are compiled, not run; JUnit as the card's runs record it
+      # once per chip (chunk 0): unit tests run; board tests are compiled, not run; JUnit as the
+      # card's runs record it
       - name: xewe test --no-board --chip
+        if: matrix.chunk == 0
         run: >-
           build/tools/.venv/bin/python -m xewe test --no-board --chip "$CHIP" --
           --junitxml="$RUNNER_TEMP/card/junit/tests-$CHIP.xml" -o junit_family=xunit1 -o junit_logging=no -ra
 
-      - name: Upload this chip's release rows
+      - name: Upload this chunk's release rows
         uses: actions/upload-artifact@v7
         with:
-          name: release-${{ matrix.chip }}
+          name: release-${{ matrix.chip }}-${{ matrix.chunk }}
           path: static/firmware/releases/${{ needs.plan.outputs.base }}/
           if-no-files-found: error
           retention-days: 30
 
       - name: Upload this chip's card inputs
+        if: matrix.chunk == 0
         uses: actions/upload-artifact@v7
         with:
           name: card-${{ matrix.chip }}
@@ -255,34 +318,34 @@ jobs:
           merge-multiple: true
           path: ${{ runner.temp }}/card
 
-      # The committed card must describe this tree and these results (doc/ci.md "Releases"); a
-      # block fails the job before anything is published. It runs on the pristine checkout, before
-      # the release rows are downloaded and `xewe release --assemble` rewrites xewe.toml, so the
-      # tree fingerprint is the tagged tree's.
+      - uses: actions/download-artifact@v8
+        with:
+          name: notes
+          path: ${{ runner.temp }}/notes
+
+      # The tag's card must describe this tree and these results (doc/ci.md "Releases"); a block
+      # fails the job before anything is published. It runs on the pristine checkout, before the
+      # release rows are downloaded and `xewe release --assemble` rewrites xewe.toml, so the tree
+      # fingerprint is the tagged tree's.
       - name: Release card check
         shell: bash
         env:
           REQUIRE: ${{ inputs.require_card }}
         run: |
           set -euo pipefail
-          card="releases/$BASE/release_card.md"
+          card="$RUNNER_TEMP/notes/release_card.md"
           if [[ ! -f "$card" ]]; then
             if [[ "$REQUIRE" == true ]]; then
-              echo "::error::$card is not in the tagged tree; run scripts/release.sh --prepare $BASE and commit the card"
+              echo "::error::the message of tag $TAG holds no release card (no line starting with '# '); tag with the notes, a blank line and release_card.md"
               exit 1
             fi
-            echo "::warning::$card is not in the tagged tree; the release has no card"
+            echo "::warning::the message of tag $TAG holds no release card; the release has no card"
             exit 0
           fi
           "$RUNNER_TEMP/venv/bin/python" -m xewe release-card verify --ci --card "$card" \
             --junit-dir "$RUNNER_TEMP/card/junit" --meta-dir "$RUNNER_TEMP/card/meta"
 
-      - uses: actions/download-artifact@v8
-        with:
-          name: notes
-          path: ${{ runner.temp }}/notes
-
-      - name: Download the chip jobs' release rows
+      - name: Download the build jobs' release rows
         uses: actions/download-artifact@v8
         with:
           pattern: release-*
@@ -369,7 +432,7 @@ jobs:
         run: |
           set -euo pipefail
           files=("build/release/$BASE/assets"/*)
-          card="releases/$BASE/release_card.md"
+          card="$RUNNER_TEMP/notes/release_card.md"
           if [[ -f "$card" ]]; then files+=("$card"); fi
           flags=(--title "$TAG" --notes-file "$DIR/release_notes.txt" --verify-tag "--latest=$LATEST")
           if [[ "$PRE" == true ]]; then flags+=(--prerelease); fi

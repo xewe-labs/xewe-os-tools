@@ -945,6 +945,34 @@ def test_verify_ci_end_to_end(repo: FakeGit, tmp_path: Path, capsys: pytest.Capt
     assert main(["release-card", "verify", "--ci", "--card", str(b.card)]) == 2  # --junit-dir is required
 
 
+def test_verify_ci_card_from_the_tag_message(repo: FakeGit, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """xewe-release.yml: the card part of the tag message, written outside the tree, is verified;
+    nothing is read from releases/<v>/ (a testcard.md there does not count for it)."""
+    from test_release import tag_step
+
+    b = full_run(repo)
+    assert b.render("--chips", "c3,s3", "--hardware", "s3") == 0
+    card_text = b.card.read_text()
+    junit = tmp_path / "ci-junit"
+    junit.mkdir()
+    shutil.copy(CARD_FIXTURES / "unit.xml", junit / "unit.xml")
+    shutil.copy(CARD_FIXTURES / "board-c3.xml", junit / "board-c3.xml")
+    no_board_s3 = (CARD_FIXTURES / "board-c3.xml").read_text().replace('value="c3"', 'value="s3"')
+    (junit / "board-s3.xml").write_text(no_board_s3)
+    proc, out = tag_step(tmp_path / "plan", "Faster boot.\n\n" + card_text)
+    assert proc.returncode == 0, proc.stderr
+    tag_card = out / "release_card.md"
+    assert tag_card.read_text() == card_text and (out / "notes.txt").read_text() == "Faster boot.\n"
+    (b.card.parent / "testcard.md").write_text("old")  # in the tree: blocks a tree card only
+    args = ["release-card", "verify", "--ci", "--junit-dir", str(junit), "--card"]
+    assert main([*args, str(tag_card)]) == 0, capsys.readouterr().err
+    assert main([*args, str(b.card)]) == 1
+    assert "testcard.md exists" in capsys.readouterr().err
+    proc, out = tag_step(tmp_path / "edited", "Faster boot.\n\n" + card_text.replace("demo", "dem0", 1))
+    assert main([*args, str(out / "release_card.md")]) == 1
+    assert "was edited after render" in capsys.readouterr().err
+
+
 def test_tests_filter_makes_a_module_card(repo: FakeGit, capsys: pytest.CaptureFixture[str]) -> None:
     b = full_run(repo)
     assert b.render("--chips", "c3,s3", "--hardware", "s3", "--tests", "modules/led/") == 0

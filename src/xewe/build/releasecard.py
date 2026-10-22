@@ -1613,7 +1613,8 @@ def compare(
 def verify_ci(
     card: Path, junit_dir: Path, meta_dir: Path | None, root: Path, tolerance: float, unit_only: bool = False
 ) -> int:
-    """CI comparison: exit 1 on any block, warnings and allowed differences printed."""
+    """CI comparison: exit 1 on any block, warnings and allowed differences printed. ``card`` is any
+    path: a committed card, or the card part of a release tag message that xewe-release.yml wrote."""
     body, data = read_card(card)
     if not junit_dir.is_dir():
         raise XeWeError(f"--junit-dir {junit_dir}: not a directory", EXIT_USAGE)
@@ -1633,7 +1634,10 @@ def verify_ci(
         log.warning("%s", line)
     for line in cmp.blocks:
         log.error("block: %s", line)
-    if (card.parent / "testcard.md").exists():
+    # a card in the tree (core, modules, the tools' ci.yml); the tag's card (xewe-release.yml) is a
+    # file outside it and has no folder to look in
+    in_tree = card.resolve().is_relative_to(root.resolve())
+    if in_tree and (card.parent / "testcard.md").exists():
         log.error("block: %s exists; the release card replaces it", card.parent / "testcard.md")
         cmp.blocks.append("testcard.md")
     if cmp.blocks:
@@ -1741,7 +1745,9 @@ def add_parser(sub: Any) -> None:
 
     m = rsub.add_parser("verify", help="check a committed card: tree, local logs; --ci: against a CI run")
     common(m, dir_required=False)
-    m.add_argument("--card", type=Path, required=True, metavar="FILE")
+    m.add_argument(
+        "--card", type=Path, required=True, metavar="FILE", help="the card (--ci: also the card part of a tag message)"
+    )
     m.add_argument("--ci", action="store_true", help="compare with the CI run's JUnit files and image metas")
     m.add_argument("--junit-dir", type=Path, metavar="D", help="--ci: JUnit *.xml (and core host *.log) of the CI run")
     m.add_argument("--meta-dir", type=Path, metavar="D", help="--ci: meta.json files of the CI builds")

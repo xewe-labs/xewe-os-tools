@@ -339,6 +339,40 @@ def test_per_chip_then_assemble_equals_one_run(led_os: Paths, notes: Path, capsy
     assert (base / "release_notes.txt").read_text() == "Faster boot.\n"
 
 
+def test_row_chunks_then_assemble_equal_one_run(led_os: Paths, notes: Path) -> None:
+    assert _release(led_os, notes) == 0
+    base = led_os.root / REL / "3.1.0"
+    single_map = (base / "firmware_map.csv").read_text()
+    single_assets = _assets(led_os)
+    shutil.rmtree(base)
+    shutil.rmtree(led_os.build / "release")
+
+    chunks = {"c3": [[0, 1, 2, 3], [4, 5, 6]], "c6": [[0, 1, 2, 3, 4], [5, 6, 7, 8, 9], [10, 11, 12, 13]]}
+    chunks["s3"] = [list(range(k, min(k + 5, 22))) for k in range(0, 22, 5)]
+    for chip, parts in chunks.items():
+        for rows in reversed(parts):  # job order does not matter
+            assert _release(led_os, notes, chip=chip, rows=rows) == 0
+    assert len(release.read_map(base / "firmware_map.c6.5.csv")[1]) == 5
+    assert not (base / "firmware_map.c6.csv").exists()
+    assert _release(led_os, None, assemble=True) == 0
+    assert (base / "firmware_map.csv").read_text() == single_map
+    assert _assets(led_os) == single_assets
+    assert sorted(f.name for f in base.glob("firmware_map*")) == ["firmware_map.csv"]
+
+
+def test_rows_usage(led_os: Paths, notes: Path, caplog: pytest.LogCaptureFixture) -> None:
+    common = ["release", "--version", "3.1.0", "--notes", str(notes)]
+    assert main([*common, "--rows", "0"]) == 2 and "--rows needs --chip" in caplog.text
+    assert main([*common, "--chip", "c3", "--rows", "7"]) == 2 and "indices 0..6" in caplog.text
+    assert main([*common, "--chip", "c3", "--rows", "1,1"]) == 2
+    with pytest.raises(SystemExit) as exc:
+        main([*common, "--chip", "c3", "--rows", "0,x"])
+    assert exc.value.code == 2
+    assert main([*common, "--chip", "c3", "--rows", "6,5"]) == 0
+    _, rows = release.read_map(led_os.root / REL / "3.1.0" / "firmware_map.c3.5.csv")
+    assert [r["_PATH"] for r in rows] == ["c3/7/4", "c3/10/4"]  # matrix order, named by the lowest index
+
+
 def test_assemble_refuses_a_missing_chip(led_os: Paths, notes: Path, caplog: pytest.LogCaptureFixture) -> None:
     assert _release(led_os, notes, assemble=True) == 1
     assert "no per-chip maps" in caplog.text
@@ -513,21 +547,126 @@ def _run_step(script: str, cwd: Path, env: dict[str, str]) -> tuple[subprocess.C
     return proc, dict(ln.split("=", 1) for ln in out.read_text().splitlines() if "=" in ln)
 
 
+def _chunks(tmp_path: Path, matrix: str | None, parallelise: str) -> list[dict[str, object]]:
+    if matrix is not None:
+        (tmp_path / "release_matrix.csv").write_text(matrix)
+    proc, out = _run_step(_step_script("Chunks of the release matrix"), tmp_path, {"PARALLELISE": parallelise})
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(out["chunks"])  # type: ignore[no-any-return]
+
+
 @pytest.mark.parametrize(
     ("matrix", "chips"),
     [
-        (None, '["c3", "c6", "s3"]'),
-        (MATRIX_43.read_text(), '["c3", "c6", "s3"]'),
-        ("chip,X,_BUILD_NOTES\r\ns3,1,a\r\n,skipped\r\nc3,2,\r\ns3,3,\r\n", '["s3", "c3"]'),
-        ('CHIP,NAME,_BUILD_NOTES\nC6,"Lamp, desk",x\nS3,"a, b",\n', '["c6", "s3"]'),  # CSV quoting, any case
+        (None, ["c3", "c6", "s3"]),
+        (MATRIX_43.read_text(), ["c3", "c6", "s3"]),
+        ("chip,X,_BUILD_NOTES\r\ns3,1,a\r\n,skipped\r\nc3,2,\r\ns3,3,\r\n", ["s3", "c3"]),
+        ('CHIP,NAME,_BUILD_NOTES\nC6,"Lamp, desk",x\nS3,"a, b",\n', ["c6", "s3"]),  # CSV quoting, any case
     ],
 )
-def test_workflow_plan_chips(tmp_path: Path, matrix: str | None, chips: str) -> None:
-    if matrix is not None:
-        (tmp_path / "release_matrix.csv").write_text(matrix)
-    proc, out = _run_step(_step_script("Chips in the release matrix"), tmp_path, {})
+def test_workflow_plan_chips(tmp_path: Path, matrix: str | None, chips: list[str]) -> None:
+    chunks = _chunks(tmp_path, matrix, "1")
+    assert [c["chip"] for c in chunks] == chips and all(c["chunk"] == 0 for c in chunks)
+
+
+def _layout(chunks: list[dict[str, object]]) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for c in chunks:
+        out.setdefault(str(c["chip"]), []).append(str(c["rows"]))
+    return out
+
+
+def _span(*sizes: int) -> list[str]:
+    """Contiguous chunks of these sizes, as the plan step writes their rows."""
+    out, start = [], 0
+    for n in sizes:
+        out.append(",".join(map(str, range(start, start + n))))
+        start += n
+    return out
+
+
+@pytest.mark.parametrize(
+    ("parallelise", "layout"),
+    [
+        # round(P * rows / 43) per chip, at least 1 each (so 3 jobs, not 1), the largest reduced
+        ("1", {"c3": _span(7), "c6": _span(14), "s3": _span(22)}),
+        ("3", {"c3": _span(7), "c6": _span(14), "s3": _span(22)}),
+        ("10", {"c3": _span(4, 3), "c6": _span(5, 5, 4), "s3": _span(5, 5, 4, 4, 4)}),
+        ("15", {"c3": _span(4, 3), "c6": _span(3, 3, 3, 3, 2), "s3": _span(3, 3, 3, 3, 3, 3, 2, 2)}),
+    ],
+)
+def test_workflow_plan_chunks(tmp_path: Path, parallelise: str, layout: dict[str, list[str]]) -> None:
+    chunks = _chunks(tmp_path, MATRIX_43.read_text(), parallelise)
+    assert _layout(chunks) == layout
+    assert [c["chunk"] for c in chunks if c["chip"] == "s3"] == list(range(len(layout["s3"])))
+    assert len(chunks) <= max(int(parallelise), 3)
+    assert _chunks(tmp_path, MATRIX_43.read_text(), parallelise) == chunks  # deterministic
+
+
+def test_workflow_plan_chunks_default_matrix(tmp_path: Path) -> None:
+    # no more jobs than a chip has rows
+    assert _layout(_chunks(tmp_path, None, "15")) == {"c3": ["0"], "c6": ["0"], "s3": ["0"]}
+
+
+@pytest.mark.parametrize("parallelise", ["0", "16", "2.5", "-1", "x"])
+def test_workflow_plan_chunks_rejects(tmp_path: Path, parallelise: str) -> None:
+    proc, out = _run_step(_step_script("Chunks of the release matrix"), tmp_path, {"PARALLELISE": parallelise})
+    assert proc.returncode == 1 and "parallelise must be an integer from 1 to 15" in proc.stderr
+    assert "chunks" not in out
+
+
+FAKE_TAG_GIT = """#!/bin/sh
+case "$1" in
+  fetch) exit 0 ;;
+  cat-file) echo "$FAKE_TAG_TYPE" ;;
+  for-each-ref) cat "$FAKE_TAG_MESSAGE"; echo ;;
+  *) echo "unexpected git $*" >&2; exit 2 ;;
+esac
+"""
+
+
+def tag_step(tmp_path: Path, message: str, kind: str = "tag") -> tuple[subprocess.CompletedProcess[str], Path]:
+    """Run the plan step that splits the tag message (fake git); the folder it writes into."""
+    bin_dir, temp = tmp_path / "bin", tmp_path / "runner-temp"
+    for d in (bin_dir, temp):
+        d.mkdir(parents=True, exist_ok=True)
+    (bin_dir / "git").write_text(FAKE_TAG_GIT)
+    (bin_dir / "git").chmod(0o755)
+    (tmp_path / "message.txt").write_text(message)
+    env = {
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "TAG": "3.1.0",
+        "RUNNER_TEMP": str(temp),
+        "FAKE_TAG_TYPE": kind,
+        "FAKE_TAG_MESSAGE": str(tmp_path / "message.txt"),
+    }
+    proc, _ = _run_step(_step_script("Release notes and card from the tag message"), tmp_path, env)
+    return proc, temp / "notes"
+
+
+def test_workflow_tag_message_split(tmp_path: Path) -> None:
+    card = "# demo 3.1.0 release card\n\n## 1. Release notes\n\n# not a split point\n<!-- xewe-card-data {} -->\n"
+    proc, out = tag_step(tmp_path, "Faster boot.\nFixes #12.\n\n\n" + card)
     assert proc.returncode == 0, proc.stderr
-    assert out == {"chips": chips}
+    assert (out / "notes.txt").read_text() == "Faster boot.\nFixes #12.\n"
+    assert (out / "release_card.md").read_text() == card
+    assert sorted(f.name for f in out.iterdir()) == ["notes.txt", "release_card.md"]
+
+
+@pytest.mark.parametrize(
+    ("message", "kind", "notes"),
+    [
+        ("Faster boot.\n", "tag", "Faster boot.\n"),  # no card part
+        ("", "tag", "Release 3.1.0\n"),
+        ("commit message\n", "commit", "Release 3.1.0\n"),  # a lightweight tag has no message
+        ("Notes.\n-----BEGIN PGP SIGNATURE-----\nabc\n", "tag", "Notes.\n"),
+    ],
+)
+def test_workflow_tag_message_without_card(tmp_path: Path, message: str, kind: str, notes: str) -> None:
+    proc, out = tag_step(tmp_path, message, kind)
+    assert proc.returncode == 0, proc.stderr
+    assert (out / "notes.txt").read_text() == notes and not (out / "release_card.md").exists()
+    assert ("lightweight tag" in proc.stdout) == (kind == "commit")
 
 
 FAKE_GH = """#!/bin/sh
@@ -571,18 +710,29 @@ def test_workflow_jobs_and_assets() -> None:
     assert "      publish_branch:\n" in inputs
     assert inputs.split("publish_branch:")[1].split("releases_branch:")[0].count("default: false") == 1
     assert "      timeout_minutes:\n" in inputs and "default: 90" in inputs
+    assert inputs.split("parallelise:")[1].split("require_card:")[0].count("default: 15") == 1
     assert jobs.count("timeout-minutes: ${{ inputs.timeout_minutes }}") == 3
-    assert "fail-fast: false" in jobs and "fromJSON(needs.plan.outputs.chips)" in jobs
+    assert "fail-fast: false" in jobs and "include: ${{ fromJSON(needs.plan.outputs.chunks) }}" in jobs
     build_job = jobs[jobs.index("\n  build:") : jobs.index("\n  assemble:")]
-    assert 'xewe release --version "$BASE" --chip "$CHIP" --notes' in build_job
+    assert 'xewe release --version "$BASE" --chip "$CHIP" --rows "$ROWS" --notes' in build_job
     assert "xewe test --no-board --chip" in build_job and "--junitxml=" in build_job
     assert "junit_family=xunit1" in build_job
+    # once per chip: the default image, the tests and the card inputs only in chunk 0
+    for step in (
+        "- name: xewe build (default image)",
+        "- name: xewe test --no-board",
+        "- name: Upload this chip's card",
+    ):
+        assert build_job.split(step)[1].split("\n")[1].strip() == "if: matrix.chunk == 0", step
+    assert "name: release-${{ matrix.chip }}-${{ matrix.chunk }}" in build_job
+    assert "releases/" not in _step_script("Release card check")  # the card comes from the tag
     # assemble: card check (on the pristine checkout), merge, finish, then publish; the branch
     # commit only when opted in
     assemble = jobs[jobs.index("\n  assemble:") :]
     order = [
+        "- name: Release card check",
         "release-card verify --ci --card",
-        "- name: Download the chip jobs' release rows",
+        "- name: Download the build jobs' release rows",
         "- name: xewe release --assemble",
         "- name: Finish the release folder",
         "- name: Choose the latest flag",
@@ -592,7 +742,9 @@ def test_workflow_jobs_and_assets() -> None:
     assert [assemble.index(s) for s in order] == sorted(assemble.index(s) for s in order)
     assert "if: inputs.publish_branch" in assemble
     publish = _step_script("GitHub Release")
-    assert 'files=("build/release/$BASE/assets"/*)' in publish and 'card="releases/$BASE/release_card.md"' in publish
+    assert (
+        'files=("build/release/$BASE/assets"/*)' in publish and 'card="$RUNNER_TEMP/notes/release_card.md"' in publish
+    )
     assert '"--latest=$LATEST"' in publish and "upload" in publish and "--clobber" in publish
     assert ".log" not in publish and "build-ci" not in text  # no logs are published
 
@@ -767,6 +919,41 @@ def test_card_job_skips_only_on_another_tree(tmp_path: Path, workflow: str) -> N
     assert out == {}
 
 
+@pytest.mark.parametrize("workflow", CARD_JOB_WORKFLOWS)
+def test_card_job_reads_the_card_of_a_tag(tmp_path: Path, workflow: str) -> None:
+    """A tag run takes the card from the tag message (as xewe-release.yml does), never the tree's;
+    a tag without one fails."""
+
+    def tag_block(name: str) -> str:
+        script = _step_script("Release card for this tree", WORKFLOWS / name)
+        return script[script.index("# A tag run") : script.index("found=()")]
+
+    assert tag_block(workflow) == tag_block("ci.yml")  # one block, identical in the three workflows
+    script = _step_script("Release card for this tree", WORKFLOWS / workflow)
+    bin_dir, temp = tmp_path / "bin", tmp_path / "runner-temp"
+    for d in (bin_dir, temp):
+        d.mkdir()
+    (bin_dir / "git").write_text(FAKE_TAG_GIT)
+    (bin_dir / "git").chmod(0o755)
+    card = "# led 3.1.0 release card\n\n## 1. Release notes\n<!-- xewe-card-data {} -->\n"
+    (tmp_path / "message.txt").write_text("Faster boot.\n\n" + card)
+    env = {
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "GITHUB_REF_TYPE": "tag",
+        "GITHUB_REF_NAME": "led/3.1.0",
+        "RUNNER_TEMP": str(temp),
+        "FAKE_TAG_TYPE": "tag",
+        "FAKE_TAG_MESSAGE": str(tmp_path / "message.txt"),
+    }
+    proc, out = _run_step(script, tmp_path, env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert out == {"cards": str(temp / "tag-card" / "release_card.md")}
+    assert (temp / "tag-card" / "release_card.md").read_text().rstrip("\n") == card.rstrip("\n")
+    (tmp_path / "message.txt").write_text("Faster boot.\n")
+    proc, out = _run_step(script, tmp_path, env)
+    assert proc.returncode == 1 and "holds no release card" in proc.stdout and out == {}
+
+
 def test_build_lint_rejects_committed_firmware() -> None:
     text = (WORKFLOWS / "xewe-build.yml").read_text()
     lint = text[text.index("\n  lint:") :]
@@ -878,3 +1065,34 @@ def test_release_refuses_an_active_sentinel(
 def test_release_with_commented_sentinel_builds(project: Paths, notes: Path) -> None:
     (project.root / "Config.h").write_text("#pragma once\n// #define XEWE_WIFI_SSID INJECTED_FROM_DOTENV\n")
     assert main(["release", "--version", "2.0.16", "--notes", str(notes)]) == 0
+
+
+# --------------------------------------------------------------------------- release notes check
+
+
+@pytest.mark.parametrize(
+    ("text", "problems"),
+    [
+        ("Faster boot.\n", []),
+        ("One.\nTwo.\nThree, fixes #12.", []),
+        ("x" * 120 + "\n", []),
+        ("", ["the notes are empty"]),
+        ("\n\n", ["the notes are empty"]),
+        ("1\n2\n3\n4\n", ["4 lines; at most 3"]),
+        ("One.\n\nTwo.\n", ["line 2 is empty"]),
+        ("# Title\n", ["line 1 starts with #"]),
+        ("ok\n" + "y" * 121, ["line 2 has 121 characters; at most 120"]),
+    ],
+)
+def test_check_notes(text: str, problems: list[str]) -> None:
+    assert release.check_notes(text) == problems
+
+
+def test_release_notes_check_command(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    good, bad = tmp_path / "good.txt", tmp_path / "bad.txt"
+    good.write_text("Faster boot.\n")
+    bad.write_text("# Faster boot.\n")
+    assert main(["release-notes", "check", str(good)]) == 0  # needs no project
+    assert main(["release-notes", "check", str(bad)]) == 1
+    assert "bad.txt: line 1 starts with #" in capsys.readouterr().err
+    assert main(["release-notes", "check", str(tmp_path / "missing.txt")]) == 2

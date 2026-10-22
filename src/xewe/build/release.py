@@ -1,8 +1,8 @@
 """``xewe release --version X.Y.Z``: matrix build into ``static/firmware/releases/<version>/`` (doc/spec.md §11).
 
 One image per matrix row, ``firmware_map.csv`` with one row per image, and the GitHub Release assets
-staged flat in ``build/release/<version>/assets/``. ``--chip C`` builds one chip's rows (one CI job per
-chip); ``--assemble`` merges those per-chip maps. Git and gh commands are printed, never run.
+staged flat in ``build/release/<version>/assets/``. ``--chip C`` builds one chip's rows (``--rows``: some
+of them, one CI job per chunk); ``--assemble`` merges those maps. Git and gh commands are printed, never run.
 """
 
 from __future__ import annotations
@@ -39,6 +39,10 @@ _NOTES_RE = re.compile(r"^_build_notes$", re.IGNORECASE)
 MAP_COLUMNS = ("_PATH", "_ASSET", "_SIZE", "_SHA256", "_META", "_MANIFEST", "_BUILD_NOTES")
 MAP_NAME = "firmware_map.csv"
 PART_MAP = "firmware_map.{chip}.csv"
+CHUNK_MAP = "firmware_map.{chip}.{first}.csv"
+"""The map of a ``--rows`` run, named by its lowest row index (the chunks of one chip never share one)."""
+NOTES_MAX_LINES = 3
+NOTES_MAX_WIDTH = 120
 
 
 @dataclass
@@ -280,6 +284,42 @@ def check_no_sentinel(p: Paths) -> None:
         )
 
 
+def check_notes(text: str) -> list[str]:
+    """Why ``text`` is not valid release notes for a tag message (empty list: valid): 1 to 3 lines,
+    none empty, none starting with ``#`` (the card starts at the first ``# `` line), each at most
+    120 characters."""
+    lines = text.rstrip("\n").split("\n")
+    problems = []
+    if not text.strip():
+        return ["the notes are empty"]
+    if len(lines) > NOTES_MAX_LINES:
+        problems.append(f"{len(lines)} lines; at most {NOTES_MAX_LINES}")
+    for n, line in enumerate(lines, 1):
+        if not line.strip():
+            problems.append(f"line {n} is empty")
+        elif line.startswith("#"):
+            problems.append(f"line {n} starts with #")
+        if len(line) > NOTES_MAX_WIDTH:
+            problems.append(f"line {n} has {len(line)} characters; at most {NOTES_MAX_WIDTH}")
+    return problems
+
+
+def notes_check(path: Path) -> int:
+    """``xewe release-notes check FILE``: exit 0 when the notes are valid, 1 (one line per problem)
+    when not, 2 when the file cannot be read."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise XeWeError(f"{path}: {getattr(exc, 'strerror', None) or exc}", EXIT_USAGE) from None
+    problems = check_notes(text)
+    for problem in problems:
+        log.error("%s: %s", path, problem)
+    if problems:
+        return EXIT_FAIL
+    result(f"{path}: valid release notes")
+    return EXIT_OK
+
+
 def interactive() -> bool:
     """True when ``$EDITOR`` may be opened for the notes: stdin is a terminal and
     ``XEWE_NONINTERACTIVE`` is not ``1``."""
@@ -399,10 +439,13 @@ def release(
     builder: Callable[..., build.BuildResult] = build.build_chip,
     chip: str | None = None,
     assemble: bool = False,
+    rows: list[int] | None = None,
 ) -> int:
     """Build every matrix row with ``version``; write firmware_map.csv, the tarball and the staged assets.
 
     ``chip``: build only that chip's rows and write ``firmware_map.<chip>.csv`` (no tarball, no assets).
+    ``rows`` (with ``chip``): only these 0-based indices into that chip's rows, in matrix order, and
+    ``firmware_map.<chip>.<lowest index>.csv``.
     ``assemble``: build nothing; merge the per-chip maps in matrix order, then tarball and assets.
     """
     if not lockfile.VERSION_RE.match(version):
@@ -411,6 +454,8 @@ def release(
         raise XeWeError(f"{version} is less than the current version {lock.version}", EXIT_USAGE)
     if chip is not None and assemble:
         raise XeWeError("--chip and --assemble do not go together", EXIT_USAGE)
+    if rows is not None and chip is None:
+        raise XeWeError("--rows needs --chip", EXIT_USAGE)
     check_no_sentinel(p)
     _check_tree(p)
     matrix = load_matrix(p, matrix_file)
@@ -418,6 +463,7 @@ def release(
     releases = p.root / "static" / "firmware" / "releases"
     version_dir = releases / version
     header = map_header(matrix)
+    part_map = PART_MAP.format(chip=chip)
     if assemble:
         merged = _merge_parts(matrix, version_dir)
         if merged is None:
@@ -425,33 +471,43 @@ def release(
         if notes_file is not None or not (version_dir / "release_notes.txt").is_file():
             notes = notes_file.read_text(encoding="utf-8") if notes_file else _edit_notes(version)
             (version_dir / "release_notes.txt").write_text(notes, encoding="utf-8")
-        rows = merged
+        cells_rows = merged
     else:
         selected = [r for r in matrix.rows if chip is None or r.chip == chip]
         if not selected:
             raise XeWeError(f"the release matrix has no {chip} row", EXIT_USAGE)
+        if rows is not None:
+            bad = [i for i in rows if not 0 <= i < len(selected)]
+            if not rows or bad or len(set(rows)) != len(rows):
+                raise XeWeError(
+                    f"--rows {','.join(map(str, rows))}: distinct indices 0..{len(selected) - 1} "
+                    f"(the release matrix has {len(selected)} {chip} rows)",
+                    EXIT_USAGE,
+                )
+            part_map = CHUNK_MAP.format(chip=chip, first=min(rows))
+            selected = [selected[i] for i in sorted(rows)]
         notes = notes_file.read_text(encoding="utf-8") if notes_file else _edit_notes(version)
         version_dir.mkdir(parents=True, exist_ok=True)
         (version_dir / "release_notes.txt").write_text(notes, encoding="utf-8")
-        rows = []
+        cells_rows = []
         prov: dict[str, Any] | None = None
         for row in selected:
             built = _build_row(p, lock, version, version_dir, row, builder, prov)
             if built is None:
                 return EXIT_FAIL
             cells, prov = built
-            rows.append(cells)
+            cells_rows.append(cells)
         if chip is not None:
-            write_map(version_dir / PART_MAP.format(chip=chip), header, rows)
+            write_map(version_dir / part_map, header, cells_rows)
             lock.version = version
             lockfile.save(lock, p.lock)
-            result(f"release {version} {chip}: {len(rows)} images in {p.rel(version_dir)}")
+            result(f"release {version} {chip}: {len(cells_rows)} images in {p.rel(version_dir)}")
             result(f"  when every chip is built: xewe release --version {version} --assemble")
             return EXIT_OK
 
     for part in version_dir.glob(PART_MAP.format(chip="*")):
         part.unlink()
-    write_map(version_dir / MAP_NAME, header, rows)
+    write_map(version_dir / MAP_NAME, header, cells_rows)
     lock.version = version
     lockfile.save(lock, p.lock)
     archive = releases / f"firmware-{version}.tar.gz"
@@ -459,7 +515,7 @@ def release(
         tf.add(version_dir, arcname=version)
     assets_dir = p.build / "release" / version / "assets"
     staged = stage_assets(version_dir, assets_dir, archive)
-    result(f"release {version} ready in {p.rel(version_dir)}: {len(rows)} images")
+    result(f"release {version} ready in {p.rel(version_dir)}: {len(cells_rows)} images")
     result(f"  {len(staged)} release assets in {p.rel(assets_dir)}; to publish, run:")
     card = (p.root / "releases" / version / "release_card.md").is_file()
     for cmd in publish_commands(version, card):
