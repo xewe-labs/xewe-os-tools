@@ -65,11 +65,11 @@ apply where this file is silent.
   `tests/fakes/` (arduino-cli, esptool, clang-format), fixtures in `tests/fixtures/`.
 - `.github/workflows/`: `ci.yml` (this repo) and the reusable `xewe-*.yml` that the other repos
   call (`doc/ci.md`).
-- `scripts/release.sh` releases the tools; `releases/<version>/` holds each release's
-  `notes.txt` and the generated `release_card.md` (no hand-written test card; the run logs are in
-  `releases/<version>/logs/`, gitignored) (`scripts/README.md`, `doc/spec.md` §11 and §14).
-  `--prepare` runs the checks and renders the card; agents may run `--dry-run` only, and
-  `--prepare` only on a scratch copy unless asked; the owner commits, tags and pushes.
+- `scripts/release.sh` releases the tools in one run: checks, the generated `release_card.md` (no
+  hand-written test card; results in `build/release/<version>/`, gitignored), the `release <version>`
+  commit, the tag with the notes and the card as its message, and the GitHub Release
+  (`scripts/README.md`, `doc/spec.md` §11 and §14). Agents never run it, except on a scratch
+  clone with its own origin; the owner runs it.
 
 ### Check your work
 

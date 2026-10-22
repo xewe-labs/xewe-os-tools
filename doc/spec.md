@@ -44,8 +44,8 @@ xewe-os-tools/
 ├── .agents/               the agent workspace (AGENTS.md, RULES.md, PREFERENCES.md, handoffs/, skills/)
 ├── .github/workflows/     ci.yml (this repo) and the reusable xewe-*.yml (doc/ci.md); README.md lists them
 ├── doc/                   README.md (index), spec.md (this page), ci.md, webui.md, tests.md (pointer to tests/README.md)
-├── scripts/release.sh     releases the tools (§11, scripts/README.md): --prepare (checks, card), then tag and GitHub Release
-├── releases/<version>/    notes.txt (GitHub Release text) and the generated release_card.md (§14); logs/ is the gitignored run folder (releases/README.md)
+├── scripts/release.sh     releases the tools (§11, scripts/README.md): checks, card, commit, tag and GitHub Release in one run
+├── releases/<version>/    the notes.txt and release_card.md kept per release (releases/README.md)
 ├── src/xewe/              the `xewe` package; README.md is the command table, every area has a README.md
 │   ├── __init__.py        __version__ = "3.1.5"
 │   ├── __main__.py        python -m xewe
@@ -1289,38 +1289,44 @@ in an `xewe-os` checkout, then `xewe modules validate` (the checkout setup used,
     part: 1 to 3 lines, none empty, none starting with `#`, each at most 120 characters.
 
 **The tools' own release** (`scripts/release.sh`; the tools build no firmware, so `xewe release`
-and xewe-release.yml are not used). Two runs with the owner's commit in between; tags are `X.Y.Z`.
-- `scripts/release.sh --prepare <v> [--resume] [--dry-run]` makes no git change. 1 preflight:
-  refuses a detached HEAD, a merge, rebase, cherry-pick or revert in progress, unmerged paths, a
-  change outside the version lines of `VERSION_LOCATIONS` and `releases/<v>/`, a
-  `releases/<v>/testcard.md`, and a `.gitignore` that does not ignore `releases/*/logs/`; it finds
-  each Python of ci.yml's test matrix installed here (`PATH`, else `uv python find`; a missing one
-  is a warning). 2 sets the versions. 3 `releases/<v>/notes.txt`: a missing file gets a skeleton
-  whose first line is the `XEWE-NOTES-SKELETON` marker, and while the marker is there the run stops
-  with exit 2 (a card is never rendered from an unfilled skeleton). 4 a venv with the tree's tools
-  (`build/release-venv/card`, `pip install .`) runs `xewe release-card init --dir
-  releases/<v>/logs --repo xewe-labs/xewe-os-tools --version <v> --tag <v>`. 5 `record --kind
-  setup`: per Python a venv `build/release-venv/py<X.Y>` with `pip install . pyflakes mypy
-  types-pyserial` (the 3.12 one also `ruff==0.17.0 clang-format==23.1.3 actionlint-py
-  shellcheck-py`). 6 per Python `record --kind unit --name py<X.Y> --junit …` of `env
-  XEWE_NO_BOARD=1 python -m pytest -q --junitxml=… -o junit_family=xunit1` (one run each on the
-  card), `record --kind check` of `python -m pyflakes src tests` and `python -m mypy`; then `xewe
-  format --check` (with that clang-format), `xewe brand-lint .` and `actionlint -ignore xewe-board`;
-  a failed step does not stop the others. 7 `render --notes releases/<v>/notes.txt --out
-  releases/<v>/release_card.md --require setup,unit,check --title xewe-os-tools` (no `--chips`); a
-  refusal is exit 1 with the draft in the logs folder, and `--prepare <v> --resume` then re-runs
-  only the steps that are not green. It prints the commit command (the changed version files,
-  `notes.txt` and `release_card.md`, committed as "prepare <v>" and pushed).
-- `scripts/release.sh <v> [--dry-run] [--ci-timeout MIN] [--skip-ci]`, the tag run: 1 preflight (on
-  `main`, clean, level with `origin/main`; tag free; `notes.txt` without the marker and
-  `release_card.md` committed; no `testcard.md`; every version location says `<v>`; `gh` logged
-  in); 2 `xewe release-card verify --card releases/<v>/release_card.md` (the card as rendered, its
-  tree the clean HEAD's, the local logs present); 3 waits for ci.yml on HEAD to pass, its `card`
-  job's `verify --ci` step included (run, not skipped); 4 an annotated tag `<v>` on HEAD, pushed,
-  then `gh release create <v> --verify-tag --notes-file releases/<v>/notes.txt
-  releases/<v>/release_card.md` (the card is the only asset); 5 prints how consumers pick it up.
-  `--dry-run` runs only the read-only parts (git and gh queries, `verify`) and prints the rest. A
-  tag without a GitHub Release resumes at stage 4 with the tagged commit's notes and card.
+and xewe-release.yml are not used). One command, run by the owner; tags are `X.Y.Z`, a suffix
+(`X.Y.Z-rc1`) makes a pre-release. `scripts/release.sh <v> [--notes "line" ...] [--notes-file FILE]
+[--resume] [--ci-timeout MIN]`:
+1. Preflight lists every problem and refuses: not on `main`, any change in the tree (untracked
+   files included), `main` not level with `origin/main` after a fetch, a tag `<v>` locally or on
+   origin (unless `--resume`), `gh` missing or not logged in, a `.gitignore` that does not ignore
+   `build/`, notes that are not 1 to 3 lines accepted by `xewe release-notes check` (the lines
+   are written to `build/release/<v>/notes.txt`). It finds each Python of ci.yml's test matrix
+   installed here (`PATH`, else `uv python find`; a missing one is a warning).
+2. Sets the version lines of `VERSION_LOCATIONS` to `X.Y.Z`, installs the tree in
+   `build/release-venv/card`, and starts a card run with `xewe release-card init --dir
+   build/release/<v>/logs --repo xewe-labs/xewe-os-tools --version <v> --tag <v>`. Recorded steps:
+   `record --kind setup` per Python (a venv `build/release-venv/py<X.Y>` with `pip install .
+   pyflakes mypy types-pyserial`; the 3.12 one also `ruff==0.17.0 clang-format==23.1.3
+   actionlint-py shellcheck-py`), per Python `record --kind unit --name py<X.Y> --junit …` of
+   `env XEWE_NO_BOARD=1 python -m pytest -q --junitxml=… -o junit_family=xunit1` and `record
+   --kind check` of `python -m pyflakes src tests` and `python -m mypy`; then `xewe format
+   --check` (with that clang-format), `xewe brand-lint .` and `actionlint -ignore xewe-board`. A
+   failed step does not stop the others. A run that stops before step 4 puts the version lines
+   back.
+3. `render --notes build/release/<v>/notes.txt --out build/release/<v>/release_card.md --require
+   setup,unit,check --title xewe-os-tools` (no `--chips`); a refusal is exit 1 with the draft in
+   the logs folder.
+4. `git add` of the version files only and `git commit -m "release <v>"`; refused when any other
+   file changed.
+5. Tag message file = the notes, one blank line, the card; `git tag -a --cleanup=verbatim -F
+   <file> <v>`; `git push origin main`, a check that `origin/main` is HEAD, then `git push origin
+   <v>` (main first, so the workflow is registered before the tag triggers it).
+6. Waits for ci.yml on the tag (`--ci-timeout`, default 60 minutes), whose `card` job takes the
+   card from the tag message; its `verify --ci` step must have run and passed. Then `gh release
+   create <v> --verify-tag --title "xewe-os-tools <v>" --notes-file build/release/<v>/notes.txt
+   build/release/<v>/release_card.md` (`--prerelease` for a suffix; the card is the only asset), and
+   prints the release URL.
+
+`--resume`: when the tag exists (locally or on origin), pushes what is missing (`main`, then the
+tag) and goes to 6 (a release that exists is only reported); when HEAD is the `release <v>` commit
+and there is no tag, reuses `build/release/<v>/` if its card is there (else runs 2 again), then
+continues from 3. Exit codes: 0 done, 1 a refusal or a failed check.
 
 ---
 

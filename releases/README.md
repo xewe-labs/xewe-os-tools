@@ -11,6 +11,6 @@ One folder per xewe-os-tools release, named after the version. The release card 
 | `testcard.md` | 3.0.0 and 3.0.1 | the hand-written test card of those releases |
 | `logs/` | prepare runs | the card run's logs; gitignored, kept only on the machine that ran it |
 
-`scripts/release.sh` reads and writes `releases/<version>/`, and the `card` job of
-`.github/workflows/ci.yml` finds the committed `releases/*/release_card.md` of the tree it tests,
-so these files stay tracked in git.
+`scripts/release.sh` writes nothing here: its notes, card and logs are under `build/release/<version>/`
+(gitignored), and the card travels in the tag message. The `card` job of `.github/workflows/ci.yml`
+still finds a committed `releases/*/release_card.md` of the tree it tests, so these files stay tracked in git.

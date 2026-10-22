@@ -28,7 +28,6 @@ Workflow callers pin the same tag:
 | Modules | [src/xewe/modules/README.md](src/xewe/modules/README.md) |
 | The test runner | [src/xewe/testing/README.md](src/xewe/testing/README.md) |
 | Releasing the tools | [scripts/README.md](scripts/README.md) |
-| What a release folder holds | [releases/README.md](releases/README.md) |
 | CI and the reusable workflows | [doc/ci.md](doc/ci.md), [.github/workflows/README.md](.github/workflows/README.md) |
 | The full specification | [doc/spec.md](doc/spec.md) |
 | Web UI export | [doc/webui.md](doc/webui.md) |

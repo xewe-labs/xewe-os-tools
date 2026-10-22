@@ -5,7 +5,7 @@ __pycache__/
 /build/
 /dist/
 .pytest_cache/
-# release card run folders (scripts/release.sh --prepare): logs stay local, never committed
+# release card run folders of earlier releases: logs stay local, never committed
 releases/*/logs/
 # credentials and settings (xewe.env.dotenv)
 .env
