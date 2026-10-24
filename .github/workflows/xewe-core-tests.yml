@@ -1,6 +1,6 @@
 # xewe-core-tests.yml: reusable checks for xewe-os-core (the XeWeCore Arduino library).
 # Host unit tests (tests/unit/run.sh), arduino-lint (strict, Library Manager update: the
-# Library Manager rules of core's doc/library-rules.md), the examples compiled for c3, c6 and s3,
+# Library Manager rules of core's doc/LIBRARY_RULES.md), the examples compiled for c3, c6 and s3,
 # `xewe format --check` and `xewe brand-lint`, and on a prepare commit the release-card check
 # (`xewe release-card verify --ci`). Every job blocks.
 # Nothing here publishes: core is released with its own scripts/release.sh (tag X.Y.Z, then the

@@ -1,20 +1,15 @@
-# xewe-os-tools documentation
+# doc
 
-The reference pages of the `xewe` command and the reusable workflows. The directory READMEs next
-to the code hold the user view (commands, settings, boards, releasing); the pages here hold the
-contract that the code is checked against.
+The reference pages of the `xewe` command and the reusable workflows. The READMEs next to the
+code give the user's view of commands, settings, boards and releasing. The pages here hold the
+contract the code is checked against.
 
-## Reading path
+Start with [the root README](../README.md) for what the tools are, then
+[the command table](../src/xewe/README.md) for every command, its flags and exit codes. Open
+[spec.md](spec.md) when you need the exact behaviour of a step; the code cites it as §N. Open
+[ci.md](ci.md) when a repository calls one of the reusable workflows.
 
-1. **[The root README](../README.md)**: what the tools are and where each topic lives.
-2. **[The command table](../src/xewe/README.md)**: every `xewe` command, its flags and exit codes.
-3. **[spec.md](spec.md)**: the normative contract, when you need the exact behaviour of a step.
-   The code cites it as §N.
-4. **[ci.md](ci.md)**: when a repository calls one of the reusable workflows.
-
-## Reference
-
-### [spec.md](spec.md): the normative contract
+## spec.md, the normative contract
 
 | § | Covers |
 |---|---|
@@ -33,10 +28,11 @@ contract that the code is checked against.
 | 13 | configuration: the dotenv file |
 | 14 | release card (`xewe release-card`) |
 
-### Other pages
+## Other pages
 
 | Page | Covers |
 |---|---|
 | [ci.md](ci.md) | the reusable GitHub workflows, their callers, the toolchain cache, releases in CI, repository settings |
 | [webui.md](webui.md) | `xewe webui`: a Flask prototype of a device web page, exported as C++ headers |
-| [tests.md](tests.md) | a pointer to [tests/README.md](../tests/README.md), the self-tests of this package |
+
+The self-tests are described in [tests/README.md](../tests/README.md).

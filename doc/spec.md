@@ -1,4 +1,4 @@
-# xewe-os-tools — specification
+# xewe-os-tools specification
 
 What the `xewe` command does, file by file and step by step. The directory READMEs are the user view;
 this page is the reference the code is checked against. Sections are cited as §N in the code.
@@ -41,9 +41,8 @@ only without eager re-exports); `xewe.testing` also holds `module_dir`.
 xewe-os-tools/
 ├── pyproject.toml
 ├── README.md              the documentation index; LICENSE.txt  .gitignore
-├── .agents/               the agent workspace (AGENTS.md, RULES.md, PREFERENCES.md, handoffs/, skills/)
 ├── .github/workflows/     ci.yml (this repo) and the reusable xewe-*.yml (doc/ci.md); README.md lists them
-├── doc/                   README.md (index), spec.md (this page), ci.md, webui.md, tests.md (pointer to tests/README.md)
+├── doc/                   README.md (index), spec.md (this page), ci.md, webui.md
 ├── scripts/release.sh     releases the tools (§11, scripts/README.md): checks, card, commit, tag and GitHub Release in one run
 ├── releases/<version>/    the notes.txt and release_card.md kept per release (releases/README.md)
 ├── src/xewe/              the `xewe` package; README.md is the command table, every area has a README.md
@@ -232,17 +231,17 @@ Agents in compile-only mode must set `XEWE_NO_BOARD=1`.
 | `xewe test` | `[--chip C \| --all-chips] [--port P] [--module SLUG]... [--unit-only] [--no-flash] [--define KEY=VALUE]... [--require-board] [--no-board] [-v] [-- PYTEST_ARGS]` | §9. Runs pytest over project and selected-module tests; builds (when stale for the defines) and flashes with `--define`, else `XEWE_TEST_DEFINES` | board tests compile and report compiled-not-run, exit 0 |
 | `xewe run` | `[--chip C] [--port P] [--define K=V]... [--keep-nvs] [--no-serial] [--no-input] [--timestamps]` | build → erase-flash (default; NVS too, so every run is a true first boot; `--keep-nvs` skips it) → flash → serial, interactive on a terminal (what `run.sh` calls). The `flashed` line ends with `(flash erased: first boot)` or `(nvs kept)` | builds, prints status line, exit 0 |
 | `xewe boards` | `[--no-probe] [--json] [--set-port P [--set-chip C]] [--clear] [--no-board]` | §5. Lists candidate ports and chips; writes `build/config/boards.toml` | `no board attached`, exit 0 (4 with `--require-board`) |
-| `xewe modules list` | `[--json]` | Modules in the modules checkout: slug, id, version, deps, `*` if selected | — |
-| `xewe modules select` | `LIST\|all\|none [--no-generate]` | Writes `[modules] selected` in `xewe.toml`, then generates | — |
-| `xewe modules validate` | `[PATH]` | §10 rules over a modules repo checkout (default: the one setup uses, `[paths] modules`) | — |
-| `xewe modules generate` | | §10. Rebuilds `build/modules/` and `src/Modules.h` from the manifest selection | — |
-| `xewe manifest show` | `[--json]` | Manifest refs vs installed refs (from `build_config.toml`), drift marked `!` | — |
-| `xewe manifest update` | `[core\|modules\|tools]... [--to REF]` | Resolves newest tag (§4) and rewrites `xewe.toml` (so it freezes a `latest` ref; `--to latest` tracks the default branch again); prints diff; does not run setup | — |
-| `xewe clean` | `[--all] [--modules]` | Default: delete `build/builds/` and `build/tmp/`. `--all`: delete all of `build/` except `tools/` (the tools checkout and its venv; setup must re-run). `--modules`: also delete `build/modules/` and `src/Modules.h`. Never touches `~/.xewe-os/build-tools` (toolchain and shared modules checkouts) | — |
+| `xewe modules list` | `[--json]` | Modules in the modules checkout: slug, id, version, deps, `*` if selected | n/a |
+| `xewe modules select` | `LIST\|all\|none [--no-generate]` | Writes `[modules] selected` in `xewe.toml`, then generates | n/a |
+| `xewe modules validate` | `[PATH]` | §10 rules over a modules repo checkout (default: the one setup uses, `[paths] modules`) | n/a |
+| `xewe modules generate` | | §10. Rebuilds `build/modules/` and `src/Modules.h` from the manifest selection | n/a |
+| `xewe manifest show` | `[--json]` | Manifest refs vs installed refs (from `build_config.toml`), drift marked `!` | n/a |
+| `xewe manifest update` | `[core\|modules\|tools]... [--to REF]` | Resolves newest tag (§4) and rewrites `xewe.toml` (so it freezes a `latest` ref; `--to latest` tracks the default branch again); prints diff; does not run setup | n/a |
+| `xewe clean` | `[--all] [--modules]` | Default: delete `build/builds/` and `build/tmp/`. `--all`: delete all of `build/` except `tools/` (the tools checkout and its venv; setup must re-run). `--modules`: also delete `build/modules/` and `src/Modules.h`. Never touches `~/.xewe-os/build-tools` (toolchain and shared modules checkouts) | n/a |
 | `xewe format` | `[--check] [PATH...]` | clang-format the project's (or library's, or the current directory's) C++ and ruff-format its Python (see below). `--check` changes nothing and exits 1 listing `would reformat <file>` | n/a |
 | `xewe brand-lint` | `[DIR...]` | Banned spellings of the brand (see below). Needs no project | n/a |
 | `xewe webui export` | `FLASK_DIR OUT_DIR` | [webui.md](webui.md). Writes each `.html`/`.css`/`.js` of `templates/` and `static/` as `<stem>_<ext>.h` (PROGMEM raw literal, `url_for('static', ...)` rewritten), copies `app.py` and generates `<name>_app.ino` (one GET route per file) into `OUT_DIR/<name>_<YYYYmmdd_HHMMSS>/`; last line `webui: N headers and <name>_app.ino [+ app.py] in <dir>`. Exit 2 when `FLASK_DIR` is not a directory, 1 when two files map to one array name. Needs no project | n/a |
-| `xewe webui prompt` | | Prints the LLM prompt that ports `app.py` into the generated sketch (`src/xewe/build/webui-prompt.txt`) | n/a |
+| `xewe webui prompt` | | Prints the prompt that asks an AI model to port `app.py` into the generated sketch (`src/xewe/build/webui-prompt.txt`) | n/a |
 | `xewe doctor` | | Checks python, git, venv, the shared toolchain (`XEWE_HOME` resolved; cli and core present), arduino-cli version, core version, esptool, manifest (`xewe.toml`) vs installed, free disk ≥ 6 GB, serial permissions (Linux: user in `dialout`/`uucp`), Rosetta 2 on Apple silicon (the esp32 core's `ctags` is x86_64: "bad CPU type" without it; probe `pgrep -q oahd` or `arch -x86_64 /usr/bin/true`; warns with `softwareupdate --install-rosetta --agree-to-license`), board scan | exit 0 if only warnings |
 | `xewe release` | `--version X.Y.Z [--matrix FILE] [--notes FILE] [--chip C [--rows LIST] \| --assemble]` | §11; without `--notes` and without a terminal (or with `XEWE_NONINTERACTIVE=1`) exit 2 | n/a (no board needed) |
 | `xewe release-notes check` | `FILE` | §11. Exit 0 when `FILE` holds valid notes for a release tag message (1 to 3 lines, none empty, none starting with `#`, each at most 120 characters), 1 with one line per problem, 2 when it cannot be read. Needs no project | n/a |
@@ -281,7 +280,7 @@ formatted|would reformat`.
 
 **`xewe brand-lint [DIR...]`** (`src/xewe/build/brandlint.py`). Scans every text file under each
 `DIR` (default `.`; a file argument is scanned as is) for the banned spellings of
-`xewe-os/doc/naming.md` (`brandlint.PATTERN`, case sensitive): the brand with only its first
+`xewe-os/doc/WRITING_A_MODULE.md` (`brandlint.PATTERN`, case sensitive): the brand with only its first
 letter capitalised and a letter right after it, the lowercase brand followed by the word `os`, and
 the brand with only its first letter capitalised followed by ` OS`. Inside a git work tree the
 files are those git does not ignore (`git ls-files --cached --others --exclude-standard`), so
@@ -292,7 +291,7 @@ file named `naming.md` in any case (the naming page lists the banned spellings a
 generated `release_card.md` and `release_card.draft.md` (§14: they quote test ids and tool output
 verbatim, such as the banned-spelling cases of brand-lint's own tests); the dotenv file and
 `<dotenv file>.*` (their lines are never printed). Clean: `brand-lint: clean` on
-stdout, exit 0. Hits: `brand-lint: banned spellings found (see xewe-os/doc/naming.md):` and one
+stdout, exit 0. Hits: `brand-lint: banned spellings found (see xewe-os/doc/WRITING_A_MODULE.md):` and one
 `<path>:<line>:<text>` per hit on stderr, exit 1. A `DIR` that does not exist: exit 2. Every
 repo's CI runs `python -m xewe brand-lint .` (doc/ci.md).
 
@@ -462,7 +461,7 @@ a time). An explicit `--port` that does not exist is exit 4, never "no board" (c
 
 ## 6. Setup procedure (`xewe setup`)
 
-Target layout (the single description of it; README and AGENTS point here). The toolchain is
+Target layout (the single description of it; the READMEs point here). The toolchain is
 shared by every project on the machine; everything under `build/` is generated and disposable
 (`build/.gitignore` is written as `*`), and `src/Modules.h` is generated too (git-ignored by the
 template):
@@ -688,7 +687,7 @@ Steps per chip:
    `Config.h:<line>: <NAME> is INJECTED_FROM_DOTENV but the dotenv file has no value (looked in <file>)`
    (`<file>` is `no dotenv file found` when there is none). The log names the keys only,
    `injected from dotenv: NAME, NAME`; values never appear in argv, logs or `meta.json`. The scheme
-   of `Config.h` itself (sections, names, the override ladder) is described in `doc/config.md` of
+   of `Config.h` itself (sections, names, the override ladder) is described in `doc/CONFIG.md` of
    xewe-os-core.
 4. Compile (env from §6):
    ```
@@ -746,7 +745,7 @@ Steps per chip:
        ]
      }
      ```
-   - `meta.json` — keys `type, chip_family, project_name, version, timestamp_param, config
+   - `meta.json`: keys `type, chip_family, project_name, version, timestamp_param, config
      (the --define dict and the injected names, sorted; an injected name has the value `"(dotenv)"`,
      so the release card's Defines column shows `NAME=(dotenv)`), fqbn, fqbn_extra (""), partition_scheme, compile_time_sec, artifacts{binary_filename,
      path_rel_binary, path_rel_manifest_json, path_rel_meta_json}, tools_version, arduino_cli,
@@ -758,7 +757,7 @@ Steps per chip:
      (bytes, from "Global variables use N bytes … Maximum is M bytes"; without "Maximum is", the maximum is
      N plus the "leaving" bytes; `null` if absent), `warnings` (count). No absolute path is
      stored; `path_rel_*` are relative to the project parent (`xewe-os/build/builds/c3/out/...`).
-   - `build.stamp` — sha256 of chip, full FQBN (board options with the partition scheme), project version, the sorted
+   - `build.stamp`: sha256 of chip, full FQBN (board options with the partition scheme), project version, the sorted
      `--define` list and the sorted injected values (when there are any). `flash`/`run` and the `compiled` fixture of `xewe test` (§9) treat the binary as stale when the stamp differs from the
      inputs of the current call (a build with `--define X=1` followed by a plain `xewe flash`
      rebuilds), in addition to the mtime check against every source (sketch files, `src/`
@@ -910,7 +909,7 @@ or a module's own value prompts such as the template's `Starting level (0-100)?`
   | `Selected: '<ssid>'` / `Password: ` | the password (the firmware echoes it) |
   | `Is your time: <date> (<GMT±HH:MM>)?` | `y` without a timezone setting, else `n` |
   | `Enter your timezone offset (e.g. GMT-08:00)` | the configured offset; none configured → exit 1 |
-  | `Initial Setup Complete`, `Rebooting`, port drop, `System Setup Complete` | — (boot wait, 90 s) |
+  | `Initial Setup Complete`, `Rebooting`, port drop, `System Setup Complete` | nothing (boot wait, 90 s) |
 
   An input line nothing was queued for (an unknown prompt, e.g. a module's own value prompt) gets the
   prompt's default: `n` at `(y/n) > `, an empty line (Enter) at `> `; a bounded firmware prompt
@@ -1054,7 +1053,7 @@ runs it with g++ (skipped when g++ is missing).
 ## 10. Modules generation and validation
 
 Input: the modules repo checkout (`~/.xewe-os/build-tools/sources/xewe-os-modules/<ref>/` or
-`XEWE_MODULES_SOURCE`, §6 step 8), laid out as the modules contract (`doc/contract.md` of
+`XEWE_MODULES_SOURCE`, §6 step 8), laid out as the modules contract (`doc/CONTRACT.md` of
 xewe-os-modules) says: `modules/<slug>/{module.properties, src/<Folder>/, tests/, README.md}`.
 `registry.py` also reads the older layout, one `xewe-os-module-<slug>/` per module with
 `module.properties` at its root.
@@ -1105,7 +1104,7 @@ everything after the first `=`.
    its `modules.lock` starts with the generated header line; otherwise it is left alone.
 6. The project's `Config.h` (`fill_config_h`). The configuration scheme (one `Config.h` per module
    and one for the core, the names, the sections, the override ladder, the dotenv sentinel) is
-   described in `doc/config.md` of xewe-os-core; this step is the tools' part of it. Defines are
+   described in `doc/CONFIG.md` of xewe-os-core; this step is the tools' part of it. Defines are
    named `XEWE_<SLUG>_<VAR>` (slug upper case, `-` as `_`; the core is `CORE`). A module's
    `src/<Folder>/Config.h` (`Module.config_h`) is pure preprocessor. Every text line is a
    single-line block comment `/* ... */`; `//` appears only in the three SPDX header lines. It has
@@ -1175,7 +1174,7 @@ everything after the first `=`.
    it. The CLI summary line reads `(build/modules, src/Modules.h, Config.h)` when a block was
    added, `(build/modules, src/Modules.h)` otherwise.
 
-`xewe modules validate [PATH]` — runs over every module in the checkout, prints one line per
+`xewe modules validate [PATH]` runs over every module in the checkout, prints one line per
 problem, exit 1 if any:
 
 | Rule | Check |
@@ -1338,7 +1337,7 @@ continues from 3. Exit codes: 0 done, 1 a refusal or a failed check.
 (`XEWE_ESPTOOL`), pyserial `serial_for_url("loop://")` plus a scripted fake port, and
 `list_ports.comports` monkeypatched.
 Layout: `tests/<area>/test_<module>.py` mirrors `src/xewe/` (§2); one `tests/conftest.py` holds the
-shared fixtures and fakes (doc/tests.md); `pytest tests/<area>` runs one area.
+shared fixtures and fakes (tests/README.md); `pytest tests/<area>` runs one area.
 
 | File | Covers |
 |---|---|
@@ -1455,7 +1454,7 @@ file the step wrote into the folder).
 - `record --dir D --kind K [--chip C] [--name LABEL] [--junit PATH] [--format core-host] [--firmware
   BIN] [--meta FILE] [--resume] -- CMD...`: runs `CMD` in the root (stdin inherited; output also
   echoed, redacted), records the step with `CMD`'s own exit code (127 when it cannot start) and
-  exits 0 when `CMD` exited 0, 1 when it exited non-zero, 3 when it could not start (X-07). The
+  exits 0 when `CMD` exited 0, 1 when it exited non-zero, 3 when it could not start (§3). The
   `--junit` file is deleted before `CMD` runs, so a file left by an earlier run never counts. `--chip`
   is required for `board`, `flash` and `build`; `unit` and `board` need `--junit` or `--format`
   (exit 2), since a test step without results proves nothing. `--resume`: a step whose latest attempt with the same

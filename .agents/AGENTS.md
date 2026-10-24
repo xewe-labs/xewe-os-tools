@@ -1,116 +1,60 @@
-# AGENTS.md — xewe-os-tools
+# AGENTS.md
 
-This is **WAX 1.3**, the WAX Agentic Workspace. The rules, preferences, and skills below belong
-to this version. Human documentation lives at https://github.com/maxdokukin/wax_agents.
+This is **xewe 2.3**, the agentic workspace. Human documentation and the source of every
+global file: https://github.com/maxdokukin/dot_agents
 
-This folder is the agentic part of the project. It gives you boundaries, context, and tools,
-in that order. Read it as described below before doing anything else in the repository.
+Two roots. `./.agents/` is this project's folder; `~/.agents/` is the global install on this
+machine (may be absent, e.g. in a cloud session). Paths below say which one they mean.
 
-## Read in this order
+| Layer | Contents | Ownership |
+|---|---|---|
+| global | `./.agents/README.md`, `./.agents/AGENTS.md`, `./.agents/RULES.md`; and, only in `~/.agents/`: the global skills (`xewe_handoff`, `xewe_doc`, `sample_skill`), `users/<me>/PREFERENCES.md`, `harnesses/` | The three files here are overwritten from the central repo on every session start. Read-only (R-03). |
+| project | `./.agents/PREFERENCES.md` (P-xx), `./.agents/skills/*` | Owned by the project, committed with it. |
+| user | `./.agents/users/<me>/handoffs/` | Written only by `xewe_handoff`. Committed with the project. |
 
-1. **`RULES.md` — root boundaries.** Absolute rules, the same in every project. Cite them by
-   ID when you explain a decision or a refusal.
-2. **`PREFERENCES.md` — user boundaries.** This project's chosen defaults (R-15). They bind
-   like rules until a human changes them; cite them by ID too.
-3. **`handoffs/HANDOFF.md` — context.** The head of the work record: where the last session
-   stopped and what is open. Reach it only through the `pickup` procedure of the
-   `wax_handoff` skill (R-04), because the directory has invariants that the skill checks
-   before you rely on anything in it.
-4. **`skills/` — tools.** One folder per skill, each with a `SKILL.md`. Discover them by
-   reading the frontmatter of every `skills/*/SKILL.md` (R-10); a folder without a valid one
-   is not a skill (R-11).
+`<me>` is the GitHub login: `gh api user -q .login 2>/dev/null || git config github.user || echo "$USER"`.
 
-## Session shape
+## Read in this order (R-01)
 
-- **Pickup → work → handoff.** Start with `wax_handoff` pickup, do the work, end with
-  `wax_handoff` handoff. A session that changed anything and did not end with a handoff is
-  incomplete (R-06); say so rather than letting it pass.
+1. `./.agents/RULES.md` — absolute, identical everywhere. Cite by ID.
+2. `./.agents/PREFERENCES.md` — project preferences, if the file exists. Cite by ID.
+3. `~/.agents/users/<me>/PREFERENCES.md` — the current user's preferences, if the file exists.
+   Cite by ID.
+4. The frontmatter of every `./.agents/skills/*/SKILL.md` (project skills) and every
+   `~/.agents/skills/*/SKILL.md` (global skills; the harness may already list them as native
+   skills) — that is the whole skill index (R-12).
+
+Project knowledge written for agents lives in the project skill `doc`, whose `SKILL.md` is the
+index, and in topic skills for procedures that keep coming back. Every documentation change,
+including recording something you learned, goes through `xewe_doc` (R-11).
+
+## Handoffs are voluntary
+
+`./.agents/users/<me>/handoffs/` is a record of past sessions, committed with the project. Use
+`xewe_handoff read` to resume from it and `xewe_handoff write` to leave a trail; run
+`xewe_handoff init` once per project and user before the first write. Nothing under
+`handoffs/` is touched except through that skill (R-14). Skipping handoffs is allowed;
+corrupting them is not. Write nothing there you would not publish.
 
 ## Never do these without being asked
 
-- **Edit `RULES.md`, `PREFERENCES.md`, or this file** (R-15, P-05). Propose changes in the
-  handoff instead (P-10).
-- **Touch anything under `handoffs/` by hand** (R-04). The skill is the only door.
-- **Add, rename, or remove a top-level item in `.agents/`** (R-13).
-- **Commit, push, tag, release, publish, or delete what you did not create** (P-09).
+- Edit a global file. Propose the change for the central repo instead; a local edit is gone
+  at the next session start.
+- Name a project skill after a global skill.
+- Touch `users/*/handoffs/` by hand (R-14).
 
-## Precedence
+Conduct (no secrets, honest and brief reporting, staying focused, no deleting or publishing,
+no git or GitHub writes) is in `RULES.md`, R-04 to R-10.
 
-- **Human instruction in this session > `RULES.md` > `PREFERENCES.md` > this file > a
-  skill** (R-03). A project's own `.agents/` wins over any organization-level agent file. Record every
-  human-instructed deviation in the handoff, quoting the instruction.
+## Precedence (R-02)
 
-## Reporting back
+Human instruction in this session > `RULES.md` > `PREFERENCES.md` > `users/<me>/PREFERENCES.md`
+> this file > a skill. Record every human-instructed deviation in the handoff, quoting the
+instruction, if a handoff is written.
 
-- **Say what you actually ran** and label anything unverified as unverified (P-07).
-- **Never report a skipped or failed step as done** (P-08). Failures come with their output.
+## Harnesses
 
-## Project: xewe-os-tools (`xewe`)
-
-The Python package `xewe`: setup, build, flash, serial, provision, test, format, release and
-brand-lint for XeWe OS firmware projects. Human
-documentation: `README.md` is the index; `src/xewe/README.md` the command table, `doc/spec.md` the
-full specification, `doc/ci.md` the reusable workflows, `doc/webui.md` the web UI export,
-`scripts/README.md` releasing, `tests/README.md` the self-tests. Project rules are X-01 … X-08 at the end of
-`RULES.md`. Organization rules: `https://github.com/xewe-labs/.github/blob/main/AGENTS.md`; they
-apply where this file is silent.
-
-### Layout
-
-- `src/xewe/` is the package (standard `src` layout); five areas: `env/` (machine and project:
-  setup, toolchain, paths, dotenv), `build/` (compile, flash, release, format, brand-lint,
-  the `clang-format` style file), `board/` (ports, serial, provision), `modules/` (registry,
-  manifest, `xewe.toml`), `testing/` (pytest plugin and runner). `cli.py` dispatches.
-- `tests/` mirrors the package: `tests/<area>/test_<module>.py`, one `tests/conftest.py`, fakes in
-  `tests/fakes/` (arduino-cli, esptool, clang-format), fixtures in `tests/fixtures/`.
-- `.github/workflows/`: `ci.yml` (this repo) and the reusable `xewe-*.yml` that the other repos
-  call (`doc/ci.md`).
-- `scripts/release.sh` releases the tools in one run: checks, the generated `release_card.md` (no
-  hand-written test card; results in `build/release/<version>/`, gitignored), the `release <version>`
-  commit, the tag with the notes and the card as its message, and the GitHub Release
-  (`scripts/README.md`, `doc/spec.md` §11 and §14). Agents never run it, except on a scratch
-  clone with its own origin; the owner runs it.
-
-### Check your work
-
-```bash
-python -m pytest -q          # self-tests: no network, no arduino-cli, no board
-python -m pyflakes src tests
-python -m mypy               # package and paths from pyproject.toml
-python -m xewe brand-lint .
-python -m xewe format --check   # ruff 0.17.0 (CI pins it); blocking in CI
-```
-
-Tests import the installed package: install the checkout once with `pip install -e .` (an
-editable install follows every change).
-
-### Using xewe from a project
-
-Run everything from inside a project (a directory with `xewe.toml`) or pass `--project DIR`; call
-it as `build/tools/.venv/bin/python -m xewe ...` (this keeps working after the project is moved).
-Results go to stdout, progress and errors to stderr; `-v` (before or after the command) prints
-every subprocess command and its output; pytest's own flags go after `--`.
-
-| Exit | Meaning |
-|---|---|
-| 0 | success, including "compiled, not run" (no board) |
-| 1 | operation failed: compile, flash, test failure, expect timeout, validation |
-| 2 | usage error: bad flag, unknown chip or module, bad `xewe.toml` |
-| 3 | not set up or tool missing: run `./setup.sh` |
-| 4 | board required but none found, `--port` missing, several boards, or board access disabled |
-
-- **No board is normal.** `flash`, `run` and `test` compile and print
-  `compiled, not run: no board attached (<chip>, <bin>)` with exit 0. Compile-only agents set
-  `XEWE_NO_BOARD=1`: no port is listed, probed or opened; `flash`/`run` then exit 4.
-- **Inspect before running.** `xewe build --chip c3 --dry-run` prints the arduino-cli command;
-  `xewe doctor` lists what is installed and changes nothing; `xewe manifest show` marks drift
-  with `!`.
-- **Provisioning.** `xewe provision` answers the first-boot prompts from the dotenv file. Exit 2
-  naming `XEWE_WIFI_*` means the user has not filled in the dotenv file: ask them, never invent
-  values.
-- **Credentials.** The user creates the dotenv file (tools checkout or project; nothing writes it,
-  setup only says where to put it). Agents never read, print, copy or edit the dotenv file (X-04 of the workspace); the tools
-  log only `loaded N keys from <path>` and mask the Wi-Fi password.
-- `xewe` never runs git writes; `xewe release` prints the git and gh commands. Only
-  `manifest update`, `modules select`, `setup --modules` and `release` edit `xewe.toml`. Never edit
-  `build/` or `src/Modules.h` by hand.
+`~/.agents/harnesses/<harness>/` holds material specific to one host tool, named after the
+tool's own dotfolder. Claude Code: `harnesses/.claude/` (`setup.sh` links the global skills
+into `~/.claude/skills` and installs the session hook, `sync.sh` is that hook). Harnesses are
+not copied into projects. No harness-specific rules exist yet.

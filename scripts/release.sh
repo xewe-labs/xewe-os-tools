@@ -2,41 +2,8 @@
 # SPDX-FileCopyrightText: 2026 Maxim Dokukin (maxdokukin.com)
 # SPDX-License-Identifier: GPL-3.0-only
 # xewe-os-tools/scripts/release.sh
-#
-# release.sh: test xewe-os-tools once, tag the commit with the notes and the release card in the tag
-# message, then create the GitHub Release.
 # Usage: scripts/release.sh <version> [--notes "line" ...] [--notes-file FILE] [--resume] [--ci-timeout <min>]
-#
-# One command, 6 stages. <version> is X.Y.Z or X.Y.Z-suffix (a pre-release), no `v`; the version
-# lines (VERSION_LOCATIONS) get X.Y.Z. The notes are 1 to 3 lines: --notes once per line, and/or the
-# lines of --notes-file. Everything the run writes is under build/release/<version>/ (gitignored).
-#   1 preflight: refuses, and lists every problem, unless: on main; the work tree has no change at
-#     all (untracked files included); main is level with origin/main after a fetch; the tag is free
-#     here and on origin (--resume excepted); the notes pass `xewe release-notes check`; build/ is
-#     ignored; gh is logged in; finds every Python of ci.yml's test matrix that is installed here
-#     (PATH, else `uv python find`);
-#   2 tests: the version lines set, then a card run (`xewe release-card init` on the logs folder),
-#     every step recorded by `xewe release-card record`: one venv per Python with the tree
-#     installed (`pip install .`) and the checkers, as ci.yml installs them; per Python pytest
-#     (JUnit) as a unit run, pyflakes and mypy; then `xewe format --check`, `xewe brand-lint .` and
-#     actionlint. A failing step does not stop the others; the card refuses it;
-#   3 release card: `xewe release-card render` writes build/release/<version>/release_card.md from
-#     those results, or refuses (the draft is in the logs folder);
-#   4 commit: only the VERSION_LOCATIONS files are added, `release <version>`; refuses when any
-#     other file changed;
-#   5 tag: the message is the notes, one blank line, the card; `git tag -a --cleanup=verbatim` (git
-#     would drop the card's `#` lines otherwise). Then `git push origin main`, a check that
-#     origin/main equals HEAD, and `git push origin <version>`: main first, so that the workflow is
-#     registered before the tag triggers it;
-#   6 release: waits for ci.yml on the tag (--ci-timeout minutes, default 60); its card job compares
-#     the tag's card with the run (the `xewe release-card verify --ci` step must have run and passed).
-#     Then `gh release create` (--verify-tag, the notes as the text, build/release/<version>/
-#     release_card.md as its only asset); prints the release URL and how consumers pick it up.
-# A run that stops before stage 4 puts the version lines back. --resume: when the tag exists (here
-# or on origin), pushes what is missing (main, then the tag) and runs stage 6 (a release that
-# exists is only reported); when HEAD is the `release <version>` commit and there is no tag, reuses
-# build/release/<version>/ if its card is there (else runs stage 2 again), then goes on from stage 3.
-# Exit codes: 0 done, 1 a refusal or a failed check.
+# What each stage does, and the exit codes: scripts/README.md.
 set -euo pipefail
 
 TOOLS_REPO="xewe-labs/xewe-os-tools"
@@ -273,7 +240,7 @@ restore_versions() {
   fi
 }
 
-# tests VERSION: stage 2 (see the header).
+# tests VERSION: stage 2 (scripts/README.md).
 tests() {
   local v="$1" loc file i venv junit
   stage 2 tests
@@ -323,7 +290,7 @@ tests() {
   fi
 }
 
-# card_stage: stage 3 (see the header).
+# card_stage: stage 3 (scripts/README.md).
 card_stage() {
   local rc=0
   stage 3 "release card"
@@ -337,7 +304,7 @@ card_stage() {
   [[ "$(head -n 1 "${CARD}")" == "# "* ]] || die "${CARD} does not start with a '# ' title line"
 }
 
-# commit_stage VERSION: stage 4 (see the header).
+# commit_stage VERSION: stage 4 (scripts/README.md).
 commit_stage() {
   local entry path stray=()
   stage 4 commit
@@ -363,7 +330,7 @@ push_main() {
     || die "origin/main ($(git rev-parse --short=12 origin/main)) is not HEAD ($(git rev-parse --short=12 HEAD)) after the push"
 }
 
-# tag_stage VERSION: stage 5 (see the header).
+# tag_stage VERSION: stage 5 (scripts/README.md).
 tag_stage() {
   stage 5 tag
   { cat "${NOTES_FILE}"; echo; cat "${CARD}"; } > "${MSG}"
@@ -372,7 +339,7 @@ tag_stage() {
   run git push origin "refs/tags/${1}"
 }
 
-# release_stage VERSION TAGGED: stage 6 (see the header).
+# release_stage VERSION TAGGED: stage 6 (scripts/README.md).
 release_stage() {
   local v="$1" card
   stage 6 "release CI and GitHub Release"

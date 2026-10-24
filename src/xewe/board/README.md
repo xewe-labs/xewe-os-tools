@@ -97,5 +97,4 @@ and exits 0. `xewe test` runs unit tests and reports board tests as "compiled, n
 `--no-board` (or `XEWE_NO_BOARD=1`) is the hard switch for machines that must never touch a
 board: no port is listed, probed or opened. `flash`/`run` build and then exit 4, `serial`,
 `provision` and `boards` exit 4, all with `board access disabled (--no-board / XEWE_NO_BOARD)`;
-`xewe test` reports board tests as "compiled, not run" and exits 0. Agents in compile-only mode
-must set `XEWE_NO_BOARD=1`.
+`xewe test` reports board tests as "compiled, not run" and exits 0.

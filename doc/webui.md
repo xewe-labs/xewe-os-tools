@@ -2,9 +2,10 @@
 
 A device's web page is easier to build as a small Flask app on a laptop than in C++ on the board:
 HTML, CSS and JavaScript reload in a second against fake data. `xewe webui export` then turns the
-page into C++ that an ESP32 sketch serves at the same URLs, and `xewe webui prompt` prints the LLM
-prompt that ports the Flask API to the sketch. The code is `src/xewe/build/webui.py`; it came from
-the retired `xewe-labs/xewe-os-frontend-builder` prototype (`export/export.py`).
+page into C++ that an ESP32 sketch serves at the same URLs, and `xewe webui prompt` prints a
+prompt that asks an AI model to port the Flask API to the sketch. The code is
+`src/xewe/build/webui.py`; it came from the retired `xewe-labs/xewe-os-frontend-builder`
+prototype (`export/export.py`).
 
 ## Workflow
 
